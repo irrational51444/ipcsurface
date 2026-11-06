@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.26.0'
+__version__ = '0.27.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -832,6 +832,15 @@ CONFIDENCE_SEMANTICS = {
     'action_rule': '每个名字的 actions 列出它所有适用动作，primary_action 取其中最严格的一个'
                    '（顺序：cite < spot_check_source < trust_after_setup < read_code < triage）。'
                    '报告给的是最低保证，所以按最费事的那条走，下游不必再自己比。',
+    'corroborated_is_not_uniform':
+        'corroborated 只说明两条路互不依赖，不说明两条路都硬。'
+        'computed+runtime 和 literal-resolved+runtime 都算对上，'
+        '但前者静态那一侧本身就是需要人工看的低强度来源。'
+        '所以看 strength_by_source 和 weakest_source，别把「对上」当成一个均质的强证据集合。',
+    'rule_registry_note':
+        'meta-test 检查的是「每条规则都有用例」，不检查「用例真的在测那条规则」。'
+        '它防的是缺用例这种最常见的失效，不防用例写了但没测到东西。'
+        '绿了只代表覆盖存在，不代表覆盖有效。',
     'corroboration_kinds': CORROBORATION_KINDS,
     'compat_rule': {
         'bump_schema_when': [
@@ -902,6 +911,15 @@ ACTION_BY_SOURCE = {
 ACTION_STRICTNESS = ['cite', 'spot_check_source', 'trust_after_setup', 'read_code', 'triage']
 
 
+SOURCE_STRENGTH = {
+    'literal': 1.0,
+    'literal-resolved': 0.9,
+    'runtime': 0.8,
+    'computed': 0.3,
+    'harvested': 0.2,
+}
+
+
 def channel_sources(facts, probe=None):
     """每条通道名各自是被谁看见的。
 
@@ -954,6 +972,12 @@ def channel_sources(facts, probe=None):
         else:
             item['corroboration'] = 'none'
         item['corroborated'] = item['corroboration'] == 'static_runtime'
+        # 「对上」只说明两条路互不依赖，不说明两条路都硬。
+        # 把每一侧的硬度也带上，免得一个布尔把差异盖掉。
+        item['strength_by_source'] = {s: SOURCE_STRENGTH.get(s, 0.0) for s in item['sources']}
+        item['weakest_source'] = min(item['sources'],
+                                     key=lambda s: SOURCE_STRENGTH.get(s, 0.0))
+        item['independent_pairs'] = ['%s+%s' % (a, b) for a, b in pairs if independent(a, b)]
     return seen
 
 
@@ -1700,7 +1724,9 @@ def load_baseline(path):
         raise SystemExit(
             '基线 schema 对不上：文件里是 {}，现在是 {}。\n'
             '旧基线可能按另一套口径算的，拿它比会得出看着对其实错的结论。\n'
-            '要么用当前版本重新写一份基线，要么人工比。'.format(
+            '下一步：用当前版本重新写一份基线，一条命令的事（真包也就几秒）。\n'
+            '  ipcsurface <包> --write-baseline <基线文件>\n'
+            '然后再用它比：ipcsurface <包> --baseline <基线文件>'.format(
                 saved or '没有', BASELINE_SCHEMA))
     return {
         'findings': [tuple(item) for item in data.get('findings') or []],
@@ -2344,7 +2370,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/6',
+                'schema': 'ipcsurface/asar/7',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

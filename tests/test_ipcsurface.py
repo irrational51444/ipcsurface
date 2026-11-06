@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/6')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/7')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -766,6 +766,18 @@ class RuleRegistryTests(unittest.TestCase):
         finally:
             os.unlink(path)
         self.assertIn('schema 对不上', str(ctx.exception))
+
+
+    def test_rule_corroborated_is_not_uniform(self):
+        # 对上只说明两条路独立，不说明两条路都硬
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        facts['dynamic'] = [('chan:one', 'a.js:1')]
+        probe = {'handlers': ['chan:one'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['chan:one']
+        self.assertTrue(item['corroborated'])
+        self.assertEqual(item['weakest_source'], 'computed')
+        self.assertLess(item['strength_by_source']['computed'],
+                        item['strength_by_source']['runtime'])
 
 
 class AsarAuditTests(unittest.TestCase):
