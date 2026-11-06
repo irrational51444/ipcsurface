@@ -180,7 +180,7 @@ def audit_asar(facts):
 
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None):
     out = ['# Electron 能力面清单（粗扫）', '']
-    out.append(f'- 目标：`{target}`')
+    out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
     out.append(f'- {stamp()}')
     out.append('')
@@ -588,6 +588,22 @@ def next_steps(facts, findings):
 
 # ---------------------------------------------------------------- diff
 
+def asar_as_diff_facts(facts):
+    """把粗扫的结果摆成 diff 认得的样子。手上只有 asar 的时候也能比版本。"""
+    handles, invokes = defaultdict(set), defaultdict(set)
+    for name, where in facts['handlers']:
+        handles[name].add(where)
+    for name, where in facts['invokes']:
+        invokes[name].add(where)
+    return {
+        'channels': sorted(set(handles) | set(invokes)),
+        'handles': handles,
+        'invokes': invokes,
+        'dyn_channels': [(what, where) for what, where in facts['dynamic']],
+        'families': [],
+    }
+
+
 def render_diff(old_facts, new_facts, old_name, new_name):
     old_set = set(old_facts['channels'])
     new_set = set(new_facts['channels'])
@@ -777,7 +793,7 @@ def read_pe_imports(path):
 def render_pe(target, facts, size):
     total = sum(len(v) for v in facts['libraries'].values())
     out = ['# 模块导入了什么', '']
-    out.append(f'- 目标：`{target}`')
+    out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {"64" if facts["is_64"] else "32"} 位，{facts["sections"]} 个节，'
                f'{size / 1024:.0f} KB')
     out.append(f'- {len(facts["libraries"])} 个动态库，{total} 个函数')
@@ -844,6 +860,13 @@ def analyse_asar(path):
 
 
 def main(argv=None):
+    # Windows 控制台默认不是 UTF-8，直接打中文会乱码
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8')
+        except (AttributeError, ValueError):
+            pass
+
     parser = argparse.ArgumentParser(
         prog='ipcsurface',
         description='把一个 Electron 应用的能力面压成一页纸。'
@@ -871,8 +894,15 @@ def main(argv=None):
                          '要分析没打包的应用，用 probe/run.js，不要用这个命令')
 
     if args.diff:
-        old = collect_evidence(load_record(args.input))
-        new = collect_evidence(load_record(args.diff))
+        # 两边可以都是 asar，也可以都是 Evidence——手上只有包的时候也能比
+        def side(path):
+            if looks_like_asar(path):
+                facts, _count, _total = analyse_asar(path)
+                return asar_as_diff_facts(facts)
+            return collect_evidence(load_record(path))
+
+        old = side(args.input)
+        new = side(args.diff)
         text = render_diff(old, new, os.path.basename(args.input), os.path.basename(args.diff))
         findings = []
         old_set, new_set = set(old['channels']), set(new['channels'])

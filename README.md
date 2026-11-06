@@ -95,6 +95,8 @@ ipcsurface evidence surface.md
 
 ```bash
 ipcsurface v1/evidence --diff v2/evidence -o change.md
+# 手上只有包也行
+ipcsurface old.asar --diff new.asar -o change.md
 ```
 
 **往下走一层**，看一个 dll/exe 靠什么干活：
