@@ -838,6 +838,9 @@ def main(argv=None):
         findings = []
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
+        if args.runtime:
+            with open(args.runtime, encoding='utf-8-sig') as fh:
+                text += '\n'.join(render_runtime(json.load(fh), names))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
         text = render_pe(args.input, facts, os.path.getsize(args.input))
