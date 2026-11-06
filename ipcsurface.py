@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.21.0'
+__version__ = '0.22.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -773,14 +773,52 @@ CONFIDENCE_SEMANTICS = {
     'not_a_probability': True,
     'labels_not_buckets': '六层是标签，互相重叠；不可以相加或相减当总数。'
                           '唯一能当总数的是 unique_names，它是去重后的名字数。',
-    'independent_witnesses': [
-        '逐字 literal + runtime：源码与运行时，互相独立',
-        '查表 literal + runtime：查表过程不读运行时信息，也算独立',
-        '逐字 literal + 查表 literal：都来自静态侧，只是写法不同，不算独立见证',
-        'computed / harvested 之间：同源，不算独立',
-    ],
+    'independence': {
+        'independent_pairs': [
+            ('literal', 'runtime'),
+            ('literal-resolved', 'runtime'),
+        ],
+        'same_side_pairs': [
+            ('literal', 'literal-resolved'),
+            ('computed', 'harvested'),
+        ],
+        'rule': 'source 分属独立见证集合才算两条路对上；同一侧的不同写法不算。'
+                '每个名字的 corroborated 字段已经按这条算好，下游不必自己推导。',
+    },
     'corroborated_rule': '至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，'
                          '不累加，也不因为对上就跳档。',
+    'compat_rule': {
+        'bump_schema_when': [
+            '字段改名或删除',
+            '枚举取值增减或含义变化（例如 poke 的档位、sources 的取值）',
+            'strength 的分值或语义变化',
+            'limits / confidence 这类数组的结构变化',
+            '名字的去重口径变化（unique_names 定义变化）',
+        ],
+        'no_bump_when': [
+            '只新增字段且旧字段不动',
+            '只改文案不改含义',
+        ],
+        'note': '换号只保证下游能察觉不兼容，不保证向下兼容；'
+                '消费方应当按 schema 号选择解析逻辑，别只看字段在不在。',
+    },
+    'usage_constraints': [
+        '任何一层都不该被单独引用；这是地图，不是判决书。',
+        'take_from_levels_together：判断一个名字，要看它的全部来源标签，不要只挑最硬的那条。',
+        'unknown_is_not_absent：「没看见」是未知，不能当成「没有」。',
+        'strength 用来排序复核顺序，不用来当风险分值。',
+    ],
+}
+# 每层给一条机器能执行的下一步，不要只给一句人话
+LEVEL_ACTION = {
+    'corroborated': 'cite_with_caveat',
+    'literal': 'cite',
+    'literal-resolved': 'spot_check_source',
+    'runtime': 'trust_after_setup',
+    'poke': 'review_handler',
+    'computed': 'read_code',
+    'harvested': 'triage',
+    'unseen': 'escalate',
 }
 
 
@@ -819,11 +857,10 @@ def channel_sources(facts, probe=None):
         add(name, 'harvested', 0.2, where)
 
     for item in seen.values():
-        # 两条互不依赖的路都看见了同一个名字，这比任一条单独说都硬
+        # 两条互不依赖的路都看见同一个名字，这比任一条单独说都硬。
+        # 但强度不因此上调——对上改变的是复核路径，不是分数。
         item['corroborated'] = len(item['sources']) >= 2
         item['sources'] = sorted(item['sources'])
-        if item['corroborated']:
-            item['strength'] = round(min(1.0, item['strength'] + 0.1), 2)
     return seen
 
 
@@ -844,7 +881,9 @@ def confidence_levels(facts, probe=None, poke=None):
               if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
 
     sources = channel_sources(facts, probe=probe)
-    corroborated = sum(1 for item in sources.values() if item['corroborated'])
+    corroborated_items = [item for item in sources.values() if item['corroborated']]
+    corroborated = len(corroborated_items)
+    corroborated_strength = max((item['strength'] for item in corroborated_items), default=0.0)
 
     levels = []
     if corroborated:
@@ -853,7 +892,7 @@ def confidence_levels(facts, probe=None, poke=None):
             'label': '两条路都对上的',
             'count': corroborated,
             'unit': '条',
-            'strength': 1.0,
+            'strength': corroborated_strength,
             'can_prove': '静态和运行时各看见一次，两条路互不依赖',
             'cannot_prove': '对上的是名字，不是行为；门后逻辑仍然没审',
             'next_step': '优先看这几条，它们最不像我编的',
@@ -947,6 +986,9 @@ def confidence_levels(facts, probe=None, poke=None):
         'cannot_prove': '我这条路看不见，不代表它不在',
         'next_step': '换 REA 走语法级，或者运行时探针',
     })
+    # 每层配一个机器能照做的动作，别只给一句人话
+    for level in levels:
+        level['action'] = LEVEL_ACTION.get(level['id'], 'review')
     return levels
 
 
@@ -2135,7 +2177,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/2',
+                'schema': 'ipcsurface/asar/3',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

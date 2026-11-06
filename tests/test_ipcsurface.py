@@ -547,7 +547,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/2')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/3')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -639,6 +639,29 @@ class RestoreLoopTests(unittest.TestCase):
         sources = ipc.channel_sources(facts)
         self.assertEqual(sources['x:y']['sources'], ['literal'])
         self.assertEqual(sources['x:y']['strength'], 1.0)
+
+
+    def test_corroboration_does_not_bump_strength(self):
+        # 对上改变的是复核路径，不是分数；这条盯着别偷偷加分
+        source = (b"const CH = { boot: 'a:b' };\nipcMain.handle(CH.boot, f)\n")
+        facts = ipc.scan_asar({'a.js': source})
+        probe = {'handlers': ['a:b'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['a:b']
+        self.assertTrue(item['corroborated'])
+        self.assertEqual(item['strength'], 0.9)
+
+    def test_every_level_has_a_machine_action(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('x:y', f)"})
+        for level in ipc.confidence_levels(facts):
+            self.assertIn('action', level)
+            self.assertTrue(level['action'])
+
+    def test_schema_declares_compat_and_usage_rules(self):
+        semantics = ipc.CONFIDENCE_SEMANTICS
+        self.assertIn('bump_schema_when', semantics['compat_rule'])
+        self.assertTrue(any('枚举' in line for line in semantics['compat_rule']['bump_schema_when']))
+        self.assertTrue(any('地图' in line for line in semantics['usage_constraints']))
+        self.assertIn('independent_pairs', semantics['independence'])
 
 
 class AsarAuditTests(unittest.TestCase):
