@@ -15,13 +15,13 @@ for target in static-asar dyn-asar obf-asar bulk-asar native-asar; do
   npx --yes @electron/asar pack "$target" "build/$target.asar"
 
   # 粗扫：不用装 REA 也能跑
-  ipcsurface "build/$target.asar" "build/$target.scan.md"
+  ipcsurface "build/$target.asar" -o "build/$target.scan.md"
 
   # 语法级：要 REA
   if command -v rea >/dev/null 2>&1; then
     rea analyze-javascript-application "build/$target.asar" \
         --detail summary --evidence_output "build/ev-$target"
-    ipcsurface "build/ev-$target" "build/$target.md"
+    ipcsurface "build/ev-$target" -o "build/$target.md"
   else
     echo "    没装 rea，跳过语法级"
   fi
