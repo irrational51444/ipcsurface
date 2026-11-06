@@ -55,6 +55,12 @@ def draw_rich(draw, x, y, text, font):
 
 def classify(line):
     stripped = line.strip()
+    if stripped.startswith('[OK]'):
+        return 'ok'
+    if stripped.startswith('[FAIL]'):
+        return 'bad'
+    if stripped.startswith('----'):
+        return 'summary'
     if stripped.startswith('###'):
         return 'h3'
     if stripped.startswith('##'):
@@ -82,8 +88,9 @@ def main():
         return 2
     source = sys.argv[1]
     out = sys.argv[2] if len(sys.argv) > 2 else 'preview.png'
+    title = sys.argv[3] if len(sys.argv) > 3 else 'ipcsurface app.asar -o surface.md'
 
-    with open(source, encoding='utf-8') as fh:
+    with open(source, encoding='utf-8-sig') as fh:
         raw = fh.read().splitlines()
 
     body = []
@@ -108,7 +115,7 @@ def main():
     for i, c in enumerate([(255, 95, 86), (255, 189, 46), (39, 201, 63)]):
         draw.ellipse([PAD + i * 22, y - 8, PAD + i * 22 + 12, y + 4], fill=c)
     y += 26
-    draw.text((PAD, y), 'ipcsurface app.asar -o surface.md', font=font, fill=DIM)
+    draw.text((PAD, y), title, font=font, fill=DIM)
     y += LINE_H + 6
     draw.line([(PAD, y), (WIDTH - PAD, y)], fill=RULE)
     y += 14
@@ -119,6 +126,14 @@ def main():
             y += LINE_H + 4
         elif kind == 'h2':
             draw.text((PAD, y), line.lstrip('# ').strip(), font=font, fill=HEAD)
+            y += LINE_H
+        elif kind in ('ok', 'bad'):
+            mark, rest = ('√', line.strip()[4:].strip()) if kind == 'ok' else ('×', line.strip()[5:].strip())
+            draw.text((PAD + 2, y), mark, font=font, fill=(63, 185, 80) if kind == 'ok' else (248, 81, 73))
+            draw.text((PAD + 26, y), shorten(rest), font=font, fill=FG if kind == 'ok' else WARN)
+            y += LINE_H
+        elif kind == 'summary':
+            draw.text((PAD, y), line.strip(), font=font, fill=HEAD)
             y += LINE_H
         elif kind == 'finding':
             text = line.strip()
