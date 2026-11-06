@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.24.0'
+__version__ = '0.25.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -840,6 +840,14 @@ CONFIDENCE_SEMANTICS = {
             'text': 'strength 用来排序复核顺序，不用来当风险分值。',
             'must_not': ['score_risk_from_strength'],
             'instead': '风险判断看 poke 分档和 preload 暴露面',
+        },
+        {
+            'id': 'primary_action_is_not_whole',
+            'text': 'primary_action 只是「先做哪件事」，不能替代 actions。'
+                    '只看主动作会丢掉「这条还同时有低保证来源」这件事，'
+                    '和拆层单用是同一个错，只是发生在字段级。',
+            'must_not': ['use_primary_action_alone', 'drop_lower_guarantee_sources'],
+            'instead': '用 primary_action 决定先干什么，用 actions 和 sources 决定这条到底有多稳',
         },
         {
             'id': 'check_schema_before_parse',
@@ -2285,7 +2293,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/4',
+                'schema': 'ipcsurface/asar/5',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

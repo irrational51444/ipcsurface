@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/4')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/5')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -672,6 +672,13 @@ class RestoreLoopTests(unittest.TestCase):
         for level in ipc.confidence_levels(facts):
             self.assertIn('action', level)
             self.assertTrue(level['action'])
+
+    def test_primary_action_does_not_replace_actions(self):
+        semantics = ipc.CONFIDENCE_SEMANTICS
+        by_id = {item['id']: item for item in semantics['usage_constraints']}
+        rule = by_id['primary_action_is_not_whole']
+        self.assertIn('use_primary_action_alone', rule['must_not'])
+        self.assertIn('actions', rule['instead'])
 
     def test_schema_declares_compat_and_usage_rules(self):
         semantics = ipc.CONFIDENCE_SEMANTICS
