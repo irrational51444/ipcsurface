@@ -183,19 +183,26 @@ class EvidenceTests(unittest.TestCase):
 class ObfuscationTests(unittest.TestCase):
     def test_eval_is_flagged(self):
         facts = ipc.scan_asar({'a.js': b'eval(decode(x))'})
-        names = [n for n, _ in facts['obfuscation']]
+        names = [h[0] for h in facts['obfuscation']]
         self.assertIn('eval 直接执行字符串', names)
 
     def test_base64_and_hex_names(self):
         source = "var _0x4a2f = 1; atob('abc')"
         facts = ipc.scan_asar({'a.js': source.encode('utf-8')})
-        names = [n for n, _ in facts['obfuscation']]
+        names = [h[0] for h in facts['obfuscation']]
         self.assertIn('base64 现场解码', names)
         self.assertIn('十六进制标识符', names)
 
     def test_clean_code_is_not_flagged(self):
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('a:b', () => {})"})
         self.assertEqual(facts['obfuscation'], [])
+
+    def test_weak_hit_does_not_claim_tampering(self):
+        # new Function 是库的常规写法，不该被说成动过手脚
+        facts = ipc.scan_asar({'a.js': b'var f = new Function("return 1")'})
+        report = ipc.render_asar('demo.asar', facts, 1, 100)
+        self.assertNotIn('这包动过手脚', report)
+        self.assertIn('[弱]', report)
 
     def test_report_warns_when_obfuscated(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

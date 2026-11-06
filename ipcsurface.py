@@ -83,22 +83,23 @@ def line_of(text, pos):
     return text.count('\n', 0, pos) + 1
 
 
+# 分两档。strong 才算「这包被人动过」，weak 只是常见写法，报出来供参考。
 OBF_PATTERNS = [
-    ('eval 直接执行字符串', re.compile(r'\beval\s*\(')),
-    ('Function 构造器拼代码', re.compile(r'\bnew\s+Function\s*\(')),
-    ('base64 现场解码', re.compile(r'\batob\s*\(')),
-    ('charCode 拼字符串', re.compile(r'fromCharCode')),
-    ('十六进制标识符', re.compile(r'\b_0x[0-9a-fA-F]{2,}')),
-    ('超长单行（压过）', re.compile(r'^.{2000,}$', re.M)),
+    ('eval 直接执行字符串', re.compile(r'\beval\s*\('), 'strong'),
+    ('十六进制标识符', re.compile(r'\b_0x[0-9a-fA-F]{2,}'), 'strong'),
+    ('超长单行（压过）', re.compile(r'^.{2000,}$', re.M), 'strong'),
+    ('base64 现场解码', re.compile(r'\batob\s*\('), 'weak'),
+    ('Function 构造器拼代码', re.compile(r'\bnew\s+Function\s*\('), 'weak'),
+    ('charCode 拼字符串', re.compile(r'fromCharCode'), 'weak'),
 ]
 
 
 def detect_obfuscation(text, rel):
     hits = []
-    for name, pattern in OBF_PATTERNS:
+    for name, pattern, level in OBF_PATTERNS:
         match = pattern.search(text)
         if match:
-            hits.append((name, f'{rel}:{line_of(text, match.start())}'))
+            hits.append((name, f'{rel}:{line_of(text, match.start())}', level))
     return hits
 
 
@@ -149,11 +150,11 @@ def scan_asar(files):
         'dynamic': sorted(set(dynamic)),
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
-        'obfuscation': sorted(set(obfuscation))[:12],
+        'obfuscation': sorted(set(obfuscation))[:200],
     }
 
 
-def render_asar(target, facts, file_count, total_bytes):
+def render_asar(target, facts, file_count, total_bytes, show_all=False):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{target}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
@@ -162,7 +163,9 @@ def render_asar(target, facts, file_count, total_bytes):
     out.append('')
     out.append('这是字符串级粗扫：只认写死在源码里的名字，不建语法树，跟着代码走不通。')
     out.append('要准的，先跑 `rea analyze-javascript-application`，再把 Evidence 喂给本工具。')
-    if facts['obfuscation']:
+    strong = [h for h in facts['obfuscation'] if h[2] == 'strong']
+    weak = [h for h in facts['obfuscation'] if h[2] == 'weak']
+    if strong:
         out.append('')
         out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
     out.append('')
@@ -170,11 +173,17 @@ def render_asar(target, facts, file_count, total_bytes):
     if facts['obfuscation']:
         out.append('## 混淆痕迹')
         out.append('')
-        out.append('解不开，但认得出。撞上这些，说明代码被压过或者被处理过：')
+        out.append('解不开，但认得出。强的那几条说明代码被处理过；弱的多半只是库的写法。')
         out.append('')
-        for name, where in facts['obfuscation']:
-            out.append(f'- {name}  `{where}`')
+        shown = (strong + weak) if show_all else (strong + weak)[:8]
+        for name, where, level in shown:
+            tag = '强' if level == 'strong' else '弱'
+            out.append(f'- [{tag}] {name}  `{where}`')
+        rest = len(facts['obfuscation']) - len(shown)
+        if rest > 0:
+            out.append(f'- 还有 {rest} 处没列，加 `--all` 看全')
         out.append('')
+        out.append('> 一个两万文件的包里 `new Function` 出现几十次是常态，那不是混淆。')
 
     out.append('## 窗口设置')
     if facts['prefs']:
@@ -749,6 +758,7 @@ def main(argv=None):
     parser.add_argument('--format', choices=('md', 'json'), default='md')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
     parser.add_argument('--diff', metavar='OTHER', help='把 input 当成旧版，和另一份 Evidence 比')
+    parser.add_argument('--all', action='store_true', help='不截断，把找到的全列出来')
     parser.add_argument('--runtime', metavar='PROBE_JSON',
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
     args = parser.parse_args(argv)
@@ -762,7 +772,7 @@ def main(argv=None):
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
         facts, count, total = analyse_asar(args.input)
-        text = render_asar(args.input, facts, count, total)
+        text = render_asar(args.input, facts, count, total, show_all=args.all)
         findings = []
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
