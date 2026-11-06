@@ -194,7 +194,7 @@ ipcsurface evidence --poke poke.json -o surface.md
 | --- | --- | --- | --- |
 | 粗扫 | `ipcsurface app.asar -o scan.md` | 4 秒 | 认出 0 条字面通道，打捞到 217 个候选名字 |
 | 语法级 · 全量 | `rea analyze-javascript-application app.asar` | **十分钟没跑完** | 放弃，换下面的方式 |
-| 语法级 · 挑文件 | `rea analyze-... app.asar --source-path <一个文件>` | 54 秒 | 产出 271 MB 证据 |
+| 语法级 · 挑文件 | `rea analyze-... app.asar --source-path <一个文件>` | 54 秒 | 产出 259 MB 证据 |
 | 读证据 | `ipcsurface build/ev-one -o one.md` | 2.4 秒 | 一页报告 |
 | 出 json | `--format json` | 2.4 秒 | 0.4 KB |
 | 基线 | `--write-baseline` / `--baseline` | 2.5 秒 | 第二次跑把旧的压掉 |
@@ -208,7 +208,7 @@ ipcsurface evidence --poke poke.json -o surface.md
 
 **二、单文件分析缺上下文，就别硬下结论。** 只喂一个文件时，看不到窗口代码，那么「一条 sender 校验都没有」这句话就不成立——校验可能写在别的文件里。这一条原来是误报，现在加了条件：没看到窗口，就不说这句话。
 
-**三、证据大不等于慢。** 271 MB 的 JSON，读一遍 2.4 秒。别被体积吓住。
+**三、证据大不等于慢。** 259 MB 的 JSON，读一遍 2.4 秒。别被体积吓住。
 
 ## 输出长什么样
 
