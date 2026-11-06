@@ -18,7 +18,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.6.1'
+__version__ = '0.7.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -94,12 +94,12 @@ def stamp():
 
 # 分两档。strong 才算「这包被人动过」，weak 只是常见写法，报出来供参考。
 OBF_PATTERNS = [
-    ('eval 直接执行字符串', re.compile(r'\beval\s*\('), 'strong'),
-    ('十六进制标识符', re.compile(r'\b_0x[0-9a-fA-F]{2,}'), 'strong'),
-    ('超长单行（压过）', re.compile(r'^.{2000,}$', re.M), 'strong'),
-    ('base64 现场解码', re.compile(r'\batob\s*\('), 'weak'),
-    ('Function 构造器拼代码', re.compile(r'\bnew\s+Function\s*\('), 'weak'),
-    ('charCode 拼字符串', re.compile(r'fromCharCode'), 'weak'),
+    ('eval 直接执行字符串', re.compile(rb'\beval\s*\('), 'strong'),
+    ('十六进制标识符', re.compile(rb'\b_0x[0-9a-fA-F]{2,}'), 'strong'),
+    ('超长单行（压过）', re.compile(rb'[^\n]{2000,}'), 'strong'),
+    ('base64 现场解码', re.compile(rb'\batob\s*\('), 'weak'),
+    ('Function 构造器拼代码', re.compile(rb'\bnew\s+Function\s*\('), 'weak'),
+    ('charCode 拼字符串', re.compile(rb'fromCharCode'), 'weak'),
 ]
 
 
@@ -359,13 +359,19 @@ def fold_literals(text):
     return text
 
 
-def detect_obfuscation(text, rel):
+def detect_obfuscation(blob, rel):
+    """在字节上找混淆特征。这几条全是 ASCII，不必先解码。"""
     hits = []
     for name, pattern, level in OBF_PATTERNS:
-        match = pattern.search(text)
+        match = pattern.search(blob)
         if match:
-            hits.append((name, f'{rel}:{line_of(text, match.start())}', level))
+            line = blob.count(b'\n', 0, match.start()) + 1
+            hits.append((name, f'{rel}:{line}', level))
     return hits
+
+
+# 定义常量离不开 const/let/var，没有这几个词的文件不必解码。
+CONST_HINTS = (b'const', b'let ', b'let\t', b'let\n', b'var ', b'var\t', b'var\n')
 
 
 def build_global_constants(files):
@@ -383,6 +389,9 @@ def build_global_constants(files):
             continue
         # 太大的多半是打包产物，常量几千个，收了也没用，还慢
         if len(blob) > 300_000:
+            continue
+        # 没有 const/let/var 就定义不出常量，连解码都省了
+        if not any(hint in blob for hint in CONST_HINTS):
             continue
         if b'=' not in blob or (b"'" not in blob and b'"' not in blob):
             continue
@@ -416,14 +425,15 @@ def scan_asar(files, allow_eval=True):
                       or b'new Function(' in blob)
         if not hot_ipc and not suspicious:
             continue
+        # 混淆特征在字节上就能认，先认完再决定要不要解码
+        if suspicious:
+            obfuscation.extend(detect_obfuscation(blob, rel))
+        if not hot_ipc:
+            continue
         try:
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
-        if suspicious:
-            obfuscation.extend(detect_obfuscation(text, rel))
-        if not hot_ipc:
-            continue
         text = restore_string_arrays(text)
         if allow_eval:
             text = restore_decode_calls(text)
@@ -1325,6 +1335,12 @@ CHANNELISH = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{1,24}:[A-Za-z][A-Za-z0-9_.-]{1,
 NOISE_PREFIX = {'http', 'https', 'file', 'data', 'mailto', 'chrome', 'ws', 'wss',
                 'node', 'blob', 'about', 'javascript', 'utf', 'iso'}
 STRING_LIT = re.compile(r"'([^'\\\n]{4,80})'" r'|"([^"\\\n]{4,80})"')
+# 同一个模式，吃字节。整包转成字符串再找太贵，能不解码就不解码。
+STRING_LIT_B = re.compile(STRING_LIT.pattern.encode('ascii'))
+# 「长得像通道」的形状，直接写成一条字节正则：
+# 前缀 2-25 个标识符字符，冒号，后缀 2-49 个。和 CHANNELISH 等价。
+CHANNEL_LIT_B = re.compile(
+    rb"""['"]([A-Za-z][A-Za-z0-9_-]{1,24}:[A-Za-z][A-Za-z0-9_.-]{1,48})['"]""")
 
 JS_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts')
 
@@ -1351,28 +1367,36 @@ def harvest_strings(files):
 
     这不是解析，是打捞。捞上来的不一定是通道，只保证「长得像」。
     顺手记下这个文件是谁的，好把第三方库那堆噪音分开放。
+
+    找的时候直接在字节上找，只有真像通道的那几条才解码、才数行号。
+    整包先转一遍字符串，是这一步以前最贵的地方。
     """
     seen = {}
     for rel, blob in files.items():
         if not rel.endswith(JS_EXT):
             continue
-        try:
-            text = blob.decode('utf-8')
-        except UnicodeDecodeError:
-            text = blob.decode('latin-1', 'ignore')
-        kind = classify_path(rel)
-        for match in STRING_LIT.finditer(text):
-            value = match.group(1) or match.group(2)
-            if not CHANNELISH.match(value):
+        kind = None
+        # 直接把「长得像通道」的形状写进正则，让 C 那边筛，
+        # 别把整包里几百万条字符串一条条搬进 Python 再判。
+        for match in CHANNEL_LIT_B.finditer(blob):
+            # 前面紧贴着标识符或者另一个引号，说明这段只是长字符串里的一截，
+            # 比如 "x'font-style:italic'x" 里的那点 CSS，不是真的字面量边界。
+            prev = blob[match.start(1) - 2:match.start(1) - 1]
+            if prev.isalnum() or prev in (b"'", b'"', b'`'):
                 continue
+            value = match.group(1).decode('ascii')
             prefix = value.split(':', 1)[0]
             if prefix.lower() in NOISE_PREFIX:
                 continue
             # A1:A13 这种是 Excel 单元格，不是通道
             if re.fullmatch(r'[A-Za-z]{1,3}\d{1,5}', prefix):
                 continue
-            if value not in seen:
-                seen[value] = (f'{rel}:{line_of(text, match.start())}', kind)
+            if value in seen:
+                continue
+            if kind is None:
+                kind = classify_path(rel)
+            line = blob.count(b'\n', 0, match.start()) + 1
+            seen[value] = (f'{rel}:{line}', kind)
     return seen
 
 
