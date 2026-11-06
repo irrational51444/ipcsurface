@@ -151,6 +151,7 @@ def scan_asar(files):
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
         'obfuscation': sorted(set(obfuscation))[:200],
+        'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
     }
 
 
@@ -213,22 +214,39 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False):
     names = sorted({n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']})
     host = defaultdict(list)
     page = defaultdict(list)
+    limit = len(names) if show_all else 30
     for name, where in facts['handlers']:
         host[name].append(where)
     for name, where in facts['invokes']:
         page[name].append(where)
-    for name in names:
+    for name in names[:limit]:
         h = ', '.join(f'`{w}`' for w in host.get(name) or ['—'])
         p = ', '.join(f'`{w}`' for w in page.get(name) or ['—'])
         out.append(f'| `{name}` | {h} | {p} |')
     if not names:
         out.append('| — | — | — |')
+    elif len(names) > limit:
+        out.append(f'| … 还有 {len(names) - limit} 条没列 | 加 `--all` 看全 | |')
     out.append('')
+    if len(names) > 12:
+        groups = defaultdict(int)
+        for name in names:
+            groups[re.split(r'[:/.]', name)[0] or name] += 1
+        out.append('按前缀分组：' + '，'.join(f'`{k}` {v} 条' for k, v in
+                                            sorted(groups.items(), key=lambda kv: -kv[1])[:8]))
+        out.append('')
 
     out.append('## 没看清的地方')
     out.append('')
     out.append('这张表只能证明哪些看清了，不能证明没有什么。')
     out.append('')
+    if facts['native_files']:
+        out.append(f"- 这包带着 {len(facts['native_files'])} 个 native 模块，越界、泄漏只可能在它们里面：")
+        for rel in facts['native_files'][:8]:
+            out.append(f"  - `{rel}`")
+        out.append('- 上面那张表跟它们没关系，两边得分开查')
+    else:
+        out.append('- 没有 native 模块，越界这类本来就不该出在 JS 这层')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:
             out.append(f'- 名字是算出来的不是写死的：`{what}`  `{where}`')
