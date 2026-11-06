@@ -7,3 +7,4 @@ dist/
 out-summary.json
 out2/
 examples/*/*.asar
+out2/
