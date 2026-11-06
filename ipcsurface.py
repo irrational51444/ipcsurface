@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.25.0'
+__version__ = '0.26.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -769,12 +769,48 @@ def audit_asar(facts):
     return findings
 
 
-# 对上的两种情形审查路径不同，用枚举分开，别只给一个 true
+# 独立性判定表：不是举几个例子，是把全部两两组合写死。没点名的地方最容易按自己的理解走。
+STATIC_SOURCES = ('literal', 'literal-resolved', 'computed', 'harvested')
+ALL_SOURCES = STATIC_SOURCES + ('runtime',)
+
+
+def _build_independence():
+    table = {}
+    for i, left in enumerate(ALL_SOURCES):
+        for right in ALL_SOURCES[i + 1:]:
+            pair = '|'.join(sorted((left, right)))
+            # 同一个包的两条静态读法共享同一份源码和同一张常量表，不算独立见证；
+            # 运行时是另一条路，和任一静态来源都独立。
+            table[pair] = (left == 'runtime') != (right == 'runtime')
+    return table
+
+
+INDEPENDENCE_TABLE = _build_independence()
+
+
+def independent(left, right):
+    return INDEPENDENCE_TABLE['|'.join(sorted((left, right)))]
+
+
 CORROBORATION_KINDS = {
     'static_runtime': '静态（逐字或查表）与运行时各看见一次，两边互不依赖',
-    'static_static': '逐字与查表都对上了，但都在静态侧，只是写法不同，单独看不算独立见证',
+    'static_static': '两个静态来源对上了，但都在静态侧，只是写法不同，不算独立见证',
     'none': '只有一条路看见',
 }
+
+
+# 规则登记表。每条规则一个 id，测试里必须有 test_rule_<id> 开头的用例，
+# 否则 meta-test 会红。这样「每条规则配用例」是能被检查的，不是靠着记。
+RULES = [
+    {'id': 'independence_table',
+     'text': '独立性按全部两两组合判定，不靠举例；静态来源之间不算独立，运行时与任一静态来源算'},
+    {'id': 'primary_action_not_alone',
+     'text': 'primary_action 只是先做哪件事，不能替代 actions'},
+    {'id': 'baseline_schema',
+     'text': '基线文件自带 schema 号；对不上就拒绝，不静默按旧口径比'},
+    {'id': 'unknown_is_null',
+     'text': '未知写 null，不写 0；0 会被读成「查过，没有」'},
+]
 
 CONFIDENCE_SEMANTICS = {
     'what_strength_means': '复核成本和依赖复杂度，不是「这条有多可信」的概率',
@@ -784,16 +820,12 @@ CONFIDENCE_SEMANTICS = {
     'labels_not_buckets': '六层是标签，互相重叠；不可以相加或相减当总数。'
                           '唯一能当总数的是 unique_names，它是去重后的名字数。',
     'independence': {
-        'independent_pairs': [
-            ('literal', 'runtime'),
-            ('literal-resolved', 'runtime'),
-        ],
-        'same_side_pairs': [
-            ('literal', 'literal-resolved'),
-            ('computed', 'harvested'),
-        ],
-        'rule': 'source 分属独立见证集合才算两条路对上；同一侧的不同写法不算。'
-                '每个名字的 corroborated 字段已经按这条算好，下游不必自己推导。',
+        'table': INDEPENDENCE_TABLE,
+        'sources': list(ALL_SOURCES),
+        'rule': '独立性按两两组合查表判定，不留没点名的缝隙。'
+                '静态来源之间（literal / literal-resolved / computed / harvested）共享同一份源码，'
+                '不算独立；运行时与任一静态来源算独立。'
+                '每个名字的 corroboration 已经按这张表算好，下游不必自己推导。',
     },
     'corroborated_rule': '至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，'
                          '不累加，也不因为对上就跳档。',
@@ -910,10 +942,12 @@ def channel_sources(facts, probe=None):
         actions = [ACTION_BY_SOURCE[s] for s in item['sources'] if s in ACTION_BY_SOURCE]
         item['actions'] = sorted(set(actions), key=ACTION_STRICTNESS.index)
         item['primary_action'] = max(actions, key=ACTION_STRICTNESS.index) if actions else 'review'
-        # 对上要分种类：静态对运行时，和静态自己对静态自己，审查路径不一样
-        has_runtime = 'runtime' in item['sources']
-        static_sources = {'literal', 'literal-resolved'} & set(item['sources'])
-        if has_runtime and static_sources:
+        # 对上要分种类：按判定表数一数，有没有一对是互不依赖的
+        srcs = item['sources']
+        pairs = [(a, b) for i, a in enumerate(srcs) for b in srcs[i + 1:]]
+        has_independent = any(independent(a, b) for a, b in pairs)
+        static_sources = {'literal', 'literal-resolved', 'computed', 'harvested'} & set(srcs)
+        if has_independent:
             item['corroboration'] = 'static_runtime'
         elif len(static_sources) >= 2:
             item['corroboration'] = 'static_static'
@@ -1644,15 +1678,30 @@ def audit_evidence(facts):
     return findings
 
 
+BASELINE_SCHEMA = 'ipcsurface/baseline/1'
+
+
 def load_baseline(path):
-    """读上次留下的一份发现。没有就当空的。"""
+    """读上次留下的那份基线。没有就当空的。
+
+    基线是跨版本产物：旧基线配新报告，口径可能已经变了。
+    所以基线自带 schema 号，对不上就拒绝，不静默按旧口径比——
+    比出一个看着对其实错的结论，比没有结论更糟。
+    """
     if not path:
-        return {'findings': [], 'channels': []}
+        return {'findings': [], 'channels': [], 'schema': BASELINE_SCHEMA}
     try:
         with open(path, encoding='utf-8-sig') as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError):
-        raise SystemExit(f'基线读不了：{path}')
+        raise SystemExit('基线读不动：' + path)
+    saved = data.get('schema')
+    if saved != BASELINE_SCHEMA:
+        raise SystemExit(
+            '基线 schema 对不上：文件里是 {}，现在是 {}。\n'
+            '旧基线可能按另一套口径算的，拿它比会得出看着对其实错的结论。\n'
+            '要么用当前版本重新写一份基线，要么人工比。'.format(
+                saved or '没有', BASELINE_SCHEMA))
     return {
         'findings': [tuple(item) for item in data.get('findings') or []],
         'channels': list(data.get('channels') or []),
@@ -1661,12 +1710,14 @@ def load_baseline(path):
 
 def save_baseline(path, findings, channels):
     payload = {
+        'schema': BASELINE_SCHEMA,
         'findings': [list(item) for item in findings],
         'channels': list(channels),
     }
     with open(path, 'w', encoding='utf-8') as fh:
         json.dump(payload, fh, ensure_ascii=False, indent=2)
-    print(f'基线写到 {path}', file=sys.stderr)
+    print('基线写到 ' + path, file=sys.stderr)
+
 
 
 def render_evidence(facts, findings, known_count=0, show_all=False):
@@ -2293,7 +2344,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/5',
+                'schema': 'ipcsurface/asar/6',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

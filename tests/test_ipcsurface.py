@@ -465,7 +465,7 @@ class HarvestTests(unittest.TestCase):
 
 
 class ConfidenceTests(unittest.TestCase):
-    def test_unknown_is_null_not_zero(self):
+    def test_rule_unknown_is_null(self):
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
         levels = {level['id']: level for level in ipc.confidence_levels(facts)}
         # 没看见的那层不能是 0，0 会被下游读成「查过，没有」
@@ -508,7 +508,7 @@ class ConfidenceTests(unittest.TestCase):
         facts['harvested'] = {'vault:unlock': ('a.js:1', 'self')}
         item = ipc.channel_sources(facts)['vault:unlock']
         self.assertFalse(item['corroborated'])
-        self.assertEqual(item['corroboration'], 'none')
+        self.assertEqual(item['corroboration'], 'static_static')
 
     def test_primary_action_takes_the_strictest(self):
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/5')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/6')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -673,7 +673,7 @@ class RestoreLoopTests(unittest.TestCase):
             self.assertIn('action', level)
             self.assertTrue(level['action'])
 
-    def test_primary_action_does_not_replace_actions(self):
+    def test_rule_primary_action_not_alone(self):
         semantics = ipc.CONFIDENCE_SEMANTICS
         by_id = {item['id']: item for item in semantics['usage_constraints']}
         rule = by_id['primary_action_is_not_whole']
@@ -690,7 +690,8 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertIn('check_schema_before_parse', ids)
         by_id = {item['id']: item for item in semantics['usage_constraints']}
         self.assertIn('use_layer_in_isolation', by_id['no_single_layer']['must_not'])
-        self.assertIn('independent_pairs', semantics['independence'])
+        self.assertIn('table', semantics['independence'])
+        self.assertIn('literal|runtime', semantics['independence']['table'])
 
 
 class BaselineTests(unittest.TestCase):
@@ -726,6 +727,45 @@ class BaselineTests(unittest.TestCase):
                 except OSError:
                     pass
         self.assertIn('x:y', saved['channels'])
+
+
+class RuleRegistryTests(unittest.TestCase):
+    """每条登记在 RULES 里的规则，都必须有一条 test_rule_<id> 的用例。
+
+    这不是自觉，是检查：加了规则却没写用例，这里会红。
+    """
+
+    def test_every_rule_has_a_test(self):
+        module_tests = []
+        for obj in globals().values():
+            if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
+                module_tests.extend(n for n in dir(obj) if n.startswith('test_rule_'))
+        covered = [n[len('test_rule_'):] for n in module_tests]
+        for rule in ipc.RULES:
+            hit = any(name == rule['id'] or name.startswith(rule['id'] + '_')
+                      for name in covered)
+            self.assertTrue(hit, f'规则 {rule["id"]} 登记了但没有对应用例')
+
+    def test_rule_independence_table_has_every_pair(self):
+        sources = ipc.ALL_SOURCES
+        expected = len(sources) * (len(sources) - 1) // 2
+        self.assertEqual(len(ipc.INDEPENDENCE_TABLE), expected)
+        # 静态之间不算独立，运行时和谁都算
+        self.assertFalse(ipc.independent('computed', 'harvested'))
+        self.assertTrue(ipc.independent('computed', 'runtime'))
+        self.assertTrue(ipc.independent('harvested', 'runtime'))
+
+    def test_rule_baseline_schema_is_enforced(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False,
+                                         encoding='utf-8') as fh:
+            json.dump({'channels': ['a:1'], 'findings': []}, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                ipc.load_baseline(path)
+        finally:
+            os.unlink(path)
+        self.assertIn('schema 对不上', str(ctx.exception))
 
 
 class AsarAuditTests(unittest.TestCase):
