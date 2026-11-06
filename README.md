@@ -105,6 +105,18 @@ ipcsurface some.dll -o imports.md
 
 输出是一张导入表：引了哪些库、哪些函数，以及 `strcpy`、`system`、`CreateProcessW` 这类值得多看一眼的。它只回答「这个模块引了什么」，不回答「它有没有用错」——同一句 `strcpy`，写对了就是写对了。
 
+**只报新冒出来的**，老问题不重复吵：
+
+```bash
+# 第一次：把现在的发现存成基线
+ipcsurface evidence --write-baseline baseline.json -o surface.md
+
+# 以后每次：只报这次新增的
+ipcsurface evidence --baseline baseline.json -o surface.md --fail-on high
+```
+
+审计工具不解决噪音就没人用。一个真实应用一上来二十条高危，看三遍就麻木了。基线让「这次的改动引入了什么」成为唯一的问题，而且 `--fail-on high` 挂在 CI 上才有意义——不挂基线，第一次跑就红，以后永远红。
+
 常用参数：
 
 | 参数 | 作用 |
@@ -113,6 +125,10 @@ ipcsurface some.dll -o imports.md
 | `--format json` | 机器可读，方便接进别的流程 |
 | `--fail-on high` | 出现该级别及以上问题时退出码 2，可以挂 CI |
 | `--diff OTHER` | 把输入当旧版，和另一份 Evidence 比 |
+| `--baseline FILE` | 只报基线里没有的发现 |
+| `--write-baseline FILE` | 把这次的发现存成基线 |
+| `--runtime PROBE` | 把运行时探针的结果并进报告 |
+| `--all` | 不截断 |
 
 `--fail-on` 的用法：
 

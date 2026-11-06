@@ -384,7 +384,32 @@ def audit_evidence(facts):
     return findings
 
 
-def render_evidence(facts, findings):
+def load_baseline(path):
+    """读上次留下的一份发现。没有就当空的。"""
+    if not path:
+        return {'findings': [], 'channels': []}
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        raise SystemExit(f'基线读不了：{path}')
+    return {
+        'findings': [tuple(item) for item in data.get('findings') or []],
+        'channels': list(data.get('channels') or []),
+    }
+
+
+def save_baseline(path, findings, channels):
+    payload = {
+        'findings': [list(item) for item in findings],
+        'channels': list(channels),
+    }
+    with open(path, 'w', encoding='utf-8') as fh:
+        json.dump(payload, fh, ensure_ascii=False, indent=2)
+    print(f'基线写到 {path}', file=sys.stderr)
+
+
+def render_evidence(facts, findings, known_count=0, show_all=False):
     stats = facts['stats']
     out = ['# Electron 能力面清单', '']
     out.append(f"- 目标：`{facts['subject']}`")
@@ -472,10 +497,15 @@ def render_evidence(facts, findings):
     out.append('')
 
     out.append('## 可疑项')
+    if known_count:
+        out.append('')
+        out.append(f'另有 {known_count} 条是基线里就有的，没列。这里只放这次新冒出来的。')
     if findings:
         order = {'high': 0, 'medium': 1, 'info': 2}
         for level, text, where in sorted(findings, key=lambda f: order.get(f[0], 9)):
             out.append(f'- [{level}] {text}  `{where}`')
+    elif known_count:
+        out.append('- 没有新的')
     else:
         out.append('- 没撞上规则')
     out.append('')
@@ -777,6 +807,10 @@ def main(argv=None):
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
     parser.add_argument('--diff', metavar='OTHER', help='把 input 当成旧版，和另一份 Evidence 比')
     parser.add_argument('--all', action='store_true', help='不截断，把找到的全列出来')
+    parser.add_argument('--baseline', metavar='FILE',
+                        help='上次的发现，这次只报新冒出来的')
+    parser.add_argument('--write-baseline', metavar='FILE',
+                        help='把这次的发现存成基线，下次用 --baseline 读它')
     parser.add_argument('--runtime', metavar='PROBE_JSON',
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
     args = parser.parse_args(argv)
@@ -803,9 +837,19 @@ def main(argv=None):
     else:
         facts = collect_evidence(load_record(args.input))
         findings = audit_evidence(facts)
+        if args.write_baseline:
+            save_baseline(args.write_baseline, findings, facts['channels'])
+        known_count = 0
+        if args.baseline:
+            known = {(text, where) for _level, text, where in load_baseline(args.baseline)['findings']}
+            fresh = [f for f in findings if (f[1], f[2]) not in known]
+            known_count = len(findings) - len(fresh)
+            findings = fresh
         hot = len([f for f in findings if f[0] in ('high', 'medium')])
         summary_line = (f"{len(facts['channels'])} 条通道，{hot} 条可疑，"
                         f"{len(facts['dyn_channels'])} 处名字是算的")
+        if known_count:
+            summary_line += f'，压掉旧的 {known_count} 条'
         if args.format == 'json':
             payload = {
                 'subject': facts['subject'],
@@ -819,7 +863,7 @@ def main(argv=None):
             }
             text = json.dumps(payload, ensure_ascii=False, indent=2)
         else:
-            text = render_evidence(facts, findings)
+            text = render_evidence(facts, findings, known_count=known_count, show_all=args.all)
             if args.runtime:
                 with open(args.runtime, encoding='utf-8-sig') as fh:
                     probe = json.load(fh)

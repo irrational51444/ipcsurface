@@ -255,6 +255,30 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
 
 
+class BaselineTests(unittest.TestCase):
+    def test_roundtrip(self):
+        findings = [('high', '一条 sender 校验都没有', 'main 进程')]
+        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as fh:
+            path = fh.name
+        try:
+            ipc.save_baseline(path, findings, ['a:1'])
+            loaded = ipc.load_baseline(path)
+        finally:
+            os.unlink(path)
+        self.assertEqual(loaded['findings'], findings)
+        self.assertEqual(loaded['channels'], ['a:1'])
+
+    def test_missing_baseline_is_empty(self):
+        loaded = ipc.load_baseline(None)
+        self.assertEqual(loaded['findings'], [])
+
+    def test_report_says_what_was_suppressed(self):
+        facts = ipc.collect_evidence(minimal_evidence(['a:1']))
+        report = ipc.render_evidence(facts, [], known_count=4)
+        self.assertIn('另有 4 条是基线里就有的', report)
+        self.assertIn('没有新的', report)
+
+
 class DiffTests(unittest.TestCase):
     def test_added_and_removed(self):
         old = ipc.collect_evidence(minimal_evidence(['a:1', 'a:2']))
