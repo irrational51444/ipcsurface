@@ -12,23 +12,90 @@
 import argparse
 import datetime
 import json
+import mmap
 import os
 import re
 import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.7.1'
+__version__ = '0.8.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
 # ---------------------------------------------------------------- asar
 
+class AsarFiles:
+    """asar 里的文件，谁要谁去切，不整包搬进内存。
+
+    四百多兆的包里，有两百多兆是图片字体这类我们连碰都不碰的东西。
+    以前一口气全读进来，峰值就是载荷的一倍多；现在只记偏移，
+    按需从 mmap 里切片，切出来的那份用完就丢。
+    """
+
+    __slots__ = ('_fh', '_mm', '_spans')
+
+    def __init__(self, path, spans):
+        self._fh = open(path, 'rb')
+        try:
+            self._mm = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        except (ValueError, OSError):
+            self._fh.close()
+            raise
+        self._spans = spans
+
+    def __getitem__(self, rel):
+        offset, size = self._spans[rel]
+        return self._mm[offset:offset + size]
+
+    def __contains__(self, rel):
+        return rel in self._spans
+
+    def __iter__(self):
+        return iter(self._spans)
+
+    def __len__(self):
+        return len(self._spans)
+
+    def get(self, rel, default=None):
+        if rel in self._spans:
+            return self[rel]
+        return default
+
+    def keys(self):
+        return self._spans.keys()
+
+    def items(self):
+        for rel in self._spans:
+            yield rel, self[rel]
+
+    def values(self):
+        for rel in self._spans:
+            yield self[rel]
+
+    def close(self):
+        self._mm.close()
+        self._fh.close()
+
+    def total_bytes(self):
+        """包里所有文件加起来的字节数。只查表，不搬内容。"""
+        return sum(size for _offset, size in self._spans.values())
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        self.close()
+        return False
+
+
 def read_asar(path):
-    """解一个 asar，返回 (文件树, {相对路径: bytes})。
+    """解一个 asar，返回 (文件树, 文件表)。
 
     asar 的头是个 pickle：8 字节前缀，其中后 4 字节是头部长度；
     头部本身又是 4 字节长度 + JSON。
+
+    文件表不装内容，只装位置。要哪份切哪份。
     """
     with open(path, 'rb') as fh:
         head = fh.read(8)
@@ -50,21 +117,20 @@ def read_asar(path):
             raise SystemExit('这不是 asar：头部不是合法 JSON')
         base = 8 + header_size
 
-        files = {}
+    spans = {}
 
-        def walk(node, prefix):
-            for name, child in (node.get('files') or {}).items():
-                rel = f'{prefix}{name}'
-                if 'files' in child:
-                    walk(child, rel + '/')
-                else:
-                    offset = int(child.get('offset', 0))
-                    size = int(child.get('size', 0))
-                    fh.seek(base + offset)
-                    files[rel] = fh.read(size)
+    def walk(node, prefix):
+        for name, child in (node.get('files') or {}).items():
+            rel = f'{prefix}{name}'
+            if 'files' in child:
+                walk(child, rel + '/')
+            else:
+                offset = int(child.get('offset', 0))
+                size = int(child.get('size', 0))
+                spans[rel] = (base + offset, size)
 
-        walk(header, '')
-        return header, files
+    walk(header, '')
+    return header, AsarFiles(path, spans)
 
 
 TEXT_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.json', '.html', '.asar')
@@ -1409,18 +1475,23 @@ def harvest_strings(files):
 
 def analyse_asar(path, allow_eval=True):
     header, files = read_asar(path)
-    facts = scan_asar(files, allow_eval=allow_eval)
-    recovered = scan_sourcemaps(files)
-    if recovered:
-        extra = scan_asar(recovered)
-        for key in ('exposes', 'handlers', 'invokes', 'dynamic', 'preloads', 'obfuscation'):
-            merged = set(facts[key]) | set(extra[key])
-            facts[key] = sorted(merged)
-        facts['scanned'] += extra['scanned']
-    facts['recovered'] = sorted(recovered)
-    facts['harvested'] = harvest_strings(files)
-    total = sum(len(v) for v in files.values())
-    return facts, len(files), total
+    # 文件表是开着源文件按需切的，用完得自己关。Windows 上不关，
+    # 这个包删都删不掉。
+    try:
+        facts = scan_asar(files, allow_eval=allow_eval)
+        recovered = scan_sourcemaps(files)
+        if recovered:
+            extra = scan_asar(recovered)
+            for key in ('exposes', 'handlers', 'invokes', 'dynamic', 'preloads', 'obfuscation'):
+                merged = set(facts[key]) | set(extra[key])
+                facts[key] = sorted(merged)
+            facts['scanned'] += extra['scanned']
+        facts['recovered'] = sorted(recovered)
+        facts['harvested'] = harvest_strings(files)
+        total = files.total_bytes()
+        return facts, len(files), total
+    finally:
+        files.close()
 
 
 def main(argv=None):

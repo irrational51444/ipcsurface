@@ -41,13 +41,15 @@ class AsarTests(unittest.TestCase):
         with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
             fh.write(blob)
             path = fh.name
+        header, files = ipc.read_asar(path)
+        # 文件表改成按需切了，源文件得开着；先验完，再关，再删。
         try:
-            header, files = ipc.read_asar(path)
+            self.assertIn('src/main.js', files)
+            self.assertEqual(files['src/main.js'].decode('utf-8'), source)
+            self.assertIn('files', header)
         finally:
+            files.close()
             os.unlink(path)
-        self.assertIn('src/main.js', files)
-        self.assertEqual(files['src/main.js'].decode('utf-8'), source)
-        self.assertIn('files', header)
 
     def test_rejects_garbage(self):
         with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
