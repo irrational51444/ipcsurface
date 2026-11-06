@@ -448,6 +448,22 @@ class HarvestTests(unittest.TestCase):
         self.assertIn('长得像通道的字符串', report)
 
 
+    def test_confidence_ladder_separates_strengths(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        text = ipc.render_asar('x.asar', facts, 1, 10)
+        self.assertIn('可信度分层', text)
+        self.assertIn('写死的名字', text)
+        # 没看见的那一层必须写「未知」，不能写成 0
+        self.assertIn('我这条路看不见，不代表它不在', text)
+
+    def test_confidence_ladder_uses_runtime_counts(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        probe = {'handlers': ['a:b', 'c:d'], 'windows': [{}]}
+        text = ipc.render_asar('x.asar', facts, 1, 10, probe=probe)
+        self.assertIn('2 条通道 / 1 个窗口', text)
+        self.assertIn('启动配方每个应用不一样', text)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.12.1'
+__version__ = '0.13.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -620,7 +620,57 @@ def audit_asar(facts):
     return findings
 
 
-def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None):
+def confidence_ladder(facts, probe=None, poke=None):
+    """把这份报告里的每一样东西按「能证明到什么程度」排队。
+
+    人看报告最容易犯的错不是看不懂，是把不同强度的话当成一样重。
+    所以这一节不列发现，只列强度：每一层能证明什么、不能证明什么、下一步怎么办。
+    """
+    literal = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
+    harvested = facts.get('harvested') or {}
+    own = sum(1 for value in harvested.values()
+              if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
+
+    rows = []
+    rows.append(('写死的名字', str(literal),
+                 '源码里逐字写着，`file:line` 能回到原文复核',
+                 '唯一能整段拿出去复核的一层'))
+    if probe and not probe.get('error'):
+        handlers = probe.get('handlers') or []
+        windows = probe.get('windows') or []
+        rows.append(('程序自己报的', f'{len(handlers)} 条通道 / {len(windows)} 个窗口',
+                     '探针连上主进程，直接读它注册了什么，不是猜的',
+                     '依赖它肯启动；启动配方每个应用不一样，换包要重摸'))
+    elif probe:
+        rows.append(('程序自己报的', '0 条', '探针没跑通，这一层是空的', '先解决启动，再谈运行时'))
+    if poke:
+        rows.append(('敲过一遍的', '见下一节分档',
+                     '喂过不合规输入，看它是照收还是拒绝',
+                     '拒绝只证明有门；门后逻辑没审'))
+    rows.append(('名字是算出来的', str(len(facts['dynamic'])),
+                 '知道这里有调用，名字不是写死的，我算不出来',
+                 '人工看，这是研判的第一入口'))
+    rows.append(('打捞出来的候选', f'{len(harvested)} 个，其中 {own} 个是它自己写的',
+                 '长得像通道名，不等于通道',
+                 '当线索用，别当结论'))
+    rows.append(('没看见的', '未知',
+                 '我这条路看不见，不代表它不在',
+                 '换 REA 走语法级，或者运行时探针'))
+
+    out = ['', '### 可信度分层', '',
+           '同一条报告里的话，强度不是一样的。从上往下，越靠上越站得住。', '']
+    out.append('| 这一层 | 有多少 | 能证明什么 | 不能证明什么 / 下一步 |')
+    out.append('| --- | --- | --- | --- |')
+    for name, count, can, cannot in rows:
+        out.append(f'| {name} | {count} | {can} | {cannot} |')
+    out.append('')
+    out.append('> 这张表里的任何一层都不该被单独引用。报告是给人做判断用的地图，不是判决书。')
+    out.append('')
+    return out
+
+
+def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
+                probe=None, poke=None):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
@@ -636,6 +686,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
     out.append('')
+    out.extend(confidence_ladder(facts, probe=probe, poke=poke))
 
     # 一条都没扫到的时候，最容易被读成「这包干净」。
     # 那是我这套办法的空白，不是这包的结论，得顶在最前面说清楚。
@@ -1702,8 +1753,11 @@ def main(argv=None):
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:
+            probe_data = load_probe(args.runtime) if args.runtime else None
+            poke_data = load_poke(args.poke) if args.poke else None
             text = render_asar(args.input, facts, count, total,
-                               show_all=args.all, findings=findings)
+                               show_all=args.all, findings=findings,
+                               probe=probe_data, poke=poke_data)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
         if args.runtime:
