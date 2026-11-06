@@ -18,7 +18,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.6.0'
+__version__ = '0.6.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
