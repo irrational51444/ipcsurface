@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.11.2'
+__version__ = '0.12.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -863,6 +863,11 @@ def load_poke(path):
     return data
 
 
+# 拦截类的话。抛错本身不算证据，得看它抛的是不是这一类。
+GATE_WORDS = ('reject', 'denied', 'forbidden', 'unauthor', 'untrusted',
+              'sender', 'not allowed', 'permission')
+
+
 def render_poke(rows):
     """把「真敲了一遍」的结果摆出来。
 
@@ -880,14 +885,52 @@ def render_poke(rows):
         return out
 
     by_channel = defaultdict(lambda: {'boom': [], 'ok': []})
+    reasons = defaultdict(list)
     for row in rows:
         bucket = 'boom' if not row.get('ok') else 'ok'
         by_channel[row.get('channel', '?')][bucket].append(row.get('payload', '?'))
+        if not row.get('ok'):
+            reasons[row.get('channel', '?')].append(str(row.get('error') or ''))
 
     swallow = [c for c, v in by_channel.items() if v['ok']]
     boom = [c for c, v in by_channel.items() if v['boom']]
+    gated = [c for c in boom
+             if reasons[c] and all(any(word in r.lower() for word in GATE_WORDS) for r in reasons[c])]
+    business = [c for c in boom if c not in gated]
+
     out.append(f'- 敲了 {len(by_channel)} 条通道，每条四五种不合规的输入')
+    out.append(f'- 照收 {len(swallow)} 条，被拦下 {len(gated)} 条，'
+               f'别的错 {len(business)} 条')
     out.append('')
+
+    if gated:
+        out.append('### 被拦下的')
+        out.append('')
+        out.append('拦的话是程序自己说的，原话抄在下面。这一档大概率是有校验，')
+        out.append('但「大概率」三个字要留着——同一句话背后的实现我没看过。')
+        out.append('')
+        shown = []
+        for channel in gated[:12]:
+            words = next((r for r in reasons[channel]
+                          if any(w in r.lower() for w in GATE_WORDS)), '')
+            out.append(f'- `{channel}`：{words.strip()[:90]}')
+            shown.append(channel)
+        if len(gated) > len(shown):
+            out.append(f'- 还有 {len(gated) - len(shown)} 条同样被拦')
+        out.append('')
+
+    if business:
+        out.append('### 抛了错但不是拦你的')
+        out.append('')
+        out.append('这类最容易被误读成「有校验」。它抛是因为前置条件没满足，')
+        out.append('不是因为它检查了你的输入。')
+        out.append('')
+        for channel in business[:8]:
+            words = reasons[channel][0] if reasons[channel] else ''
+            out.append(f'- `{channel}`：{words.strip()[:90]}')
+        if len(business) > 8:
+            out.append(f'- 还有 {len(business) - 8} 条')
+        out.append('')
 
     if swallow:
         out.append('### 照收的（该看一眼有没有校验）')
@@ -899,16 +942,6 @@ def render_poke(rows):
             out.append(f'- 还有 {len(swallow) - 15} 条同样照收')
         out.append('')
         out.append('> 照收不等于有洞。但参数进来不看看就往下走，是这类通道最常见的问题。')
-        out.append('')
-
-    if boom:
-        out.append('### 抛错的（可能人家本来就该拒）')
-        out.append('')
-        for channel in boom[:15]:
-            kinds = '、'.join(dict.fromkeys(by_channel[channel]['boom']))
-            out.append(f'- `{channel}`：喂 {kinds} 时抛错')
-        out.append('')
-        out.append('> 抛错不一定坏，也可能是拒绝得对。区别在于它拒绝之前有没有干活。')
         out.append('')
     return out
 

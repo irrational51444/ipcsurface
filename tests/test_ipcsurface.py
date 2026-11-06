@@ -517,10 +517,19 @@ class PokeTests(unittest.TestCase):
         self.assertIn('a:1', text)
 
     def test_thrown_errors_go_apart(self):
+        # 业务错误和拦截错误不能混成一档：混了就变成「抛错=有校验」
         rows = [{'channel': 'a:2', 'payload': 'null', 'ok': False, 'error': 'boom'}]
         text = '\n'.join(ipc.render_poke(rows))
-        self.assertIn('抛错的', text)
+        self.assertIn('抛了错但不是拦你的', text)
         self.assertIn('a:2', text)
+
+    def test_gate_words_land_in_the_gated_bucket(self):
+        rows = [{'channel': 'a:3', 'payload': 'null', 'ok': False,
+                 'error': 'rejected IPC without a sender frame'}]
+        text = '\n'.join(ipc.render_poke(rows))
+        self.assertIn('### 被拦下的', text)
+        self.assertNotIn('抛了错但不是拦你的', text)
+        self.assertIn('大概率', text)
 
     def test_empty_result_is_said_out_loud(self):
         self.assertIn('没有结果', '\n'.join(ipc.render_poke([])))
