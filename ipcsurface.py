@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.22.0'
+__version__ = '0.23.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -750,6 +750,9 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
         'resolved': sorted(resolved),
+        'channels': sorted({name for name, _w in handlers}
+                           | {name for name, _w in invokes}
+                           | {name for name, _w in exposes}),
     }
 
 
@@ -1076,8 +1079,53 @@ def confidence_ladder(facts, probe=None, poke=None):
     return out
 
 
+def baseline_delta(facts, baseline):
+    """跟上次比，多了什么、少了什么、哪里变了。
+
+    基线不只看发现，也看通道名——一个包升级之后新开一扇门，
+    那是比「多一条可疑项」更要紧的事。
+    """
+    old_channels = set(baseline.get('channels') or ())
+    new_channels = set(facts.get('channels') or ())
+    old_findings = {(text, where) for _l, text, where in baseline.get('findings') or ()}
+    new_findings = [f for f in audit_asar(facts) if (f[1], f[2]) not in old_findings]
+    return {
+        'added_channels': sorted(new_channels - old_channels),
+        'removed_channels': sorted(old_channels - new_channels),
+        'new_findings': new_findings,
+        'baseline_channels': len(old_channels),
+    }
+
+
+def render_baseline(delta):
+    out = ['', '## 跟基线比', '']
+    if not delta['baseline_channels'] and not delta['new_findings']:
+        out.append('- 基线是空的，等于是第一次跑。这次的结果已经可以当基线用')
+        out.append('')
+        return out
+    out.append(f"- 基线里有 {delta['baseline_channels']} 条通道")
+    added, removed = delta['added_channels'], delta['removed_channels']
+    if added:
+        out.append(f'- 新冒出来 {len(added)} 条：')
+        for name in added[:12]:
+            out.append(f'  - `{name}`')
+        if len(added) > 12:
+            out.append(f'  - 还有 {len(added) - 12} 条')
+    else:
+        out.append('- 没有新通道')
+    if removed:
+        out.append(f'- 基线里有、这次没了的 {len(removed)} 条：')
+        for name in removed[:12]:
+            out.append(f'  - `{name}`')
+        if len(removed) > 12:
+            out.append(f'  - 还有 {len(removed) - 12} 条')
+        out.append('> 名字没了可能是删了，也可能是换了写法认不出——这个工具分不开这两件事。')
+    out.append('')
+    return out
+
+
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
-                probe=None, poke=None):
+                probe=None, poke=None, baseline=None):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
@@ -1094,6 +1142,8 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
     out.append('')
     out.extend(confidence_ladder(facts, probe=probe, poke=poke))
+    if baseline is not None:
+        out.extend(render_baseline(baseline_delta(facts, baseline)))
 
     # 一条都没扫到的时候，最容易被读成「这包干净」。
     # 那是我这套办法的空白，不是这包的结论，得顶在最前面说清楚。
@@ -2206,12 +2256,16 @@ def main(argv=None):
                     'unknown': poke_buckets['unknown'],
                 },
                 'limits': blind_spots(facts, probe=probe_data, poke=poke_data),
+                'baseline': baseline_delta(facts, load_baseline(args.baseline)) if args.baseline else None,
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,
-                               probe=probe_data, poke=poke_data)
+                               probe=probe_data, poke=poke_data,
+                               baseline=load_baseline(args.baseline) if args.baseline else None)
+        if args.write_baseline:
+            save_baseline(args.write_baseline, findings, facts['channels'])
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
         # JSON 已经是结构化的了，再往里拼 markdown 会把它弄成不是 JSON。

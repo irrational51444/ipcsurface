@@ -664,6 +664,41 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertIn('independent_pairs', semantics['independence'])
 
 
+class BaselineTests(unittest.TestCase):
+    def test_delta_reports_added_and_removed(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('new:one', f)"})
+        baseline = {'channels': ['old:one', 'new:one'], 'findings': []}
+        delta = ipc.baseline_delta(facts, baseline)
+        self.assertEqual(delta['removed_channels'], ['old:one'])
+        self.assertEqual(delta['added_channels'], [])
+
+    def test_new_channel_shows_up_in_report(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('new:one', f)"})
+        baseline = {'channels': ['old:one'], 'findings': []}
+        text = ipc.render_asar('x.asar', facts, 1, 10, baseline=baseline)
+        self.assertIn('跟基线比', text)
+        self.assertIn('new:one', text)
+        self.assertIn('old:one', text)
+
+    def test_write_baseline_works_on_asar_path(self):
+        blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        base = path + '.base.json'
+        try:
+            ipc.main([path, '--write-baseline', base, '-o', path + '.md'])
+            with open(base, encoding='utf-8') as fh:
+                saved = json.load(fh)
+        finally:
+            for name in (path, base, path + '.md'):
+                try:
+                    os.unlink(name)
+                except OSError:
+                    pass
+        self.assertIn('x:y', saved['channels'])
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
@@ -757,7 +792,7 @@ class PokeTests(unittest.TestCase):
         self.assertIn('没跑起来', '\n'.join(ipc.render_poke({'error': '调试口没开'})))
 
 
-class BaselineTests(unittest.TestCase):
+class BaselineRoundTripTests(unittest.TestCase):
     def test_roundtrip(self):
         findings = [('high', '一条 sender 校验都没有', 'main 进程')]
         with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as fh:
