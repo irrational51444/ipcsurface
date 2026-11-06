@@ -129,6 +129,8 @@ ipcsurface evidence --baseline baseline.json -o surface.md --fail-on high
 | `--write-baseline FILE` | 把这次的发现存成基线 |
 | `--runtime PROBE` | 把运行时探针的结果并进报告 |
 | `--all` | 不截断 |
+| `--format json` | 三种输入都支持，输出结构化结果 |
+| `--version` | 打印版本号 |
 
 `--fail-on` 的用法：
 

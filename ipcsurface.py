@@ -854,7 +854,24 @@ def main(argv=None):
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
         facts, count, total = analyse_asar(args.input)
-        text = render_asar(args.input, facts, count, total, show_all=args.all)
+        names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
+        if args.format == 'json':
+            text = json.dumps({
+                'mode': 'asar',
+                'subject': args.input,
+                'files': count,
+                'bytes': total,
+                'channels': sorted(names),
+                'dynamic': [what for what, _ in facts['dynamic']],
+                'exposes': [n for n, _ in facts['exposes']],
+                'web_preferences': {k: v[0] for k, v in facts['prefs'].items()},
+                'native_files': facts['native_files'],
+                'obfuscation': [{'what': n, 'where': w, 'level': l}
+                                for n, w, l in facts['obfuscation']],
+                'version': __version__,
+            }, ensure_ascii=False, indent=2)
+        else:
+            text = render_asar(args.input, facts, count, total, show_all=args.all)
         findings = []
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
@@ -863,7 +880,20 @@ def main(argv=None):
                 text += '\n'.join(render_runtime(json.load(fh), names))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
-        text = render_pe(args.input, facts, os.path.getsize(args.input))
+        size = os.path.getsize(args.input)
+        if args.format == 'json':
+            flagged = sorted({fn.split('@')[0] for funcs in facts['libraries'].values()
+                              for fn in funcs if fn.split('@')[0] in DANGEROUS_IMPORTS})
+            text = json.dumps({
+                'mode': 'pe',
+                'subject': args.input,
+                'bits': 64 if facts['is_64'] else 32,
+                'libraries': {k: v for k, v in facts['libraries'].items()},
+                'flagged': flagged,
+                'version': __version__,
+            }, ensure_ascii=False, indent=2)
+        else:
+            text = render_pe(args.input, facts, size)
         findings = []
         total_funcs = sum(len(v) for v in facts['libraries'].values())
         summary_line = f"{len(facts['libraries'])} 个库，{total_funcs} 个函数"
@@ -903,6 +933,9 @@ def main(argv=None):
                 text += '\n'.join(render_runtime(probe, set(facts['channels'])))
 
     if args.out:
+        parent = os.path.dirname(os.path.abspath(args.out))
+        if parent and not os.path.isdir(parent):
+            os.makedirs(parent, exist_ok=True)
         with open(args.out, 'w', encoding='utf-8') as fh:
             fh.write(text)
         # 一行就说完，人不用打开文件也知道要不要看
