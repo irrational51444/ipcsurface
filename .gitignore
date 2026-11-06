@@ -11,3 +11,4 @@ out2/
 build/
 probe/node_modules/
 probe/package-lock.json
+examples/map.asar
