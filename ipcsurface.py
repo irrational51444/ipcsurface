@@ -137,14 +137,22 @@ def scan_asar(files):
     for rel, blob in files.items():
         if not rel.endswith(TEXT_EXT):
             continue
+        # 先用字节找标记。解成字符串再找，慢十倍不止。
+        hot_ipc = (b'ipcMain' in blob or b'contextBridge' in blob
+                   or b'webPreferences' in blob)
+        suspicious = (b'eval(' in blob or b'_0x' in blob or b'atob(' in blob
+                      or b'new Function(' in blob)
+        if not hot_ipc and not suspicious:
+            continue
         try:
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
-        text = fold_literals(text)
-        obfuscation.extend(detect_obfuscation(text, rel))
-        if 'ipcMain' not in text and 'contextBridge' not in text and 'webPreferences' not in text:
+        if suspicious:
+            obfuscation.extend(detect_obfuscation(text, rel))
+        if not hot_ipc:
             continue
+        text = fold_literals(text)
         scanned += 1
         for kind, pattern in PATTERNS:
             for match in pattern.finditer(text):
