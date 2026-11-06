@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.23.0'
+__version__ = '0.24.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -769,6 +769,13 @@ def audit_asar(facts):
     return findings
 
 
+# 对上的两种情形审查路径不同，用枚举分开，别只给一个 true
+CORROBORATION_KINDS = {
+    'static_runtime': '静态（逐字或查表）与运行时各看见一次，两边互不依赖',
+    'static_static': '逐字与查表都对上了，但都在静态侧，只是写法不同，单独看不算独立见证',
+    'none': '只有一条路看见',
+}
+
 CONFIDENCE_SEMANTICS = {
     'what_strength_means': '复核成本和依赖复杂度，不是「这条有多可信」的概率',
     'why': '查表查出来的名字和逐字写着的名字，确定性上没有差别；'
@@ -790,6 +797,10 @@ CONFIDENCE_SEMANTICS = {
     },
     'corroborated_rule': '至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，'
                          '不累加，也不因为对上就跳档。',
+    'action_rule': '每个名字的 actions 列出它所有适用动作，primary_action 取其中最严格的一个'
+                   '（顺序：cite < spot_check_source < trust_after_setup < read_code < triage）。'
+                   '报告给的是最低保证，所以按最费事的那条走，下游不必再自己比。',
+    'corroboration_kinds': CORROBORATION_KINDS,
     'compat_rule': {
         'bump_schema_when': [
             '字段改名或删除',
@@ -806,23 +817,49 @@ CONFIDENCE_SEMANTICS = {
                 '消费方应当按 schema 号选择解析逻辑，别只看字段在不在。',
     },
     'usage_constraints': [
-        '任何一层都不该被单独引用；这是地图，不是判决书。',
-        'take_from_levels_together：判断一个名字，要看它的全部来源标签，不要只挑最硬的那条。',
-        'unknown_is_not_absent：「没看见」是未知，不能当成「没有」。',
-        'strength 用来排序复核顺序，不用来当风险分值。',
+        {
+            'id': 'no_single_layer',
+            'text': '任何一层都不该被单独引用；这是地图，不是判决书。',
+            'must_not': ['use_layer_in_isolation'],
+            'instead': '按 evidence 里每个名字的 sources 全体来看',
+        },
+        {
+            'id': 'judge_by_all_sources',
+            'text': '判断一个名字，要看它的全部来源标签，不要只挑最硬的那条。',
+            'must_not': ['cherry_pick_strongest_source'],
+            'instead': '用 primary_action 决定复核动作，用 sources 决定怎么读',
+        },
+        {
+            'id': 'unknown_is_not_absent',
+            'text': '「没看见」是未知，不能当成「没有」。',
+            'must_not': ['treat_absent_as_negative'],
+            'instead': '在 limits 里找这一路的盲点',
+        },
+        {
+            'id': 'strength_is_not_risk',
+            'text': 'strength 用来排序复核顺序，不用来当风险分值。',
+            'must_not': ['score_risk_from_strength'],
+            'instead': '风险判断看 poke 分档和 preload 暴露面',
+        },
+        {
+            'id': 'check_schema_before_parse',
+            'text': '消费方必须先校验 schema 号，不匹配就拒绝解析，别按字段在不在猜。'
+                    '换号只保证你能察觉不兼容，察觉与否取决于你有没有看。',
+            'must_not': ['parse_without_schema_check'],
+            'instead': '按 schema 号选择解析器，不认识就停下',
+        },
     ],
 }
-# 每层给一条机器能执行的下一步，不要只给一句人话
-LEVEL_ACTION = {
-    'corroborated': 'cite_with_caveat',
+# 每个来源对应一个动作；一个名字有多个来源时，取最严格的那个动作。
+# 「严格」= 复核成本更高。报告给的是最低保证，所以按最费事的那条走。
+ACTION_BY_SOURCE = {
     'literal': 'cite',
     'literal-resolved': 'spot_check_source',
     'runtime': 'trust_after_setup',
-    'poke': 'review_handler',
     'computed': 'read_code',
     'harvested': 'triage',
-    'unseen': 'escalate',
 }
+ACTION_STRICTNESS = ['cite', 'spot_check_source', 'trust_after_setup', 'read_code', 'triage']
 
 
 def channel_sources(facts, probe=None):
@@ -860,10 +897,21 @@ def channel_sources(facts, probe=None):
         add(name, 'harvested', 0.2, where)
 
     for item in seen.values():
-        # 两条互不依赖的路都看见同一个名字，这比任一条单独说都硬。
-        # 但强度不因此上调——对上改变的是复核路径，不是分数。
-        item['corroborated'] = len(item['sources']) >= 2
         item['sources'] = sorted(item['sources'])
+        # 一个名字可能有多个来源，动作按最严格的那个给，别让人猜听谁的
+        actions = [ACTION_BY_SOURCE[s] for s in item['sources'] if s in ACTION_BY_SOURCE]
+        item['actions'] = sorted(set(actions), key=ACTION_STRICTNESS.index)
+        item['primary_action'] = max(actions, key=ACTION_STRICTNESS.index) if actions else 'review'
+        # 对上要分种类：静态对运行时，和静态自己对静态自己，审查路径不一样
+        has_runtime = 'runtime' in item['sources']
+        static_sources = {'literal', 'literal-resolved'} & set(item['sources'])
+        if has_runtime and static_sources:
+            item['corroboration'] = 'static_runtime'
+        elif len(static_sources) >= 2:
+            item['corroboration'] = 'static_static'
+        else:
+            item['corroboration'] = 'none'
+        item['corroborated'] = item['corroboration'] == 'static_runtime'
     return seen
 
 
@@ -990,8 +1038,18 @@ def confidence_levels(facts, probe=None, poke=None):
         'next_step': '换 REA 走语法级，或者运行时探针',
     })
     # 每层配一个机器能照做的动作，别只给一句人话
+    layer_action = {
+        'corroborated': 'cite_with_caveat',
+        'literal': 'cite',
+        'literal-resolved': 'spot_check_source',
+        'runtime': 'trust_after_setup',
+        'poke': 'review_handler',
+        'computed': 'read_code',
+        'harvested': 'triage',
+        'unseen': 'escalate',
+    }
     for level in levels:
-        level['action'] = LEVEL_ACTION.get(level['id'], 'review')
+        level['action'] = layer_action.get(level['id'], 'review')
     return levels
 
 
@@ -2227,7 +2285,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/3',
+                'schema': 'ipcsurface/asar/4',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

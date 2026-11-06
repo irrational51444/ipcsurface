@@ -495,12 +495,29 @@ class ConfidenceTests(unittest.TestCase):
         self.assertIn('unseen', ids)
 
 
-    def test_corroborated_name_beats_a_single_source(self):
+    def test_corroborated_name_needs_two_independent_sides(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        probe = {'handlers': ['vault:unlock'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['vault:unlock']
+        self.assertTrue(item['corroborated'])
+        self.assertEqual(item['corroboration'], 'static_runtime')
+
+    def test_same_side_pair_is_not_corroboration(self):
+        # 逐字 + 打捞都在静态侧，只是写法不同，不算独立见证
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
         facts['harvested'] = {'vault:unlock': ('a.js:1', 'self')}
-        sources = ipc.channel_sources(facts)
-        self.assertTrue(sources['vault:unlock']['corroborated'])
-        self.assertGreater(sources['vault:unlock']['strength'], 1.0 - 0.001)
+        item = ipc.channel_sources(facts)['vault:unlock']
+        self.assertFalse(item['corroborated'])
+        self.assertEqual(item['corroboration'], 'none')
+
+    def test_primary_action_takes_the_strictest(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        probe = {'handlers': ['vault:unlock'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['vault:unlock']
+        self.assertIn('cite', item['actions'])
+        self.assertIn('trust_after_setup', item['actions'])
+        # 两个动作都能用，主动作必须是更费事的那个
+        self.assertEqual(item['primary_action'], 'trust_after_setup')
 
     def test_harvested_only_name_stays_weak(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
@@ -547,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/3')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/4')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -660,7 +677,12 @@ class RestoreLoopTests(unittest.TestCase):
         semantics = ipc.CONFIDENCE_SEMANTICS
         self.assertIn('bump_schema_when', semantics['compat_rule'])
         self.assertTrue(any('枚举' in line for line in semantics['compat_rule']['bump_schema_when']))
-        self.assertTrue(any('地图' in line for line in semantics['usage_constraints']))
+        # 约束是结构化的，不只是字符串：机器能照着拦
+        ids = [item['id'] for item in semantics['usage_constraints']]
+        self.assertIn('no_single_layer', ids)
+        self.assertIn('check_schema_before_parse', ids)
+        by_id = {item['id']: item for item in semantics['usage_constraints']}
+        self.assertIn('use_layer_in_isolation', by_id['no_single_layer']['must_not'])
         self.assertIn('independent_pairs', semantics['independence'])
 
 
