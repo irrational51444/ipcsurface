@@ -419,7 +419,34 @@ def render_evidence(facts, findings):
         out.append('- 没撞上规则')
     out.append('')
     out.append('> 依据静态语法，没有执行目标。「没写」不等于「没有」，也可能在别处设置。')
+    out.append('')
+    out.extend(next_steps(facts, findings))
     return '\n'.join(out)
+
+
+def next_steps(facts, findings):
+    """报告别停在免责声明上。给两三条具体的、能立刻动手的。"""
+    lines = ['## 下一步', '']
+    steps = []
+    order = {'high': 0, 'medium': 1}
+    for level, text, where in sorted(findings, key=lambda f: order.get(f[0], 9)):
+        if level in order and len(steps) < 3:
+            if '进程' in where:
+                steps.append(f'{text} —— {where}')
+            else:
+                steps.append(f'先看 `{where}` —— {text}')
+    for expr, where in facts['dyn_channels'][:2]:
+        steps.append(f'去 `{where}` 看那一行，名字是算出来的，得人读')
+    if not facts['windows']:
+        steps.append('没找到 BrowserWindow，先确认是不是 Electron，或者入口藏在别的文件里')
+    for channel in facts['channels'][:2]:
+        if channel in facts['handles'] and channel not in facts['invokes']:
+            steps.append(f'`{channel}` 只有主进程那头，去看看谁在调它')
+    if not steps:
+        steps.append('这份报告没撞上规则，可以往下看通道表自己过一遍')
+    lines.extend(f'{i}. {s}' for i, s in enumerate(steps, 1))
+    lines.append('')
+    return lines
 
 
 # ---------------------------------------------------------------- diff
@@ -498,13 +525,20 @@ def main(argv=None):
         new = collect_evidence(load_record(args.diff))
         text = render_diff(old, new, os.path.basename(args.input), os.path.basename(args.diff))
         findings = []
+        old_set, new_set = set(old['channels']), set(new['channels'])
+        summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
         facts, count, total = analyse_asar(args.input)
         text = render_asar(args.input, facts, count, total)
         findings = []
+        names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
+        summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
     else:
         facts = collect_evidence(load_record(args.input))
         findings = audit_evidence(facts)
+        hot = len([f for f in findings if f[0] in ('high', 'medium')])
+        summary_line = (f"{len(facts['channels'])} 条通道，{hot} 条可疑，"
+                        f"{len(facts['dyn_channels'])} 处名字是算的")
         if args.format == 'json':
             payload = {
                 'subject': facts['subject'],
@@ -523,7 +557,8 @@ def main(argv=None):
     if args.out:
         with open(args.out, 'w', encoding='utf-8') as fh:
             fh.write(text)
-        print(f'wrote {args.out}', file=sys.stderr)
+        # 一行就说完，人不用打开文件也知道要不要看
+        print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:
         print(text)
 

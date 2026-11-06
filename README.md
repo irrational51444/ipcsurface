@@ -75,6 +75,12 @@ npm install -g rea-agents
 ipcsurface app.asar surface.md
 ```
 
+写完终端只留一行，人不用打开文件就知道要不要看：
+
+```
+wrote surface.md — 5 条通道，2 条可疑，0 处名字是算的
+```
+
 **准的**，两步：
 
 ```bash
