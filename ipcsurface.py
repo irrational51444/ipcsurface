@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.15.0'
+__version__ = '0.16.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -766,6 +766,41 @@ def confidence_levels(facts, probe=None, poke=None):
     return levels
 
 
+def runtime_crosscheck(probe, static_names):
+    """静态和运行时各看见了什么，差在哪儿。给人看的那段和 json 共用这一份。"""
+    if not probe:
+        return None
+    if probe.get('error'):
+        return {'error': probe.get('error'), 'handlers': [], 'listeners': [],
+                'windows': [], 'only_runtime': [], 'only_static': sorted(static_names)}
+    handlers = probe.get('handlers') or []
+    only_runtime = sorted(set(handlers) - set(static_names))
+    only_static = sorted(set(static_names) - set(handlers))
+    return {
+        'handlers': handlers,
+        'listeners': probe.get('listeners') or [],
+        'windows': probe.get('windows') or [],
+        'only_runtime': only_runtime,
+        'only_static': only_static,
+    }
+
+
+def blind_spots(facts, probe=None, poke=None):
+    """这份报告看不到的地方。和 md 那节「没看清的地方」是同一份清单。"""
+    items = ['混淆过、压过、名字算出来的代码，我一条都认不出来；所以「没看见」永远是未知，不是没有']
+    if facts['obfuscation']:
+        items.append(f"这包有 {len(facts['obfuscation'])} 处混淆指纹，"
+                     f"其中强 {sum(1 for _n, _w, l in facts['obfuscation'] if l == 'strong')} 处")
+    if facts['native_files']:
+        items.append(f"有 {len(facts['native_files'])} 个原生模块，越界和内存问题不在这一层看")
+    items.append('注册过、能调，不等于调得成；权限和 sender 校验要看运行时那一层')
+    if not probe:
+        items.append('没有给 --runtime，运行时那层是空的')
+    if not poke:
+        items.append('没有给 --poke，门禁状态全部未知')
+    return items
+
+
 def confidence_ladder(facts, probe=None, poke=None):
     """把 confidence_levels 排成一张给人看的表。"""
     levels = confidence_levels(facts, probe=probe, poke=poke)
@@ -1047,6 +1082,39 @@ GATE_WORDS = ('reject', 'denied', 'forbidden', 'unauthor', 'untrusted',
               'sender', 'not allowed', 'permission')
 
 
+def classify_poke(rows):
+    """把敲出来的结果分档。给人看的那节和 json 用的是同一份判断，不维护两份。"""
+    if not isinstance(rows, list) or not rows:
+        return {'channels': 0, 'swallowed': [], 'gated': [], 'unknown': [],
+                'reasons': {}, 'error': rows.get('error') if isinstance(rows, dict) else None}
+
+    by_channel = defaultdict(lambda: {'boom': [], 'ok': []})
+    reasons = defaultdict(list)
+    for row in rows:
+        channel = row.get('channel', '?')
+        if row.get('ok'):
+            by_channel[channel]['ok'].append(row.get('payload', '?'))
+        else:
+            by_channel[channel]['boom'].append(row.get('payload', '?'))
+            reasons[channel].append(str(row.get('error') or ''))
+
+    swallowed = sorted(c for c, v in by_channel.items() if v['ok'])
+    boom = [c for c, v in by_channel.items() if v['boom']]
+    gated = sorted(c for c in boom
+                   if reasons[c] and all(any(word in r.lower() for word in GATE_WORDS)
+                                         for r in reasons[c]))
+    unknown = sorted(c for c in boom if c not in gated)
+    return {
+        'channels': len(by_channel),
+        'swallowed': swallowed,
+        'swallowed_payloads': {c: by_channel[c]['ok'] for c in swallowed},
+        'gated': gated,
+        'unknown': unknown,
+        'reasons': {c: reasons[c] for c in boom},
+        'error': None,
+    }
+
+
 def render_poke(rows):
     """把「真敲了一遍」的结果摆出来。
 
@@ -1063,21 +1131,11 @@ def render_poke(rows):
         out.append('')
         return out
 
-    by_channel = defaultdict(lambda: {'boom': [], 'ok': []})
-    reasons = defaultdict(list)
-    for row in rows:
-        bucket = 'boom' if not row.get('ok') else 'ok'
-        by_channel[row.get('channel', '?')][bucket].append(row.get('payload', '?'))
-        if not row.get('ok'):
-            reasons[row.get('channel', '?')].append(str(row.get('error') or ''))
+    buckets = classify_poke(rows)
+    reasons = buckets['reasons']
+    swallow, gated, business = buckets['swallowed'], buckets['gated'], buckets['unknown']
 
-    swallow = [c for c, v in by_channel.items() if v['ok']]
-    boom = [c for c, v in by_channel.items() if v['boom']]
-    gated = [c for c in boom
-             if reasons[c] and all(any(word in r.lower() for word in GATE_WORDS) for r in reasons[c])]
-    business = [c for c in boom if c not in gated]
-
-    out.append(f'- 敲了 {len(by_channel)} 条通道，每条四五种不合规的输入')
+    out.append(f"- 敲了 {buckets['channels']} 条通道，每条四五种不合规的输入")
     out.append(f'- 照收 {len(swallow)} 条，被拦下 {len(gated)} 条，'
                f'别的错 {len(business)} 条')
     out.append('')
@@ -1118,7 +1176,7 @@ def render_poke(rows):
         out.append('### 照收的（该看一眼有没有校验）')
         out.append('')
         for channel in swallow[:15]:
-            kinds = '、'.join(dict.fromkeys(by_channel[channel]['ok']))
+            kinds = '、'.join(dict.fromkeys(buckets['swallowed_payloads'].get(channel, [])))
             out.append(f'- `{channel}`：喂 {kinds} 都照收，还返回了结果')
         if len(swallow) > 15:
             out.append(f'- 还有 {len(swallow) - 15} 条同样照收')
@@ -1868,7 +1926,10 @@ def main(argv=None):
         probe_data = load_probe(args.runtime) if args.runtime else None
         poke_data = load_poke(args.poke) if args.poke else None
         if args.format == 'json':
+            checks = runtime_crosscheck(probe_data, names)
+            poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
+                'schema': 'ipcsurface/asar/1',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,
@@ -1884,6 +1945,15 @@ def main(argv=None):
                 'confidence': confidence_levels(facts, probe=probe_data, poke=poke_data),
                 # 每个名字各自是被谁看见的，别让弱证据借强证据的光
                 'evidence': channel_sources(facts, probe=probe_data),
+                # 下面三样是「人看得见、机器以前看不见」的部分
+                'runtime': checks,
+                'poke': None if poke_buckets is None else {
+                    'channels': poke_buckets['channels'],
+                    'swallowed': poke_buckets['swallowed'],
+                    'gated': poke_buckets['gated'],
+                    'unknown': poke_buckets['unknown'],
+                },
+                'limits': blind_spots(facts, probe=probe_data, poke=poke_data),
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:

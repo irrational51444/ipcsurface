@@ -530,6 +530,41 @@ class ConfidenceTests(unittest.TestCase):
         self.assertIn('literal', data['evidence']['x:y']['sources'])
 
 
+    def test_json_has_the_same_sections_as_the_markdown(self):
+        blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        out = path + '.json'
+        try:
+            ipc.main([path, '--format', 'json', '-o', out])
+            with open(out, encoding='utf-8') as fh:
+                data = json.load(fh)
+        finally:
+            for name in (path, out):
+                try:
+                    os.unlink(name)
+                except OSError:
+                    pass
+        # 人看得见的那几节，机器也得看得见
+        self.assertEqual(data['schema'], 'ipcsurface/asar/1')
+        self.assertIn('limits', data)
+        self.assertTrue(any('未知' in line for line in data['limits']))
+        self.assertIsNone(data['runtime'])
+        self.assertIsNone(data['poke'])
+
+    def test_poke_buckets_match_the_markdown_split(self):
+        rows = [
+            {'channel': 'a:1', 'ok': True, 'payload': 'null'},
+            {'channel': 'a:2', 'ok': False, 'payload': 'null', 'error': 'rejected sender'},
+            {'channel': 'a:3', 'ok': False, 'payload': 'null', 'error': 'boom'},
+        ]
+        buckets = ipc.classify_poke(rows)
+        self.assertEqual(buckets['swallowed'], ['a:1'])
+        self.assertEqual(buckets['gated'], ['a:2'])
+        self.assertEqual(buckets['unknown'], ['a:3'])
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
