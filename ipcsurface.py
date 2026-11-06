@@ -10,12 +10,15 @@
 """
 
 import argparse
+import datetime
 import json
 import os
 import re
 import struct
 import sys
 from collections import defaultdict
+
+__version__ = '0.4.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -81,6 +84,12 @@ PATTERNS = [
 
 def line_of(text, pos):
     return text.count('\n', 0, pos) + 1
+
+
+def stamp():
+    """报告里带生成时间和版本——审出来的东西要能对上号。"""
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
+    return f'生成于 {now}，ipcsurface {__version__}'
 
 
 # 分两档。strong 才算「这包被人动过」，weak 只是常见写法，报出来供参考。
@@ -159,6 +168,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{target}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
+    out.append(f'- {stamp()}')
     out.append('')
     out.append('## 这份报告能信多少')
     out.append('')
@@ -414,6 +424,7 @@ def render_evidence(facts, findings, known_count=0, show_all=False):
     out = ['# Electron 能力面清单', '']
     out.append(f"- 目标：`{facts['subject']}`")
     out.append(f"- 摘要 sha256：`{facts['sha'][:16]}…`")
+    out.append(f'- {stamp()}')
     out.append(f"- 解析 {stats.get('parsed_javascript_files', '?')} 个 JS 文件，"
                f"{stats.get('visited_ast_nodes', '?')} 个 AST 节点，"
                f"失败 {stats.get('parse_failures', 0)} 个")
@@ -810,8 +821,11 @@ def analyse_asar(path):
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog='ipcsurface',
-        description='把一个 Electron 应用的能力面压成一页纸。输入可以是 .asar，也可以是 REA 的 Evidence JSON')
-    parser.add_argument('input', help='.asar 包，或 REA 的 Evidence JSON')
+        description='把一个 Electron 应用的能力面压成一页纸。'
+                    '输入可以是 .asar、REA 的 Evidence JSON，或者一个 dll/exe。',
+        epilog='报告第一节永远是「这份报告能信多少」，然后是证据，最后是下一步。')
+    parser.add_argument('input', help='.asar 包、REA 的 Evidence JSON，或 dll/exe')
+    parser.add_argument('--version', action='version', version=f'ipcsurface {__version__}')
     parser.add_argument('-o', '--out', help='写到文件，不给就打到标准输出')
     parser.add_argument('--format', choices=('md', 'json'), default='md')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
@@ -824,6 +838,12 @@ def main(argv=None):
     parser.add_argument('--runtime', metavar='PROBE_JSON',
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
     args = parser.parse_args(argv)
+
+    if not os.path.exists(args.input):
+        raise SystemExit(f'没这个文件：{args.input}')
+    if os.path.isdir(args.input):
+        raise SystemExit(f'这是个目录，不是文件：{args.input}\n'
+                         '要分析没打包的应用，用 probe/run.js，不要用这个命令')
 
     if args.diff:
         old = collect_evidence(load_record(args.input))
