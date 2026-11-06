@@ -11,7 +11,7 @@ mkdir -p build
 python make-bulk.py
 python make-map.py
 
-for target in static-asar dyn-asar obf-asar obf2-asar obf3-asar obf4-asar bulk-asar native-asar; do
+for target in static-asar dyn-asar obf-asar obf2-asar obf3-asar obf4-asar obf5-asar bulk-asar native-asar; do
   echo "==> $target"
   npx --yes @electron/asar pack "$target" "build/$target.asar"
 

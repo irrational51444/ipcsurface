@@ -378,6 +378,25 @@ class SourcemapTests(unittest.TestCase):
         self.assertEqual(ipc.scan_sourcemaps({'a.js.map': blob}), {})
 
 
+class CrossFileTests(unittest.TestCase):
+    def test_constant_defined_elsewhere_is_resolved(self):
+        files = {
+            'src/channels.js': b"const VAULT_UNLOCK_CHANNEL = 'vault:unlock';",
+            'src/main.js': b"ipcMain.handle(VAULT_UNLOCK_CHANNEL, f)",
+        }
+        facts = ipc.scan_asar(files)
+        self.assertIn('vault:unlock', [n for n, _ in facts['handlers']])
+
+    def test_unknown_name_is_left_alone(self):
+        files = {'src/main.js': b'ipcMain.handle(SOMETHING_UNKNOWN, f)'}
+        facts = ipc.scan_asar(files)
+        self.assertEqual(facts['handlers'], [])
+
+    def test_short_names_are_not_in_the_global_table(self):
+        files = {'src/a.js': b"const ab = 'vault:unlock';"}
+        self.assertEqual(ipc.build_global_constants(files), {})
+
+
 class ClassifyTests(unittest.TestCase):
     def test_node_modules_is_third_party(self):
         self.assertEqual(ipc.classify_path('node_modules/pkg/index.js'), 'dep')

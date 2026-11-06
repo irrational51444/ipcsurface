@@ -100,6 +100,17 @@ ipcMain.handle(_d('\x71\x66\x72\x6b\x73...'), (e, p) => ...);
 
 这一项验的是「嵌套剥不剥得开」。剥得开，但只在这个参数是死字符串的前提下。
 
+## obf5-asar
+
+通道名单独放在 `channels.js`，主进程那边 import 进来用：
+
+```js
+const VAULT_UNLOCK_CHANNEL = 'vault:unlock';   // channels.js
+ipcMain.handle(VAULT_UNLOCK_CHANNEL, ...);      // main.js
+```
+
+期望结果：两条通道都认出来。一个文件一个文件扫永远配不上这种，所以工具会先收一遍全包的字符串常量，第二遍扫的时候查表。
+
 ## 怎么跑
 
 需要 Node、[REA](https://github.com/morluto/rea)、`@electron/asar`。

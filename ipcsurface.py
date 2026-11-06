@@ -306,19 +306,47 @@ CONST_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]{3,})\s*=\s*"
                        r"""(['"])((?:\\.|(?!\2)[^\\]){1,120})\2\s*;""")
 
 
-def propagate_constants(text):
+def propagate_constants(text, extra=None):
     """把 `const PREFIX = 'ledger:'` 这种常量，代回到拼接的地方。
 
-    代不回完整值也没关系——`"ledger:" + name` 至少告诉你前缀是什么，
-    比光写 `PREFIX + name` 强。只代后面紧跟加号的位置，别处不动。
+    extra 是从全包别处收来的常量表——跨文件那种。只认名字够长的，
+    撞车的可能性小一点。本文件自己的定义优先。
     """
     constants = {m.group(1): m.group(3) for m in CONST_DEF.finditer(text)}
+    if extra:
+        # 只拿这段代码里真的出现过的名字。几千个常量挨个试，会把 4 秒变成 95 秒。
+        for name, value in extra.items():
+            if name in text:
+                constants.setdefault(name, value)
     if not constants:
         return text
-    for name, value in constants.items():
-        pattern = re.compile(r'(?<![\w$.])' + re.escape(name) + r'(\s*\+)')
-        text = pattern.sub(lambda m, v=value: json.dumps(v, ensure_ascii=False) + m.group(1), text)
-    return text
+    # 一次扫完，不要一个名字一个正则
+    names = sorted(constants, key=len, reverse=True)
+    pattern = re.compile(r'(?<![\w$.])(' + '|'.join(map(re.escape, names)) + r')(\s*\+)')
+    return pattern.sub(
+        lambda m: json.dumps(constants[m.group(1)], ensure_ascii=False) + m.group(2), text)
+
+
+IPC_ARG = re.compile(r'(ipcMain\.(?:handle|handleOnce|on)|ipcRenderer\.(?:invoke|send))'
+                     r'\(\s*([A-Za-z_$][\w$]*)\s*([,)])')
+
+
+def resolve_ipc_arg(text, extra=None):
+    """`ipcMain.handle(CHANNEL_NAME, …)` 这种，把常量换回它的值。
+
+    名字可能定义在另一个文件里，所以要靠 extra 那张全包的表。
+    """
+    if not extra:
+        return text
+
+    def replace(match):
+        name = match.group(2)
+        value = extra.get(name)
+        if value is None:
+            return match.group(0)
+        return f'{match.group(1)}({json.dumps(value, ensure_ascii=False)}{match.group(3)}'
+
+    return IPC_ARG.sub(replace, text)
 
 
 def fold_literals(text):
@@ -340,12 +368,43 @@ def detect_obfuscation(text, rel):
     return hits
 
 
+def build_global_constants(files):
+    """先把所有文件里的字符串常量收成一张表。
+
+    跨文件的常量看不见——`const CHANNEL = 'vault:unlock'` 写在 a.js，
+    `ipcMain.handle(CHANNEL)` 写在 b.js。一个文件一个文件扫，永远配不上。
+    这一步先扫一遍建表，第二遍才有得查。
+
+    名字太短的不收，会撞车。同一个名字出现两次也只留第一份。
+    """
+    table = {}
+    for rel, blob in files.items():
+        if not rel.endswith(JS_EXT):
+            continue
+        # 太大的多半是打包产物，常量几千个，收了也没用，还慢
+        if len(blob) > 300_000:
+            continue
+        if b'=' not in blob or (b"'" not in blob and b'"' not in blob):
+            continue
+        try:
+            text = blob.decode('utf-8')
+        except UnicodeDecodeError:
+            text = blob.decode('latin-1', 'ignore')
+        for match in CONST_DEF.finditer(text):
+            name, value = match.group(1), match.group(3)
+            if len(name) >= 6 and name not in table:
+                table[name] = value
+    return table
+
+
 def scan_asar(files, allow_eval=True):
     """按字符串扫一遍源码。粗，但不用装任何东西。"""
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
     obfuscation = []
     scanned = 0
+    # 先收一遍全包的常量，跨文件那种才配得上
+    global_consts = build_global_constants(files)
 
     for rel, blob in files.items():
         if not rel.endswith(TEXT_EXT):
@@ -369,7 +428,8 @@ def scan_asar(files, allow_eval=True):
         if allow_eval:
             text = restore_decode_calls(text)
         text = fold_templates(text)
-        text = propagate_constants(text)
+        text = propagate_constants(text, extra=global_consts)
+        text = resolve_ipc_arg(text, extra=global_consts)
         text = fold_literals(text)
         scanned += 1
         for kind, pattern in PATTERNS:
