@@ -176,7 +176,7 @@ ipcsurface evidence --runtime probe.json -o surface.md
 
 ## 输出长什么样
 
-![真实输出：对一个 5 条通道的应用跑出来的报告](docs/preview.png)
+![真实输出：对一个 5 条通道的应用跑出来的报告](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/preview.png)
 
 上面这张是真跑出来的，不是画的示意图。`examples/build.sh` 跑一遍就能自己复现。
 
@@ -276,7 +276,7 @@ python -m unittest discover -s tests -v   # 单元测试，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍
 ```
 
-![冒烟跑完的样子](docs/smoke.png)
+![冒烟跑完的样子](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/smoke.png)
 
 单元测试测函数，冒烟测命令行。分开是因为它们会挂的原因不一样——函数写错是逻辑问题，命令跑不通是参数问题，后者单元测试看不见。门禁那两项还要求特定的退出码：压过的包必须返回 2，干净的必须返回 0。跑通不算数，拦得住才算。
 
