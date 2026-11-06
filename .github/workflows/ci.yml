@@ -23,7 +23,7 @@ jobs:
       - name: 冒烟
         run: bash scripts/smoke.sh
       - name: 自查（没有真包时自动跳过真包那一节）
-        run: python build/selfcheck.py
+        run: python scripts/selfcheck.py
       - name: 拿不到证据时要报错，不能静悄悄过
         run: |
           set +e

@@ -328,10 +328,10 @@ cd examples && bash build.sh
 
 ## 自查
 
-改完东西跑一遍，三十项，全绿才算收工：
+改完东西跑一遍，三十多项，全绿才算收工：
 
 ```bash
-python build/selfcheck.py
+python scripts/selfcheck.py
 ```
 
 查的是这些：版本号和 badge、README、CHANGELOG 对不对得上；schema 号；每条规则有没有对应用例；每个聚合字段的 `must_not` 有没有出处；真包实测数字（22,102 文件 / 41 条通道 / 221 候选）；报告里该有的话在不在；旧基线拦不拦得住；工作区干不干净、tag 推没推。
@@ -373,7 +373,7 @@ python build/selfcheck.py
 ```bash
 python -m unittest discover -s tests -v   # 127 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
-python build/selfcheck.py                 # 三十项自查，含真包实测
+python scripts/selfcheck.py                 # 三十多项自查，含真包实测
 ```
 
 ![冒烟跑完的样子](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/smoke.png)
@@ -396,12 +396,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.31.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.31.1**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.31.0
+git checkout v0.31.1
 python ipcsurface.py --version
 ```
 
@@ -409,7 +409,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.31.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.31.1 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |
