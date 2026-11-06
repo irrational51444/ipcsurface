@@ -272,8 +272,8 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 三十七个用例，只用标准库
-bash scripts/smoke.sh                     # 把每条命令真跑一遍，十一项
+python -m unittest discover -s tests -v   # 单元测试，只用标准库
+bash scripts/smoke.sh                     # 把每条命令真跑一遍
 ```
 
 单元测试测函数，冒烟测命令行。分开是因为它们会挂的原因不一样——函数写错是逻辑问题，命令跑不通是参数问题，后者单元测试看不见。
