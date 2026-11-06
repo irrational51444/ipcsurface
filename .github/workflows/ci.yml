@@ -20,6 +20,10 @@ jobs:
           ipcsurface --help
       - name: 测试
         run: python -m unittest discover -s tests -v
+      - name: 冒烟
+        run: bash scripts/smoke.sh
+      - name: 自查（没有真包时自动跳过真包那一节）
+        run: python build/selfcheck.py
       - name: 拿不到证据时要报错，不能静悄悄过
         run: |
           set +e
@@ -28,3 +32,41 @@ jobs:
           code=$?
           echo "exit=$code"
           test "$code" -ne 0
+
+  signal:
+    # 这一节验的是「CI 能不能靠退出码和 SARIF 做判断」，不是验工具本身
+    runs-on: ubuntu-latest
+    needs: check
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 造靶场
+        run: |
+          pip install .
+          cd examples && bash build.sh
+      - name: 干净靶子必须退出 0
+        run: |
+          set -e
+          ipcsurface examples/build/static-asar.asar -o /tmp/clean.md --fail-on high
+          echo "干净包退出码 $?"
+      - name: 有问题的靶子必须退出 2
+        run: |
+          set +e
+          ipcsurface examples/build/obf-asar.asar -o /tmp/dirty.md --fail-on high
+          code=$?
+          echo "有问题的包退出码 $code"
+          test "$code" -eq 2
+      - name: 产出 SARIF 并上传
+        if: always()
+        run: |
+          ipcsurface examples/build/obf-asar.asar --format sarif -o /tmp/ipcsurface.sarif || true
+          python -c "import json;d=json.load(open('/tmp/ipcsurface.sarif'));print('sarif', d['version'], len(d['runs'][0]['results']), 'results')"
+      - uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: /tmp/ipcsurface.sarif

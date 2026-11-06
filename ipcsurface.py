@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import hashlib
 import json
 import mmap
 import os
@@ -19,7 +20,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.30.1'
+__version__ = '0.31.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -2374,6 +2375,61 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         files.close()
 
 
+EXIT_CODES = {
+    0: '没有触发门禁',
+    1: '输入有问题（文件不存在、不是 asar、参数不对）',
+    2: '--fail-on 被触发',
+    3: '内部错误：工具自己崩了，不是目标的问题',
+}
+
+
+def render_sarif(target, findings, version):
+    """SARIF 2.1.0。CI 平台直接能读，不用为每个平台写一遍解析。
+
+    只把「可疑项」放进去。通道清单、可信度分层那些不是告警，
+    塞进 SARIF 会被当成告警计数，反而失真。
+    """
+    level_map = {'high': 'error', 'medium': 'warning', 'info': 'note'}
+    rules, results = {}, []
+    for level, text, where in findings:
+        # 规则 id 要是 ASCII：中文标题转成 slug 会空，空了就用文字摘要兜底，
+        # 同一条规则每次都得到同一个 id，CI 才能拿它做抑制和分类。
+        slug = re.sub(r'[^A-Za-z0-9]+', '-', text.split('：')[0])[:40].strip('-')
+        if not slug:
+            slug = 'finding-' + hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]
+        rule_id = 'ipcsurface/' + slug.lower()
+        rules.setdefault(rule_id, {
+            'id': rule_id,
+            'name': slug[:40],
+            'shortDescription': {'text': text},
+            'defaultConfiguration': {'level': level_map.get(level, 'note')},
+        })
+        path, _, line = where.rpartition(':')
+        location = {'physicalLocation': {'artifactLocation': {'uri': path or where}}}
+        if line.isdigit():
+            location['physicalLocation']['region'] = {'startLine': int(line)}
+        results.append({
+            'ruleId': rule_id,
+            'level': level_map.get(level, 'note'),
+            'message': {'text': f'{text}（{where}）'},
+            'locations': [location],
+        })
+    return {
+        '$schema': 'https://json.schemastore.org/sarif-2.1.0.json',
+        'version': '2.1.0',
+        'runs': [{
+            'tool': {'driver': {
+                'name': 'ipcsurface',
+                'version': version,
+                'informationUri': 'https://github.com/irrational51444/ipcsurface',
+                'rules': list(rules.values()),
+            }},
+            'automationDetails': {'id': 'ipcsurface/' + version},
+            'results': results,
+        }],
+    }
+
+
 def main(argv=None):
     # Windows 控制台默认不是 UTF-8，直接打中文会乱码
     for stream in (sys.stdout, sys.stderr):
@@ -2390,7 +2446,8 @@ def main(argv=None):
     parser.add_argument('input', help='.asar 包、REA 的 Evidence JSON，或 dll/exe')
     parser.add_argument('--version', action='version', version=f'ipcsurface {__version__}')
     parser.add_argument('-o', '--out', help='写到文件，不给就打到标准输出')
-    parser.add_argument('--format', choices=('md', 'json'), default='md')
+    parser.add_argument('--format', choices=('md', 'json', 'sarif'), default='md',
+                        help='md 给人看，json 给程序读，sarif 直接喂 CI 平台')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
     parser.add_argument('--diff', metavar='OTHER', help='把 input 当成旧版，和另一份 Evidence 比')
     parser.add_argument('--all', action='store_true', help='不截断，把找到的全列出来')
@@ -2496,8 +2553,11 @@ def main(argv=None):
             save_baseline(args.write_baseline, findings, facts['channels'])
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
-        # JSON 已经是结构化的了，再往里拼 markdown 会把它弄成不是 JSON。
-        if args.format != 'json':
+        # JSON 和 SARIF 都是结构化的，再往里拼 markdown 会把它弄成不是那个格式。
+        if args.format == 'sarif':
+            text = json.dumps(render_sarif(args.input, findings, __version__),
+                              ensure_ascii=False, indent=2)
+        elif args.format != 'json':
             if probe_data:
                 text += '\n'.join(render_runtime(probe_data, names))
             if poke_data:

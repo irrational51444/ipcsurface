@@ -848,6 +848,58 @@ class RuleRegistryTests(unittest.TestCase):
         self.assertEqual(item['weakest_strength'], 0.2)
 
 
+class OutputContractTests(unittest.TestCase):
+    """输出契约：CI 靠这些信号做判断，改了就得出事。"""
+
+    def test_sarif_is_valid_shape(self):
+        findings = [('high', '强混淆指纹：eval 直接执行字符串', 'src/app.js:21'),
+                    ('info', '没写 sandbox，走 Electron 默认值', 'src/main.js:31')]
+        doc = ipc.render_sarif('app.asar', findings, '1.2.3')
+        self.assertEqual(doc['version'], '2.1.0')
+        run = doc['runs'][0]
+        self.assertEqual(run['tool']['driver']['name'], 'ipcsurface')
+        self.assertEqual(run['tool']['driver']['version'], '1.2.3')
+        self.assertEqual(len(run['results']), 2)
+        first = run['results'][0]
+        self.assertEqual(first['level'], 'error')
+        self.assertEqual(first['locations'][0]['physicalLocation']['artifactLocation']['uri'],
+                         'src/app.js')
+        self.assertEqual(first['locations'][0]['physicalLocation']['region']['startLine'], 21)
+        # 规则 id 必须是 ASCII，中文标题也要有稳定 id，否则 CI 没法按规则抑制
+        for rule in run['tool']['driver']['rules']:
+            rule['id'].encode('ascii')
+
+    def test_sarif_rule_id_is_stable(self):
+        findings = [('high', '强混淆指纹：eval', 'a.js:1')]
+        one = ipc.render_sarif('x', findings, '1')
+        two = ipc.render_sarif('x', findings, '2')
+        self.assertEqual(one['runs'][0]['results'][0]['ruleId'],
+                         two['runs'][0]['rules' if False else 'results'][0]['ruleId'])
+
+    def test_exit_code_table_is_documented(self):
+        self.assertEqual(ipc.EXIT_CODES[0], '没有触发门禁')
+        self.assertIn('--fail-on', ipc.EXIT_CODES[2])
+        self.assertIn('内部错误', ipc.EXIT_CODES[3])
+
+    def test_fail_on_returns_two_and_clean_returns_zero(self):
+        dirty = make_asar({'src/app.js': b'eval(x)\nipcMain.handle("a:b", f)'})
+        clean = make_asar({'src/app.js': b"ipcMain.handle('a:b', f)"})
+        for blob, expected in ((dirty, 2), (clean, 0)):
+            with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+                fh.write(blob)
+                path = fh.name
+            out = path + '.md'
+            try:
+                code = ipc.main([path, '-o', out, '--fail-on', 'high'])
+            finally:
+                for name in (path, out):
+                    try:
+                        os.unlink(name)
+                    except OSError:
+                        pass
+            self.assertEqual(code, expected)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

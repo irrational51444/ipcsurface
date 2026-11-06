@@ -259,6 +259,45 @@ ipcsurface app.asar --runtime probe.json --poke poke.json -o surface.md
 
 ---
 
+## 输出契约与 CI 信号
+
+CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**。三样都定死在这儿。
+
+**退出码**
+
+| 码 | 意思 |
+| --- | --- |
+| 0 | 没有触发门禁 |
+| 1 | 输入有问题：文件不存在、不是 asar、参数不对 |
+| 2 | `--fail-on` 被触发 |
+| 3 | 工具自己崩了——不是目标的问题 |
+
+代码里是 `EXIT_CODES`，测试直接断言这张表，改口径会红。
+
+**三种输出，各有各的用途**
+
+| `--format` | 给谁 | 说明 |
+| --- | --- | --- |
+| `md` | 人 | 默认。先说能信多少，再列证据 |
+| `json` | 程序 | `schema` 号打头，字段见上一节 |
+| `sarif` | CI 平台 | SARIF 2.1.0，GitHub 代码扫描直接吃 |
+
+SARIF 里只放**可疑项**，不放通道清单——通道不是告警，塞进去会把告警计数搞乱。规则 id 稳定且是 ASCII：中文标题转不成 slug 时用文字摘要的哈希兜底，同一条规则每次都得到同一个 id，抑制和分类才做得起来。
+
+**挂到 CI 上就这么写**
+
+```yaml
+- run: ipcsurface app.asar -o surface.md --fail-on high
+- run: ipcsurface app.asar --format sarif -o ipcsurface.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: ipcsurface.sarif
+```
+
+仓库自己的 `.github/workflows/ci.yml` 有两个 job：`check` 跑编译、用例、冒烟、自查；`signal` 专门验信号——干净靶子必须退 0，有问题的靶子必须退 2，再把 SARIF 传上去。第二个 job 不是在验工具，是在验「CI 到底能不能靠这些信号做判断」。
+
+
+
 ## 靶场
 
 `examples/` 里有九个故意写坏的应用，源码是明的，答案在手上，跑完自己核分。
@@ -332,7 +371,7 @@ python build/selfcheck.py
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 123 个用例，只用标准库
+python -m unittest discover -s tests -v   # 127 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python build/selfcheck.py                 # 三十项自查，含真包实测
 ```
@@ -357,12 +396,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.30.1**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.31.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.30.1
+git checkout v0.31.0
 python ipcsurface.py --version
 ```
 
@@ -370,7 +409,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.30.1 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.31.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |
