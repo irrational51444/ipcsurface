@@ -547,11 +547,34 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/1')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/2')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
         self.assertIsNone(data['poke'])
+
+    def test_strength_is_documented_as_cost_not_probability(self):
+        blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        out = path + '.json'
+        try:
+            ipc.main([path, '--format', 'json', '-o', out])
+            with open(out, encoding='utf-8') as fh:
+                data = json.load(fh)
+        finally:
+            for name in (path, out):
+                try:
+                    os.unlink(name)
+                except OSError:
+                    pass
+        semantics = data['confidence_semantics']
+        self.assertTrue(semantics['not_a_probability'])
+        self.assertIn('复核成本', semantics['what_strength_means'])
+        # 六层是标签，不能加总；唯一能当总数的是去重后的名字数
+        self.assertIn('unique_names', data)
+        self.assertEqual(data['unique_names'], len(data['evidence']))
 
     def test_poke_buckets_match_the_markdown_split(self):
         rows = [

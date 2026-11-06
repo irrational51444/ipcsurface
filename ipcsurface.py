@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.20.0'
+__version__ = '0.21.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -766,6 +766,24 @@ def audit_asar(facts):
     return findings
 
 
+CONFIDENCE_SEMANTICS = {
+    'what_strength_means': '复核成本和依赖复杂度，不是「这条有多可信」的概率',
+    'why': '查表查出来的名字和逐字写着的名字，确定性上没有差别；'
+           '差的是复核要看一处还是两处，以及结果依赖全包常量表的作用域规则。',
+    'not_a_probability': True,
+    'labels_not_buckets': '六层是标签，互相重叠；不可以相加或相减当总数。'
+                          '唯一能当总数的是 unique_names，它是去重后的名字数。',
+    'independent_witnesses': [
+        '逐字 literal + runtime：源码与运行时，互相独立',
+        '查表 literal + runtime：查表过程不读运行时信息，也算独立',
+        '逐字 literal + 查表 literal：都来自静态侧，只是写法不同，不算独立见证',
+        'computed / harvested 之间：同源，不算独立',
+    ],
+    'corroborated_rule': '至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，'
+                         '不累加，也不因为对上就跳档。',
+}
+
+
 def channel_sources(facts, probe=None):
     """每条通道名各自是被谁看见的。
 
@@ -951,6 +969,21 @@ def runtime_crosscheck(probe, static_names):
     }
 
 
+def strength_notes(facts, probe=None, confidence=None):
+    """该包上的话说清楚：最高强度是哪一档、有没有空层。"""
+    notes = []
+    resolved_names = set(facts.get('resolved') or ())
+    total = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
+    direct = sum(1 for name, _w in facts['handlers'] + facts['invokes'] + facts['exposes']
+                 if name not in resolved_names)
+    if total and not direct:
+        notes.append(f'这包上 {total} 条字面通道全是查表查出来的，一条都没逐字写在调用点上；'
+                     '"写死的名字"这一层（强度 1.0）是空的，本报告能给出的最高强度是 0.9')
+    elif total:
+        notes.append(f'字面通道 {total} 条：逐字写着的 {direct} 条，查表得来的 {total - direct} 条')
+    return notes
+
+
 def blind_spots(facts, probe=None, poke=None):
     """这份报告看不到的地方。和 md 那节「没看清的地方」是同一份清单。"""
     items = ['混淆过、压过、名字算出来的代码，我一条都认不出来；所以「没看见」永远是未知，不是没有']
@@ -960,6 +993,7 @@ def blind_spots(facts, probe=None, poke=None):
     if facts['native_files']:
         items.append(f"有 {len(facts['native_files'])} 个原生模块，越界和内存问题不在这一层看")
     items.append('注册过、能调，不等于调得成；权限和 sender 校验要看运行时那一层')
+    items.extend(strength_notes(facts, probe=probe))
     if not probe:
         items.append('没有给 --runtime，运行时那层是空的')
     if not poke:
@@ -2098,13 +2132,16 @@ def main(argv=None):
         poke_data = load_poke(args.poke) if args.poke else None
         if args.format == 'json':
             checks = runtime_crosscheck(probe_data, names)
+            evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/1',
+                'schema': 'ipcsurface/asar/2',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,
                 'bytes': total,
+                # 唯一能当总数的数字：去重后的名字个数。六层标签不能相加。
+                'unique_names': len(evidence),
                 'channels': sorted(names),
                 'dynamic': [what for what, _ in facts['dynamic']],
                 'exposes': [n for n, _ in facts['exposes']],
@@ -2114,8 +2151,10 @@ def main(argv=None):
                                 for n, w, l in facts['obfuscation']],
                 # 机器读的那份强度：未知一律 null，不拿 0 顶替
                 'confidence': confidence_levels(facts, probe=probe_data, poke=poke_data),
+                # strength 是复核成本，不是概率；六层是标签，不可相加
+                'confidence_semantics': CONFIDENCE_SEMANTICS,
                 # 每个名字各自是被谁看见的，别让弱证据借强证据的光
-                'evidence': channel_sources(facts, probe=probe_data),
+                'evidence': evidence,
                 # 下面三样是「人看得见、机器以前看不见」的部分
                 'runtime': checks,
                 'poke': None if poke_buckets is None else {
