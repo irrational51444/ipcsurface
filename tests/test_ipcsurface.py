@@ -255,6 +255,24 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
 
 
+class AsarAuditTests(unittest.TestCase):
+    def test_strong_obfuscation_counts_as_high(self):
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        self.assertIn('high', [f[0] for f in ipc.audit_asar(facts)])
+
+    def test_hidden_channel_name_counts_as_medium(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('app:__internal', () => {})"})
+        self.assertIn('medium', [f[0] for f in ipc.audit_asar(facts)])
+
+    def test_clean_package_has_nothing(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('app:save', () => {})"})
+        self.assertEqual(ipc.audit_asar(facts), [])
+
+    def test_nested_asar_is_noticed(self):
+        facts = ipc.scan_asar({'inner.asar': b'\0' * 16})
+        self.assertEqual(facts['nested_asar'], ['inner.asar'])
+
+
 class BaselineTests(unittest.TestCase):
     def test_roundtrip(self):
         findings = [('high', '一条 sender 校验都没有', 'main 进程')]

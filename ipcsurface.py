@@ -161,10 +161,24 @@ def scan_asar(files):
         'prefs': prefs,
         'obfuscation': sorted(set(obfuscation))[:200],
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
+        'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
     }
 
 
-def render_asar(target, facts, file_count, total_bytes, show_all=False):
+def audit_asar(facts):
+    """粗扫也有可疑项。不然挂在 CI 上的 --fail-on 在这条路上等于没用。"""
+    findings = []
+    for name, where, level in facts['obfuscation']:
+        if level == 'strong':
+            findings.append(('high', f'强混淆指纹：{name}', where))
+    for name, where in facts['handlers']:
+        low = name.lower()
+        if any(hint in low for hint in HIGH_RISK_HINTS):
+            findings.append(('medium', f'通道名带隐藏意味：{name}', where))
+    return findings
+
+
+def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{target}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
@@ -257,6 +271,11 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False):
         out.append('- 上面那张表跟它们没关系，两边得分开查')
     else:
         out.append('- 没有 native 模块，越界这类本来就不该出在 JS 这层')
+    if facts.get('nested_asar'):
+        out.append(f"- 里面有 {len(facts['nested_asar'])} 个套着的 asar，这一层没拆开看：")
+        for rel in facts['nested_asar'][:5]:
+            out.append(f"  - `{rel}`")
+        out.append('- 要看得先把它们解出来，单独跑一遍')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:
             out.append(f'- 名字是算出来的不是写死的：`{what}`  `{where}`')
@@ -266,6 +285,12 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False):
     out.append('- 内存层面不看，越界、泄漏要在运行时或者 native 那边查')
     out.append('')
     out.append('> 粗扫只用来决定要不要认真查，不用来签字。')
+    if findings:
+        out.append('')
+        out.append('## 可疑项')
+        order = {'high': 0, 'medium': 1}
+        for level, text, where in sorted(findings, key=lambda f: order.get(f[0], 9))[:10]:
+            out.append(f'- [{level}] {text}  `{where}`')
     return '\n'.join(out)
 
 
@@ -854,6 +879,7 @@ def main(argv=None):
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
         facts, count, total = analyse_asar(args.input)
+        findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         if args.format == 'json':
             text = json.dumps({
@@ -871,8 +897,8 @@ def main(argv=None):
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:
-            text = render_asar(args.input, facts, count, total, show_all=args.all)
-        findings = []
+            text = render_asar(args.input, facts, count, total,
+                               show_all=args.all, findings=findings)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
         if args.runtime:
