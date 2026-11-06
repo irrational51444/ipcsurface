@@ -168,7 +168,7 @@ ipcsurface evidence --runtime probe.json --poke poke.json -o surface.md
 
 ## 靶场
 
-`examples/` 里有八个故意写坏的应用，源码是明的，答案在手上，跑完自己核分。
+`examples/` 里有九个故意写坏的应用，源码是明的，答案在手上，跑完自己核分。
 
 ```bash
 cd examples && bash build.sh
@@ -182,7 +182,8 @@ cd examples && bash build.sh
 | `obf2` | 字符串池 + 下标 | 4 条全认出 |
 | `obf3` | 自解码函数 | 2 条，默认就还原 |
 | `obf4` | 套两层自解码 | 1 条，剥两层 |
-| `bulk` | 八百条通道 | 报告不散架，六十几行 |
+| `obf5` | 名字写在另一个文件里 | 2 条，靠全包常量表配上 |
+| `bulk` | 八百条通道 | 报告不散架，八十行 |
 | `native` | 带 `.node` 模块 | 说明「越界只在那些文件里」 |
 | `map` | 带 sourcemap | 从 `sourcesContent` 翻回源码 |
 
@@ -214,7 +215,7 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 71 个用例，只用标准库
+python -m unittest discover -s tests -v   # 77 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 ```
 
