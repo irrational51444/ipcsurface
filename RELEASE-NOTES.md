@@ -3,6 +3,24 @@
 GitHub 那页 Release 需要点一次「Draft a new release」才会出现，本文件是每次的正文，
 复制过去就行。标签已经打好，`git tag --list` 能看到。
 
+## v0.11.0 — 2026-11-07
+
+**运行时验证在真包上通了，这是这个工具第一次拿到「程序自己说的」东西。**
+
+一个 441 MB、22,102 个文件的真实 Electron 应用，粗扫字面通道 0 条；探针跑起来读到 27 条 invoke 通道、6 个监听、1 个窗口，窗口那三项是 `contextIsolation=true`、`nodeIntegration=false`、`sandbox=true`。
+
+0 和 27 摆在一起，就是这套东西为什么值得写。
+
+**卡了两道，都不是探针本身的错**
+
+- 单实例锁：锁按 userData 目录加，给一份独立的 `--user-data-dir` 就绕开了，探针现在默认这么做。
+- 应用自己要一个环境变量：未打包启动时主进程直接抛 `DSH_DESKTOP_PRIMARY_RUNTIME_DIR is required for an unpackaged launch` 然后退出，窗口一个都建不出来。给了才活。
+- 解包经验：`app.asar` 旁边还有 `app.asar.unpacked` 和 `runtime`，共 7,727 个文件。只摊 asar 不搬它们，应用起得来但活不了。
+
+**报告里能对照了**
+
+`--runtime` 喂进去之后，每条运行时通道都标着「静态那边没看见」。
+
 ## v0.10.0 — 2026-11-07
 
 这一版全是先做对抗测试、再照着缺口补的。十二个样本，同一句 `vault:unlock` 换十二种写法。
