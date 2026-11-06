@@ -463,11 +463,21 @@ def render_evidence(facts, findings, known_count=0, show_all=False):
     out.append('')
     out.append('| 通道 | 页面侧 | 主进程侧 | 配对 |')
     out.append('| --- | --- | --- | --- |')
-    for channel in facts['channels']:
+    limit = len(facts['channels']) if show_all else 30
+    for channel in facts['channels'][:limit]:
         page = ', '.join(f'`{w}`' for w in sorted(facts['invokes'].get(channel) or ['—']))
         host = ', '.join(f'`{w}`' for w in sorted(facts['handles'].get(channel) or ['—']))
         paired = '是' if channel in facts['invokes'] and channel in facts['handles'] else '缺一半'
         out.append(f'| `{channel}` | {page} | {host} | {paired} |')
+    if len(facts['channels']) > limit:
+        out.append(f'| … 还有 {len(facts["channels"]) - limit} 条没列 | 加 `--all` 看全 | | |')
+    if len(facts['channels']) > 12:
+        groups = defaultdict(int)
+        for channel in facts['channels']:
+            groups[re.split(r'[:/.]', channel)[0] or channel] += 1
+        out.append('')
+        out.append('按前缀分组：' + '，'.join(f'`{k}` {v} 条' for k, v in
+                                            sorted(groups.items(), key=lambda kv: -kv[1])[:8]))
     ipc = facts['ipc']
     paired_count = len([c for c in facts['channels'] if c in facts['invokes'] and c in facts['handles']])
     out.append('')
