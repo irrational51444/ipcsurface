@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.18.0'
+__version__ = '0.19.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -427,6 +427,12 @@ CONST_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]{3,})\s*=\s*"
                        r"""(['"])((?:\\.|(?!\2)[^\\]){1,120})\2\s*;""")
 
 
+# 标识符后面跟着 + 号：常量代回去的落点。扫形状再查表，比拼巨型正则便宜。
+IDENT_BEFORE_PLUS = re.compile(r'(?<![\w$.])([A-Za-z_$][\w$]*)(\s*\+)')
+# 对象.字段：常量对象还原的落点
+MEMBER_ACCESS = re.compile(r'(?<![\w$.])([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)')
+
+
 def propagate_constants(text, extra=None):
     """把 `const PREFIX = 'ledger:'` 这种常量，代回到拼接的地方。
 
@@ -441,11 +447,15 @@ def propagate_constants(text, extra=None):
                 constants.setdefault(name, value)
     if not constants:
         return text
-    # 一次扫完，不要一个名字一个正则
-    names = sorted(constants, key=len, reverse=True)
-    pattern = re.compile(r'(?<![\w$.])(' + '|'.join(map(re.escape, names)) + r')(\s*\+)')
-    return pattern.sub(
-        lambda m: json.dumps(constants[m.group(1)], ensure_ascii=False) + m.group(2), text)
+    # 不用把几千个名字拼成一条巨型正则——拼一次就是几千次转义，
+    # 直接在标识符上扫一遍再查表，一个正则走到底。
+    def replace(match):
+        value = constants.get(match.group(1))
+        if value is None:
+            return match.group(0)
+        return json.dumps(value, ensure_ascii=False) + match.group(2)
+
+    return IDENT_BEFORE_PLUS.sub(replace, text)
 
 
 IPC_ARG = re.compile(r'(ipcMain(?:\.(?:handle|handleOnce|on)|\[\s*[\'"](?:handle|handleOnce|on)[\'"]\s*\])'
@@ -490,7 +500,11 @@ def detect_obfuscation(blob, rel):
     """
     hits = []
     for name, pattern, level, needle in OBF_PATTERNS:
-        if needle is not None and needle not in blob:
+        if needle is not None:
+            if needle not in blob:
+                continue
+        elif len(blob) < 2000:
+            # 整个文件都不到 2000 字节，里面不可能有一行 2000 字符
             continue
         match = pattern.search(blob)
         if match:
@@ -541,18 +555,17 @@ def propagate_members(text, table):
     """把 `CH.boot` 换成它登记的值。查不到就原样留着，不猜。"""
     if not table:
         return text
-    names = [name for name in table if name in text]
-    if not names:
-        return text
-    pattern = re.compile(r'(?<![\w$.])(' + '|'.join(map(re.escape, names)) + r')\.([A-Za-z_$][\w$]*)')
 
     def replace(match):
-        value = table[match.group(1)].get(match.group(2))
+        fields = table.get(match.group(1))
+        if not fields:
+            return match.group(0)
+        value = fields.get(match.group(2))
         if value is None:
             return match.group(0)
         return json.dumps(value, ensure_ascii=False)
 
-    return pattern.sub(replace, text)
+    return MEMBER_ACCESS.sub(replace, text)
 
 
 def build_global_tables(files):
@@ -567,7 +580,8 @@ def build_global_tables(files):
         if b'=' not in blob:
             continue
         has_quote = b"'" in blob or b'"' in blob
-        has_object = b'{' in blob and b':' in blob
+        # 常量对象一定长成 `X = {`；没这个形状的文件不必跑那条正则
+        has_object = b'= {' in blob or b'={' in blob
         if not has_quote and not has_object:
             continue
         try:
@@ -578,7 +592,7 @@ def build_global_tables(files):
             name, value = match.group(1), match.group(3)
             if len(name) >= 6 and name not in consts:
                 consts[name] = value
-        if has_object:
+        if has_object and b':' in blob:
             for name, fields in parse_object_literals(text).items():
                 members.setdefault(name, {}).update(fields)
     return consts, members
