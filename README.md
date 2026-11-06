@@ -24,19 +24,32 @@ Electron 应用的能力，一半在主进程里。渲染进程碰不到文件�
 
 问题在中间那段：JSON 里什么都有，人翻不动。
 
-这个脚本就干这一段。输入一份完整的 REA Evidence，输出一页 Markdown。
+这个脚本就干这一段。
+
+## 两种精度
+
+同一个工具，两种输入。糙的那个不用装任何东西。
+
+| 输入 | 需要什么 | 准到什么程度 | 适合什么时候 |
+| --- | --- | --- | --- |
+| `app.asar` | 只要 Python | 字符串级：只认写死的名字 | 刚拿到包，想知道值不值得认真查 |
+| REA Evidence | Python + REA | 语法级：建图、跟作用域、带行号 | 真要出结论 |
+
+粗扫不是简化版的静态分析，是另一回事：它不建语法树，跟着代码走不通，字符串一拼就断。它能回答「这包看着像不像有事」，回答不了「这扇门通哪儿」。
+
+两边的报告都长一个样，开头都先说自己能信多少。
 
 ## 三条原则
 
 **只搬证据，不下结论。** 每一条断言后面都跟着 `文件:行号`。工具不告诉你「这里有漏洞」，它告诉你「这条通道接在 main.js:73，名字里有个 `__internal`」。
 
-**没看清的地方要写在前面。** 静态分析的输出最危险的形态不是「漏了」，是「看起来很干净」。所以报告的第一节不是通道表，是这份报告能信多少——多少处没解析出来、有没有算出来的通道名。
+**没看清的地方要写在前面。** 静态分析的输出最危险的形态不是「漏了」，是「看起来很干净」。所以报告的第一节不是通道表，是这份报告能信多少。
 
 **不猜。** 表达式解不出来就原样贴出来，包括反引号和加号。
 
 ## 安装
 
-需要 Python 3.9+，只用标准库，没有依赖。
+需要 Python 3.9+，只用标准库。
 
 ```bash
 pip install .
@@ -48,7 +61,7 @@ pip install .
 python ipcsurface.py --help
 ```
 
-上游需要 REA：
+只有想用语法级分析时才需要 REA：
 
 ```bash
 npm install -g rea-agents
@@ -56,16 +69,26 @@ npm install -g rea-agents
 
 ## 快速开始
 
+**糙的**，一个包换一页纸，零依赖：
+
 ```bash
-# 1. 让 REA 把一个应用拆开，证据存到目录里
+ipcsurface app.asar surface.md
+```
+
+**准的**，两步：
+
+```bash
 rea analyze-javascript-application app.asar \
     --detail summary --evidence_output evidence
 
-# 2. 压成一页
 ipcsurface evidence surface.md
 ```
 
-两条命令，中间不用人。
+**比两个版本**，升级后多了哪扇门：
+
+```bash
+ipcsurface v1/evidence --diff v2/evidence -o change.md
+```
 
 常用参数：
 
@@ -74,6 +97,7 @@ ipcsurface evidence surface.md
 | `-o, --out` | 写到文件；不给就打到标准输出 |
 | `--format json` | 机器可读，方便接进别的流程 |
 | `--fail-on high` | 出现该级别及以上问题时退出码 2，可以挂 CI |
+| `--diff OTHER` | 把输入当旧版，和另一份 Evidence 比 |
 
 `--fail-on` 的用法：
 
@@ -103,7 +127,6 @@ ipcsurface evidence surface.md --fail-on high || echo "有高危，人工看一�
 | --- | --- | --- | --- |
 | `ledger:__internal_sync` | `src/preload.js:9` | `src/main.js:73` | 是 |
 | `ledger:add` | `src/preload.js:5` | `src/main.js:44` | 是 |
-| `ledger:list` | `src/preload.js:6` | `src/main.js:57` | 是 |
 
 ## 可疑项
 - [high] 一条 sender 校验都没有，任何页面都能调这些通道  `main 进程`
@@ -167,9 +190,17 @@ cd examples && bash build.sh
 
 后面两条不是免责声明，是报告里的固定一栏。
 
-## 为什么这么小
+## 开发
 
-一个文件，不到三百行，没有依赖。
+```bash
+python -m unittest discover -s tests -v
+```
+
+十六个用例，只用标准库，不需要装 REA。asar 的解析器在测试里用手搓的包验证，靶子应用在 `examples/`。
+
+## 为什么只有一个文件
+
+五百行，没有依赖。
 
 因为它只做一件事：把上游已经算好的东西，按人能读的顺序摆出来。这件事不值得一个框架。
 
