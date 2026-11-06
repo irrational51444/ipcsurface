@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.13.0'
+__version__ = '0.14.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -620,49 +620,121 @@ def audit_asar(facts):
     return findings
 
 
-def confidence_ladder(facts, probe=None, poke=None):
-    """把这份报告里的每一样东西按「能证明到什么程度」排队。
+def confidence_levels(facts, probe=None, poke=None):
+    """这份报告里每一样东西，各自能证明到什么程度。
 
-    人看报告最容易犯的错不是看不懂，是把不同强度的话当成一样重。
-    所以这一节不列发现，只列强度：每一层能证明什么、不能证明什么、下一步怎么办。
+    人看容易把不同强度的话当成一样重；机器读更容易——它只会被字段名骗。
+    所以这一层既给人看，也直接进 JSON：强度用数字，未知用 null，不用 0 顶替。
     """
     literal = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
     harvested = facts.get('harvested') or {}
     own = sum(1 for value in harvested.values()
               if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
 
-    rows = []
-    rows.append(('写死的名字', str(literal),
-                 '源码里逐字写着，`file:line` 能回到原文复核',
-                 '唯一能整段拿出去复核的一层'))
+    levels = [{
+        'id': 'literal',
+        'label': '写死的名字',
+        'count': literal,
+        'unit': '条',
+        'strength': 1.0,
+        'can_prove': '源码里逐字写着，file:line 能回到原文复核',
+        'cannot_prove': '只覆盖写死的写法；拼出来的、算出来的它看不见',
+        'next_step': '直接引用，但别当成完整清单',
+    }]
+
     if probe and not probe.get('error'):
-        handlers = probe.get('handlers') or []
-        windows = probe.get('windows') or []
-        rows.append(('程序自己报的', f'{len(handlers)} 条通道 / {len(windows)} 个窗口',
-                     '探针连上主进程，直接读它注册了什么，不是猜的',
-                     '依赖它肯启动；启动配方每个应用不一样，换包要重摸'))
+        levels.append({
+            'id': 'runtime',
+            'label': '程序自己报的',
+            'count': len(probe.get('handlers') or []),
+            'windows': len(probe.get('windows') or []),
+            'unit': '条通道',
+            'strength': 0.8,
+            'can_prove': '探针连上主进程，直接读它注册了什么，不是猜的',
+            'cannot_prove': '依赖它肯启动；启动配方每个应用不一样，换包要重摸',
+            'next_step': '换另一个包先确认能起来，再信这一层',
+        })
     elif probe:
-        rows.append(('程序自己报的', '0 条', '探针没跑通，这一层是空的', '先解决启动，再谈运行时'))
+        levels.append({
+            'id': 'runtime',
+            'label': '程序自己报的',
+            'count': 0,
+            'unit': '条通道',
+            'strength': 0.0,
+            'can_prove': '无——探针没跑通',
+            'cannot_prove': '应用有没有通道，这一层什么都没说',
+            'next_step': '先解决启动，再谈运行时',
+        })
+
     if poke:
-        rows.append(('敲过一遍的', '见下一节分档',
-                     '喂过不合规输入，看它是照收还是拒绝',
-                     '拒绝只证明有门；门后逻辑没审'))
-    rows.append(('名字是算出来的', str(len(facts['dynamic'])),
-                 '知道这里有调用，名字不是写死的，我算不出来',
-                 '人工看，这是研判的第一入口'))
-    rows.append(('打捞出来的候选', f'{len(harvested)} 个，其中 {own} 个是它自己写的',
-                 '长得像通道名，不等于通道',
-                 '当线索用，别当结论'))
-    rows.append(('没看见的', '未知',
-                 '我这条路看不见，不代表它不在',
-                 '换 REA 走语法级，或者运行时探针'))
+        levels.append({
+            'id': 'poke',
+            'label': '敲过一遍的',
+            'count': None,
+            'unit': '见分档',
+            'strength': 0.6,
+            'can_prove': '喂过不合规输入，看它是照收还是拒绝',
+            'cannot_prove': '拒绝只证明有门；门后逻辑没审，参数校验仍然未知',
+            'next_step': '被拦下的一档当「有门」用，另一档回去看代码',
+        })
+
+    levels.append({
+        'id': 'computed',
+        'label': '名字是算出来的',
+        'count': len(facts['dynamic']),
+        'unit': '处',
+        'strength': 0.3,
+        'can_prove': '知道这里有调用，名字不是写死的',
+        'cannot_prove': '名字是什么，算不出来',
+        'next_step': '人工看，这是研判的第一入口',
+    })
+    levels.append({
+        'id': 'harvested',
+        'label': '打捞出来的候选',
+        'count': len(harvested),
+        'own_count': own,
+        'unit': '个',
+        'strength': 0.2,
+        'can_prove': '这些字符串长得像通道名',
+        'cannot_prove': '长得像不等于就是；当线索用，别当结论',
+        'next_step': '拿真名去比对，或者运行时验证',
+    })
+    levels.append({
+        'id': 'unseen',
+        'label': '没看见的',
+        'count': None,
+        'unit': '',
+        'strength': 0.0,
+        'can_prove': '无',
+        'cannot_prove': '我这条路看不见，不代表它不在',
+        'next_step': '换 REA 走语法级，或者运行时探针',
+    })
+    return levels
+
+
+def confidence_ladder(facts, probe=None, poke=None):
+    """把 confidence_levels 排成一张给人看的表。"""
+    levels = confidence_levels(facts, probe=probe, poke=poke)
+
+    def amount(level):
+        count = level['count']
+        if count is None:
+            return '未知' if level['id'] == 'unseen' else level.get('unit') or '—'
+        text = f"{count} {level.get('unit', '')}".strip()
+        if level.get('own_count') is not None:
+            text += f"，其中 {level['own_count']} 个是它自己写的"
+        if level.get('windows') is not None:
+            text += f" / {level['windows']} 个窗口"
+        return text
 
     out = ['', '### 可信度分层', '',
-           '同一条报告里的话，强度不是一样的。从上往下，越靠上越站得住。', '']
+           '同一条报告里的话，强度不是一样的。从上往下，越靠上越站得住。',
+           '这张表也原样进了 `--format json` 的 `confidence` 字段，机器读同一套。', '']
     out.append('| 这一层 | 有多少 | 能证明什么 | 不能证明什么 / 下一步 |')
     out.append('| --- | --- | --- | --- |')
-    for name, count, can, cannot in rows:
-        out.append(f'| {name} | {count} | {can} | {cannot} |')
+    for level in levels:
+        out.append(f"| {level['label']} | {amount(level)} | "
+                   f"{level['can_prove']} | {level['cannot_prove']}；{level['next_step']} |")
     out.append('')
     out.append('> 这张表里的任何一层都不该被单独引用。报告是给人做判断用的地图，不是判决书。')
     out.append('')
@@ -1737,6 +1809,8 @@ def main(argv=None):
         facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval)
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
+        probe_data = load_probe(args.runtime) if args.runtime else None
+        poke_data = load_poke(args.poke) if args.poke else None
         if args.format == 'json':
             text = json.dumps({
                 'mode': 'asar',
@@ -1750,20 +1824,22 @@ def main(argv=None):
                 'native_files': facts['native_files'],
                 'obfuscation': [{'what': n, 'where': w, 'level': l}
                                 for n, w, l in facts['obfuscation']],
+                # 机器读的那份强度：未知一律 null，不拿 0 顶替
+                'confidence': confidence_levels(facts, probe=probe_data, poke=poke_data),
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:
-            probe_data = load_probe(args.runtime) if args.runtime else None
-            poke_data = load_poke(args.poke) if args.poke else None
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,
                                probe=probe_data, poke=poke_data)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
-        if args.runtime:
-            text += '\n'.join(render_runtime(load_probe(args.runtime), names))
-        if args.poke:
-            text += '\n'.join(render_poke(load_poke(args.poke)))
+        # JSON 已经是结构化的了，再往里拼 markdown 会把它弄成不是 JSON。
+        if args.format != 'json':
+            if probe_data:
+                text += '\n'.join(render_runtime(probe_data, names))
+            if poke_data:
+                text += '\n'.join(render_poke(poke_data))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
         findings = audit_pe(facts)

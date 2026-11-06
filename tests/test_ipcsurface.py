@@ -464,6 +464,37 @@ class HarvestTests(unittest.TestCase):
         self.assertIn('启动配方每个应用不一样', text)
 
 
+class ConfidenceTests(unittest.TestCase):
+    def test_unknown_is_null_not_zero(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        levels = {level['id']: level for level in ipc.confidence_levels(facts)}
+        # 没看见的那层不能是 0，0 会被下游读成「查过，没有」
+        self.assertIsNone(levels['unseen']['count'])
+        self.assertEqual(levels['unseen']['strength'], 0.0)
+        self.assertEqual(levels['literal']['count'], 1)
+
+    def test_json_output_carries_the_ladder_and_stays_json(self):
+        blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        out = path + '.json'
+        try:
+            ipc.main([path, '--format', 'json', '-o', out])
+            with open(out, encoding='utf-8') as fh:
+                data = json.load(fh)   # 拼进 markdown 就解析不了，这条盯着它
+        finally:
+            for name in (path, out):
+                try:
+                    os.unlink(name)
+                except OSError:
+                    pass
+        self.assertIn('confidence', data)
+        ids = [level['id'] for level in data['confidence']]
+        self.assertEqual(ids[0], 'literal')
+        self.assertIn('unseen', ids)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
