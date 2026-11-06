@@ -30,7 +30,7 @@ REA 只认 `.asar`，所以先打包再分析。
 | `src/main.js:29` | `` `ledger:${'tpl'}` `` |
 | `src/preload.js:7` | `PREFIX + name` |
 
-期望结果：通道表里只剩 `ledger:clear` 一条字面通道。另外四处进不了表，但必须原样出现在「没看清的地方」，带表达式和行号。
+期望结果：通道表里能看到 `ledger:clear` 和 `ledger:shadow`。`'ledger:' + 'shadow'` 两头都是死字符串，工具会先折成一段；`makeChannel(op)`、模板串、`PREFIX + name` 这三处折不了，原样进「没看清的地方」，带表达式和行号。
 
 这个靶子是为「动态生成」这条缺点建的。改之前，这四行会被静静吞掉，报告看着干净——干净才是危险的。
 
@@ -57,6 +57,14 @@ REA 只认 `.asar`，所以先打包再分析。
 重点是报告得说出来：这包带着 native 模块，越界、泄漏、重复释放只可能在那些文件里，上面那张通道表跟它们没关系，两边得分开查。
 
 如果报告不提这一句，读的人会以为查完 JS 就查完了。
+
+## map-asar
+
+包里带一份 sourcemap。`dist/bundle.min.js` 压得只剩 `a.ipcMain.handle(b.c,d)`，通道名一个都不在；但 `dist/bundle.min.js.map` 的 `sourcesContent` 里还留着原样的源码。
+
+期望结果：通道表里出现 `vault:unlock` 和 `vault:__export_all`，位置写着 `dist/bundle.min.js.map → ../src/vault.ts:2`——一看就知道是从哪翻出来的。
+
+这一项验的是「压过的包能不能翻回来」。能，但只在这个包里恰好带着 map 的时候能。
 
 ## 怎么跑
 

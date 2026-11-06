@@ -167,7 +167,12 @@ ipcsurface evidence --runtime probe.json -o surface.md
 
 0 条不奇怪。真实应用发出去的时候是打包压过的，`ipcMain.handle(a.b, ...)` 这种写法字符串早就没了，字符串级粗扫到这儿就断。
 
-这个数放在这里，是想说清一件事：粗扫用来决定「值不值得认真查」，不用来出结论。要结论，上面那条 REA 的路子。
+**但这个 0 不是死的。** 有两条路能翻回来：
+
+- **死字符串拼的，先折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。`dyn-asar` 里那四种拼法，这种现在能进表，另外三种（函数拼、模板串、跨变量）折不了，照旧进「没看清的地方」。
+- **包里带 sourcemap，就翻回原样。** `.map` 里的 `sourcesContent` 就是没压过的源码。`map-asar` 这个靶子就是靠它，从一个压得只剩 `a.ipcMain.handle(b.c,d)` 的包里，把 `vault:unlock` 和 `vault:__export_all` 捞出来的。
+
+第二条最值钱，也最看运气——包作者把 map 一起发了才有。有了它，粗扫的结论能从「看着像」变成「确实有」。
 
 ## 输出长什么样
 

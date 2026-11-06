@@ -103,6 +103,21 @@ OBF_PATTERNS = [
 ]
 
 
+# 字符串字面量相加，先折成一段：'ledger:' + 'add' → 'ledger:add'
+# 只折两头都是纯字面量的，别的一律不动。行数不变，行号还能对得上。
+CONCAT_QUOTES = re.compile(r"""(['"])([^'"\\]*)\1\s*\+\s*(['"])([^'"\\]*)\3""")
+
+
+def fold_literals(text):
+    for _ in range(4):
+        folded = CONCAT_QUOTES.sub(
+            lambda m: m.group(1) + m.group(2) + m.group(4) + m.group(1), text)
+        if folded == text:
+            break
+        text = folded
+    return text
+
+
 def detect_obfuscation(text, rel):
     hits = []
     for name, pattern, level in OBF_PATTERNS:
@@ -126,6 +141,7 @@ def scan_asar(files):
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
+        text = fold_literals(text)
         obfuscation.extend(detect_obfuscation(text, rel))
         if 'ipcMain' not in text and 'contextBridge' not in text and 'webPreferences' not in text:
             continue
@@ -209,6 +225,19 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             out.append(f'- 还有 {rest} 处没列，加 `--all` 看全')
         out.append('')
         out.append('> 一个两万文件的包里 `new Function` 出现几十次是常态，那不是混淆。')
+
+    if facts.get('recovered'):
+        out.append('## 从 sourcemap 翻回来的')
+        out.append('')
+        out.append(f'包里带着 {len(facts["recovered"])} 份没压过的源码，上面有几行是从它们里扫到的：')
+        out.append('')
+        for rel in facts['recovered'][:6]:
+            out.append(f'- `{rel}`')
+        if len(facts['recovered']) > 6:
+            out.append(f'- 还有 {len(facts["recovered"]) - 6} 份')
+        out.append('')
+        out.append('> 这是这包自己把源码交出来的，不是猜的。')
+        out.append('')
 
     out.append('## 窗口设置')
     if facts['prefs']:
@@ -891,9 +920,43 @@ def looks_like_pe(path):
     return path.lower().endswith(('.exe', '.dll', '.node', '.pyd', '.efi', '.sys'))
 
 
+def scan_sourcemaps(files):
+    """包里带 sourcemap 的话，sourcesContent 里就是没压过的源码。
+
+    真有这玩意儿，压缩包也能翻回原样——这是唯一能让「认出来 0 条」变成
+    「认出来几条」的静态办法。
+    """
+    recovered = {}
+    for rel, blob in files.items():
+        if not rel.endswith('.map'):
+            continue
+        try:
+            data = json.loads(blob.decode('utf-8', 'ignore'))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        contents = data.get('sourcesContent') or []
+        sources = data.get('sources') or []
+        for i, code in enumerate(contents):
+            if not isinstance(code, str) or not code.strip():
+                continue
+            name = sources[i] if i < len(sources) else f'source{i}'
+            recovered[f'{rel} → {name}'] = code.encode('utf-8')
+    return recovered
+
+
 def analyse_asar(path):
     header, files = read_asar(path)
     facts = scan_asar(files)
+    recovered = scan_sourcemaps(files)
+    if recovered:
+        extra = scan_asar(recovered)
+        for key in ('exposes', 'handlers', 'invokes', 'dynamic', 'preloads', 'obfuscation'):
+            merged = set(facts[key]) | set(extra[key])
+            facts[key] = sorted(merged)
+        facts['scanned'] += extra['scanned']
+    facts['recovered'] = sorted(recovered)
     total = sum(len(v) for v in files.values())
     return facts, len(files), total
 

@@ -7,8 +7,9 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here"
 mkdir -p build
 
-# bulk 是生成的，不是手写的
+# bulk 和 map 都是生成的，不是手写的
 python make-bulk.py
+python make-map.py
 
 for target in static-asar dyn-asar obf-asar bulk-asar native-asar; do
   echo "==> $target"

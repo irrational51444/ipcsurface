@@ -69,10 +69,11 @@ class ScanTests(unittest.TestCase):
         self.assertEqual([n for n, _ in facts['handlers']], ['ledger:add'])
         self.assertEqual(facts['dynamic'], [])
 
-    def test_concatenated_channel_is_dynamic(self):
+    def test_concatenated_literals_get_folded(self):
+        # 'ledger:' + 'shadow' 两头都是死字符串，折成一段就认得出了
         facts = self.scan("ipcMain.handle('ledger:' + 'shadow', () => {})")
-        self.assertEqual(facts['handlers'], [])
-        self.assertTrue(any('ledger:' in what for what, _ in facts['dynamic']))
+        self.assertEqual([n for n, _ in facts['handlers']], ['ledger:shadow'])
+        self.assertEqual(facts['dynamic'], [])
 
     def test_computed_channel_is_dynamic(self):
         facts = self.scan("ipcMain.handle(makeChannel(op), () => {})")
@@ -253,6 +254,40 @@ class RuntimeTests(unittest.TestCase):
         probe = {'handlers': [], 'windows': [{'contextIsolation': True,
                                               'nodeIntegration': False, 'sandbox': True}]}
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
+
+
+class LiteralFoldTests(unittest.TestCase):
+    def test_single_quotes_are_folded(self):
+        self.assertIn("'ledger:add'", ipc.fold_literals("ipcMain.handle('ledger:' + 'add')"))
+
+    def test_double_quotes_are_folded(self):
+        self.assertIn('"app:save"', ipc.fold_literals('invoke("app:" + "save")'))
+
+    def test_folded_name_lands_in_the_table(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('ledger:' + 'shadow', () => {})"})
+        names = [n for n, _ in facts['handlers']]
+        self.assertIn('ledger:shadow', names)
+
+    def test_variable_still_counted_as_unknown(self):
+        facts = ipc.scan_asar({'a.js': b'ipcMain.handle(PREFIX + name, () => {})'})
+        self.assertEqual(facts['handlers'], [])
+
+
+class SourcemapTests(unittest.TestCase):
+    def test_sources_content_is_recovered(self):
+        blob = json.dumps({
+            'sources': ['../src/a.ts'],
+            'sourcesContent': ["ipcMain.handle('x:y', () => {})"],
+        }).encode()
+        got = ipc.scan_sourcemaps({'dist/a.js.map': blob})
+        self.assertEqual(len(got), 1)
+
+    def test_broken_map_is_skipped(self):
+        self.assertEqual(ipc.scan_sourcemaps({'a.js.map': b'not json'}), {})
+
+    def test_map_without_content_is_ignored(self):
+        blob = json.dumps({'sources': ['a.ts']}).encode()
+        self.assertEqual(ipc.scan_sourcemaps({'a.js.map': blob}), {})
 
 
 class AsarAuditTests(unittest.TestCase):
