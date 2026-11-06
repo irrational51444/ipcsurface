@@ -171,7 +171,11 @@ ipcsurface evidence --runtime probe.json -o surface.md
 
 ## 输出长什么样
 
-下面这段是真跑出来的，不是示意。
+![真实输出：对一个 5 条通道的应用跑出来的报告](docs/preview.png)
+
+上面这张是真跑出来的，不是画的示意图。`examples/build.sh` 跑一遍就能自己复现。
+
+下面是同一份报告的原文：
 
 ```markdown
 ## 这份报告能信多少
