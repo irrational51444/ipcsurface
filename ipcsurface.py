@@ -83,10 +83,30 @@ def line_of(text, pos):
     return text.count('\n', 0, pos) + 1
 
 
+OBF_PATTERNS = [
+    ('eval 直接执行字符串', re.compile(r'\beval\s*\(')),
+    ('Function 构造器拼代码', re.compile(r'\bnew\s+Function\s*\(')),
+    ('base64 现场解码', re.compile(r'\batob\s*\(')),
+    ('charCode 拼字符串', re.compile(r'fromCharCode')),
+    ('十六进制标识符', re.compile(r'\b_0x[0-9a-fA-F]{2,}')),
+    ('超长单行（压过）', re.compile(r'^.{2000,}$', re.M)),
+]
+
+
+def detect_obfuscation(text, rel):
+    hits = []
+    for name, pattern in OBF_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            hits.append((name, f'{rel}:{line_of(text, match.start())}'))
+    return hits
+
+
 def scan_asar(files):
     """按字符串扫一遍源码。粗，但不用装任何东西。"""
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
+    obfuscation = []
     scanned = 0
 
     for rel, blob in files.items():
@@ -96,6 +116,7 @@ def scan_asar(files):
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
+        obfuscation.extend(detect_obfuscation(text, rel))
         if 'ipcMain' not in text and 'contextBridge' not in text and 'webPreferences' not in text:
             continue
         scanned += 1
@@ -128,19 +149,32 @@ def scan_asar(files):
         'dynamic': sorted(set(dynamic)),
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
+        'obfuscation': sorted(set(obfuscation))[:12],
     }
 
 
 def render_asar(target, facts, file_count, total_bytes):
     out = ['# Electron 能力面清单（粗扫）', '']
     out.append(f'- 目标：`{target}`')
-    out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，扫了 {facts["scanned"]} 个源码文件')
+    out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
     out.append('')
     out.append('## 这份报告能信多少')
     out.append('')
     out.append('这是字符串级粗扫：只认写死在源码里的名字，不建语法树，跟着代码走不通。')
     out.append('要准的，先跑 `rea analyze-javascript-application`，再把 Evidence 喂给本工具。')
+    if facts['obfuscation']:
+        out.append('')
+        out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
     out.append('')
+
+    if facts['obfuscation']:
+        out.append('## 混淆痕迹')
+        out.append('')
+        out.append('解不开，但认得出。撞上这些，说明代码被压过或者被处理过：')
+        out.append('')
+        for name, where in facts['obfuscation']:
+            out.append(f'- {name}  `{where}`')
+        out.append('')
 
     out.append('## 窗口设置')
     if facts['prefs']:

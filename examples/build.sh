@@ -7,7 +7,7 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here"
 mkdir -p build
 
-for target in static-asar dyn-asar; do
+for target in static-asar dyn-asar obf-asar; do
   echo "==> $target"
   npx --yes @electron/asar pack "$target" "build/$target.asar"
   rea analyze-javascript-application "build/$target.asar" \
