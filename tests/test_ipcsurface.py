@@ -221,6 +221,19 @@ class ObfuscationTests(unittest.TestCase):
         self.assertIn('这包动过手脚', report)
         self.assertIn('## 混淆痕迹', report)
 
+    def test_zero_channels_says_i_dont_know(self):
+        # 一条都没扫到的时候，最容易被读成「这包干净」。必须顶在最前面说清楚。
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        report = ipc.render_asar('demo.asar', facts, 1, 100)
+        self.assertIn('## 一条字面通道都没看见', report)
+        self.assertIn('我这条路走不通', report)
+        self.assertIn('答案是「不知道」', report)
+
+    def test_zero_channels_quiet_when_something_found(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('a:b', () => {})"})
+        report = ipc.render_asar('demo.asar', facts, 1, 100)
+        self.assertNotIn('一条字面通道都没看见', report)
+
 
 class PeTests(unittest.TestCase):
     def test_rejects_non_pe(self):

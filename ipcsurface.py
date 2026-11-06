@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.8.0'
+__version__ = '0.9.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -579,6 +579,34 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
     out.append('')
+
+    # 一条都没扫到的时候，最容易被读成「这包干净」。
+    # 那是我这套办法的空白，不是这包的结论，得顶在最前面说清楚。
+    if not (facts['exposes'] or facts['handlers'] or facts['invokes']):
+        harvested = facts.get('harvested') or {}
+        own = sum(1 for _where, kind in harvested.values() if kind == 'self')
+        blocked = []
+        if facts['obfuscation']:
+            blocked.append(f'混淆痕迹 {len(facts["obfuscation"])} 处')
+        if facts['dynamic']:
+            blocked.append(f'名字是拼出来的 {len(facts["dynamic"])} 处')
+        if harvested:
+            blocked.append(f'打捞兜底只捞到 {len(harvested)} 个候选，其中 {own} 个是这个应用自己写的')
+        out.append('## 一条字面通道都没看见')
+        out.append('')
+        out.append('先别读成「这个包里没有」。这句的意思是：我这条路走不通。')
+        out.append('粗扫只认写死的名字。名字是拼出来的、从别处算出来的、或者整个文件被压过，我一律看不见。')
+        out.append('')
+        if blocked:
+            out.append('这次实际卡住的地方：')
+            for line in blocked:
+                out.append(f'- {line}')
+        else:
+            out.append('这次连混淆和拼接都没认出来——更可能是我认不出它的写法，不是它简单。')
+        out.append('')
+        out.append('所以这份报告对「有没有通道」这个问题，答案是「不知道」。')
+        out.append('想拿到答案只有两条路：跑一遍 REA 走语法级，或者把打捞出来的候选一条条自己看。')
+        out.append('')
 
     if facts['obfuscation']:
         out.append('## 混淆痕迹')

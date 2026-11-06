@@ -215,7 +215,7 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 77 个用例，只用标准库
+python -m unittest discover -s tests -v   # 79 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 ```
 
