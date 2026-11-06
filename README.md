@@ -186,6 +186,28 @@ ipcsurface evidence --poke poke.json -o surface.md
 
 第三条不保证是通道，只保证「长得像」。但从零翻起和拿着一张候选名单翻，是两回事。
 
+## 拿一个真包从头走到尾
+
+不是演习。下面是拿一个 **213 MB、22,102 个文件**的 Electron 应用（一个真实装在机器上的桌面程序）从头走到尾的记录。
+
+| 步骤 | 命令 | 用时 | 结果 |
+| --- | --- | --- | --- |
+| 粗扫 | `ipcsurface app.asar -o scan.md` | 11 秒 | 认出 0 条字面通道，打捞到 217 个候选名字 |
+| 语法级 · 全量 | `rea analyze-javascript-application app.asar` | **十分钟没跑完** | 放弃，换下面的方式 |
+| 语法级 · 挑文件 | `rea analyze-... app.asar --source-path <一个文件>` | 54 秒 | 产出 271 MB 证据 |
+| 读证据 | `ipcsurface build/ev-one -o one.md` | 2.4 秒 | 一页报告 |
+| 出 json | `--format json` | 2.4 秒 | 0.4 KB |
+| 基线 | `--write-baseline` / `--baseline` | 2.5 秒 | 第二次跑把旧的压掉 |
+| 门禁 | `--fail-on high` | — | 单文件模式返回 0 |
+
+这一趟学到的三件事，都写进了代码里：
+
+**一、全量语法级分析在大包上跑不动。** 这不是工具的错，是这件事本身的量级。正确姿势是先粗扫、先打捞，挑出可疑的文件，再用 `--source-path` 精查那一个。五十四秒对十分钟，差的就是这一步。
+
+**二、单文件分析缺上下文，就别硬下结论。** 只喂一个文件时，看不到窗口代码，那么「一条 sender 校验都没有」这句话就不成立——校验可能写在别的文件里。这一条原来是误报，现在加了条件：没看到窗口，就不说这句话。
+
+**三、证据大不等于慢。** 271 MB 的 JSON，读一遍 2.4 秒。别被体积吓住。
+
 ## 输出长什么样
 
 ![真实输出：对一个 5 条通道的应用跑出来的报告](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/preview.png)

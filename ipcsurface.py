@@ -533,7 +533,7 @@ def audit_evidence(facts):
             findings.append(('high', 'contextIsolation 关着，preload 和页面共用一个世界', win['where']))
         if 'sandbox' not in values:
             findings.append(('info', '没写 sandbox，走 Electron 默认值', win['where']))
-    if facts['sender_checks'] == 0:
+    if facts['sender_checks'] == 0 and facts['windows']:
         findings.append(('high', '一条 sender 校验都没有，任何页面都能调这些通道', 'main 进程'))
     for channel in facts['channels']:
         low = channel.lower()

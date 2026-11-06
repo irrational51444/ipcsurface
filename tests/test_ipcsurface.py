@@ -169,6 +169,14 @@ class EvidenceTests(unittest.TestCase):
         texts = [text for _, text, _ in ipc.audit_evidence(facts)]
         self.assertFalse(any('sender' in t and '校验都没有' in t for t in texts))
 
+    def test_no_window_means_no_sender_claim(self):
+        # 只分析了一个文件，没看到窗口代码，就不能断言「没人校验」
+        result = minimal_evidence(['a:1'], sender_checks=0)
+        result['graph']['nodes'] = []
+        facts = ipc.collect_evidence(result)
+        texts = [text for _, text, _ in ipc.audit_evidence(facts)]
+        self.assertFalse(any('sender' in t for t in texts))
+
     def test_report_puts_blind_spots_first(self):
         facts = ipc.collect_evidence(minimal_evidence(['a:1'], dynamic=['x()']))
         report = ipc.render_evidence(facts, ipc.audit_evidence(facts))
