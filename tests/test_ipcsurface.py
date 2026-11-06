@@ -565,6 +565,27 @@ class ConfidenceTests(unittest.TestCase):
         self.assertEqual(buckets['unknown'], ['a:3'])
 
 
+    def test_object_member_resolution(self):
+        source = (b"const CH = { boot: 'dsh-desktop:boot', info: 'dsh-desktop:device-info' };\n"
+                  b"ipcMain.handle(CH.boot, f)\n")
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertIn(('dsh-desktop:boot', 'a.js:2'), facts['handlers'])
+
+    def test_unknown_member_is_left_alone(self):
+        source = b"const CH = { boot: 'a:b' };\nipcMain.handle(CH.nope, f)\n"
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertEqual(facts['handlers'], [])
+        self.assertTrue(facts['dynamic'])
+
+    def test_member_table_crosses_files(self):
+        files = {
+            'src/channels.js': b"const IPC = { save: 'dsh:save' };",
+            'src/main.js': b"ipcMain.handle(IPC.save, f)",
+        }
+        facts = ipc.scan_asar(files)
+        self.assertIn(('dsh:save', 'src/main.js:1'), facts['handlers'])
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

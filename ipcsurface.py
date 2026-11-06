@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.16.0'
+__version__ = '0.17.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -503,6 +503,87 @@ def detect_obfuscation(blob, rel):
 CONST_HINTS = (b'const', b'let ', b'let\t', b'let\n', b'var ', b'var\t', b'var\n')
 
 
+# 常量对象：const CH = { boot: 'dsh-desktop:boot', … }，代码里写 CH.boot。
+# 这种名字以前只能标成「算出来的」，其实表就在文件里，抄出来就行。
+OBJECT_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{([^{}]{0,4000})\}")
+OBJECT_FIELD = re.compile(r"""([A-Za-z_$][\w$]*)\s*:\s*(['"])((?:\\.|(?!\2)[^\\])*)\2""")
+
+
+def parse_object_literals(text):
+    """把文件里「常量对象」的字段摊平：{对象名: {字段: 值}}。"""
+    table = {}
+    for match in OBJECT_DEF.finditer(text):
+        name, body = match.group(1), match.group(2)
+        fields = {key: value for key, _quote, value in OBJECT_FIELD.findall(body)}
+        if fields:
+            table.setdefault(name, {}).update(fields)
+    return table
+
+
+def build_global_members(files):
+    """跨文件的常量对象表。名字写在 a.js、用的地方在 b.js，也得配得上。"""
+    table = {}
+    for rel, blob in files.items():
+        if not rel.endswith(JS_EXT) or len(blob) > 300_000:
+            continue
+        if b'{' not in blob or b':' not in blob:
+            continue
+        try:
+            text = blob.decode('utf-8')
+        except UnicodeDecodeError:
+            text = blob.decode('latin-1', 'ignore')
+        for name, fields in parse_object_literals(text).items():
+            table.setdefault(name, {}).update(fields)
+    return table
+
+
+def propagate_members(text, table):
+    """把 `CH.boot` 换成它登记的值。查不到就原样留着，不猜。"""
+    if not table:
+        return text
+    names = [name for name in table if name in text]
+    if not names:
+        return text
+    pattern = re.compile(r'(?<![\w$.])(' + '|'.join(map(re.escape, names)) + r')\.([A-Za-z_$][\w$]*)')
+
+    def replace(match):
+        value = table[match.group(1)].get(match.group(2))
+        if value is None:
+            return match.group(0)
+        return json.dumps(value, ensure_ascii=False)
+
+    return pattern.sub(replace, text)
+
+
+def build_global_tables(files):
+    """一趟走完，把两种表都收了：普通常量和常量对象。
+
+    以前是两趟，等于把两万多个文件解码两遍。这种事写起来顺手，跑起来贵。
+    """
+    consts, members = {}, {}
+    for rel, blob in files.items():
+        if not rel.endswith(JS_EXT) or len(blob) > 300_000:
+            continue
+        if b'=' not in blob:
+            continue
+        has_quote = b"'" in blob or b'"' in blob
+        has_object = b'{' in blob and b':' in blob
+        if not has_quote and not has_object:
+            continue
+        try:
+            text = blob.decode('utf-8')
+        except UnicodeDecodeError:
+            text = blob.decode('latin-1', 'ignore')
+        for match in CONST_DEF.finditer(text):
+            name, value = match.group(1), match.group(3)
+            if len(name) >= 6 and name not in consts:
+                consts[name] = value
+        if has_object:
+            for name, fields in parse_object_literals(text).items():
+                members.setdefault(name, {}).update(fields)
+    return consts, members
+
+
 def build_global_constants(files):
     """先把所有文件里的字符串常量收成一张表。
 
@@ -542,7 +623,7 @@ def scan_asar(files, allow_eval=True):
     obfuscation = []
     scanned = 0
     # 先收一遍全包的常量，跨文件那种才配得上
-    global_consts = build_global_constants(files)
+    global_consts, global_members = build_global_tables(files)
 
     for rel, blob in files.items():
         if not rel.endswith(TEXT_EXT):
@@ -569,6 +650,7 @@ def scan_asar(files, allow_eval=True):
         text = decode_unicode_strings(text)
         text = fold_templates(text)
         text = propagate_constants(text, extra=global_consts)
+        text = propagate_members(text, global_members)
         text = resolve_ipc_arg(text, extra=global_consts)
         text = fold_literals(text)
         scanned += 1

@@ -73,12 +73,12 @@ pip install .
 
 ## 发布
 
-当前 **0.16.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.17.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.16.0    # 想看某一个版本就切到它的 tag
+git checkout v0.17.0    # 想看某一个版本就切到它的 tag
 python ipcsurface.py --version
 ```
 
@@ -183,7 +183,7 @@ ipcsurface evidence --runtime probe.json --poke poke.json -o surface.md
 
 | 步骤 | 用时 | 结果 |
 | --- | --- | --- |
-| 粗扫 | 3.5 秒 | 字面通道 0 条，打捞到 221 个候选 |
+| 粗扫 | 4.7 秒 | 字面通道 41 条，打捞到 221 个候选 |
 | 语法级 · 全量 | **十分钟没跑完** | 放弃，换下面的方式 |
 | 语法级 · 挑文件 | 54 秒 | 产出 259 MB 证据 |
 | 读证据 | 2.4 秒 | 一页报告 |
@@ -246,7 +246,7 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 95 个用例，只用标准库
+python -m unittest discover -s tests -v   # 98 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 ```
 
