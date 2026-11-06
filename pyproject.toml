@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ipcsurface"
+version = "0.1.0"
+description = "把 REA 的 Electron 证据包压成一页能力面清单"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["electron", "reverse-engineering", "ipc", "security", "static-analysis"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+]
+
+[project.scripts]
+ipcsurface = "ipcsurface:main"
+
+[tool.setuptools]
+py-modules = ["ipcsurface"]
