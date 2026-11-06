@@ -103,12 +103,15 @@ def collect(result):
 
     dyn_channels = []
     for edge in graph['edges']:
-        props = edge.get('properties') or {}
-        if not props.get('channel'):
+        if edge['relation'] not in ('invokes', 'handles'):
             continue
-        if props.get('channel_expression') or props.get('resolution') in ('dynamic', 'unresolved', 'computed'):
-            expr = props.get('channel_expression') or '?'
-            dyn_channels.append((expr, loc(edge.get('evidence'))))
+        props = edge.get('properties') or {}
+        channel = props.get('channel')
+        resolution = props.get('resolution')
+        if channel and resolution in (None, 'literal'):
+            continue
+        expr = props.get('channel_expression') or channel or '?'
+        dyn_channels.append((expr, loc(edge.get('evidence'))))
     dyn_channels = sorted(set(dyn_channels))
 
     return {

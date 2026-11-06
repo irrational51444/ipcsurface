@@ -1,0 +1,8 @@
+{
+  "name": "chaji-ledger",
+  "version": "1.4.2",
+  "description": "local-only ledger desk app",
+  "main": "src/main.js",
+  "author": "xichao",
+  "license": "MIT"
+}
