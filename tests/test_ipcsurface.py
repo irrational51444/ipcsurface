@@ -495,6 +495,41 @@ class ConfidenceTests(unittest.TestCase):
         self.assertIn('unseen', ids)
 
 
+    def test_corroborated_name_beats_a_single_source(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        facts['harvested'] = {'vault:unlock': ('a.js:1', 'self')}
+        sources = ipc.channel_sources(facts)
+        self.assertTrue(sources['vault:unlock']['corroborated'])
+        self.assertGreater(sources['vault:unlock']['strength'], 1.0 - 0.001)
+
+    def test_harvested_only_name_stays_weak(self):
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        facts['harvested'] = {'other:thing': ('a.js:2', 'self')}
+        sources = ipc.channel_sources(facts)
+        self.assertFalse(sources['other:thing']['corroborated'])
+        self.assertLess(sources['other:thing']['strength'], 0.3)
+
+    def test_json_carries_evidence_per_name(self):
+        blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        out = path + '.json'
+        try:
+            ipc.main([path, '--format', 'json', '-o', out])
+            with open(out, encoding='utf-8') as fh:
+                data = json.load(fh)
+        finally:
+            for name in (path, out):
+                try:
+                    os.unlink(name)
+                except OSError:
+                    pass
+        self.assertIn('evidence', data)
+        self.assertIn('x:y', data['evidence'])
+        self.assertIn('literal', data['evidence']['x:y']['sources'])
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

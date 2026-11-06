@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.14.0'
+__version__ = '0.15.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -620,6 +620,45 @@ def audit_asar(facts):
     return findings
 
 
+def channel_sources(facts, probe=None):
+    """每条通道名各自是被谁看见的。
+
+    一层给整份报告定强度，还不够——同一个包里，有的名字是写死的，
+    有的只在运行时见过，混在一起就会互相借光。这条函数按名字拆开记来源。
+    """
+    seen = {}
+
+    def add(name, source, strength, where=None):
+        item = seen.setdefault(name, {'sources': [], 'strength': 0.0, 'where': None})
+        if source not in item['sources']:
+            item['sources'].append(source)
+        if strength > item['strength']:
+            item['strength'] = strength
+        if where and not item['where']:
+            item['where'] = where
+
+    for name, where in facts['handlers'] + facts['invokes'] + facts['exposes']:
+        add(name, 'literal', 1.0, where)
+    if probe and not probe.get('error'):
+        for name in probe.get('handlers') or []:
+            add(name, 'runtime', 0.8)
+        for name in probe.get('listeners') or []:
+            add(name, 'runtime', 0.8)
+    for what, where in facts['dynamic']:
+        add(what, 'computed', 0.3, where)
+    for name, value in (facts.get('harvested') or {}).items():
+        where = value[0] if isinstance(value, tuple) and value else None
+        add(name, 'harvested', 0.2, where)
+
+    for item in seen.values():
+        # 两条互不依赖的路都看见了同一个名字，这比任一条单独说都硬
+        item['corroborated'] = len(item['sources']) >= 2
+        item['sources'] = sorted(item['sources'])
+        if item['corroborated']:
+            item['strength'] = round(min(1.0, item['strength'] + 0.1), 2)
+    return seen
+
+
 def confidence_levels(facts, probe=None, poke=None):
     """这份报告里每一样东西，各自能证明到什么程度。
 
@@ -631,7 +670,22 @@ def confidence_levels(facts, probe=None, poke=None):
     own = sum(1 for value in harvested.values()
               if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
 
-    levels = [{
+    sources = channel_sources(facts, probe=probe)
+    corroborated = sum(1 for item in sources.values() if item['corroborated'])
+
+    levels = []
+    if corroborated:
+        levels.append({
+            'id': 'corroborated',
+            'label': '两条路都对上的',
+            'count': corroborated,
+            'unit': '条',
+            'strength': 1.0,
+            'can_prove': '静态和运行时各看见一次，两条路互不依赖',
+            'cannot_prove': '对上的是名字，不是行为；门后逻辑仍然没审',
+            'next_step': '优先看这几条，它们最不像我编的',
+        })
+    levels.append({
         'id': 'literal',
         'label': '写死的名字',
         'count': literal,
@@ -640,7 +694,7 @@ def confidence_levels(facts, probe=None, poke=None):
         'can_prove': '源码里逐字写着，file:line 能回到原文复核',
         'cannot_prove': '只覆盖写死的写法；拼出来的、算出来的它看不见',
         'next_step': '直接引用，但别当成完整清单',
-    }]
+    })
 
     if probe and not probe.get('error'):
         levels.append({
@@ -737,6 +791,8 @@ def confidence_ladder(facts, probe=None, poke=None):
                    f"{level['can_prove']} | {level['cannot_prove']}；{level['next_step']} |")
     out.append('')
     out.append('> 这张表里的任何一层都不该被单独引用。报告是给人做判断用的地图，不是判决书。')
+    out.append('> 每个名字各自的来源记在 JSON 的 `evidence` 里——一个包里，写死的名字和')
+    out.append('> 只在运行时见过的名字不是一回事，混在一起会互相借光。')
     out.append('')
     return out
 
@@ -1826,6 +1882,8 @@ def main(argv=None):
                                 for n, w, l in facts['obfuscation']],
                 # 机器读的那份强度：未知一律 null，不拿 0 顶替
                 'confidence': confidence_levels(facts, probe=probe_data, poke=poke_data),
+                # 每个名字各自是被谁看见的，别让弱证据借强证据的光
+                'evidence': channel_sources(facts, probe=probe_data),
                 'version': __version__,
             }, ensure_ascii=False, indent=2)
         else:
