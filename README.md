@@ -151,6 +151,17 @@ ipcsurface evidence --runtime probe.json -o surface.md
 
 报告末尾会多一段「跑起来之后看见的」。静态没看见的通道会被标出来——包括 `makeChannel(op)` 这种算出来的，也包括 Electron 自己注册的那些。窗口真实的 `sandbox` 值也在这一段里，静态分析只能说「源码没写」。
 
+**再往前一步，真敲一遍**：
+
+```bash
+node probe/poke.js examples/static-asar 6 > poke.json
+ipcsurface evidence --poke poke.json -o surface.md
+```
+
+每条通道喂四种不合规的输入，记下谁抛错、谁照收。照收的那批最值得看——参数进来不检查就往下走，是这类通道最常见的问题。静态分析只能告诉你门存在，敲一下才知道门后面有没有人看门。
+
+注意：这一步会真的执行目标代码。只对自己的靶子或明确授权的程序用。
+
 细节见 [`probe/README.md`](probe/README.md)。
 
 ## 真跑过什么

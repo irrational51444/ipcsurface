@@ -372,6 +372,68 @@ def load_probe(path):
     return data
 
 
+def load_poke(path):
+    """敲击结果是一串记录，不是对象。读坏了还是那句话。"""
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        raise SystemExit(f'敲击结果读不了：{path}\n'
+                         '先用 probe/poke.js 跑一遍:\n'
+                         '  node probe/poke.js 应用目录 6 > poke.json')
+    return data
+
+
+def render_poke(rows):
+    """把「真敲了一遍」的结果摆出来。
+
+    抛错不一定是坏事——可能人家本来就该拒。真正要看的是另一种：
+    喂了空值、喂了十万个字符，它照收，还返回成功。
+    """
+    out = ['', '## 真的敲了一遍', '']
+    if isinstance(rows, dict) and rows.get('error'):
+        out.append(f'- 没跑起来：{rows["error"]}')
+        out.append('')
+        return out
+    if not isinstance(rows, list) or not rows:
+        out.append('- 没有结果')
+        out.append('')
+        return out
+
+    by_channel = defaultdict(lambda: {'boom': [], 'ok': []})
+    for row in rows:
+        bucket = 'boom' if not row.get('ok') else 'ok'
+        by_channel[row.get('channel', '?')][bucket].append(row.get('payload', '?'))
+
+    swallow = [c for c, v in by_channel.items() if v['ok']]
+    boom = [c for c, v in by_channel.items() if v['boom']]
+    out.append(f'- 敲了 {len(by_channel)} 条通道，每条四五种不合规的输入')
+    out.append('')
+
+    if swallow:
+        out.append('### 照收的（该看一眼有没有校验）')
+        out.append('')
+        for channel in swallow[:15]:
+            kinds = '、'.join(dict.fromkeys(by_channel[channel]['ok']))
+            out.append(f'- `{channel}`：喂 {kinds} 都照收，还返回了结果')
+        if len(swallow) > 15:
+            out.append(f'- 还有 {len(swallow) - 15} 条同样照收')
+        out.append('')
+        out.append('> 照收不等于有洞。但参数进来不看看就往下走，是这类通道最常见的问题。')
+        out.append('')
+
+    if boom:
+        out.append('### 抛错的（可能人家本来就该拒）')
+        out.append('')
+        for channel in boom[:15]:
+            kinds = '、'.join(dict.fromkeys(by_channel[channel]['boom']))
+            out.append(f'- `{channel}`：喂 {kinds} 时抛错')
+        out.append('')
+        out.append('> 抛错不一定坏，也可能是拒绝得对。区别在于它拒绝之前有没有干活。')
+        out.append('')
+    return out
+
+
 def collect_evidence(result):
     graph = result['graph']
     summary = result.get('summary') or {}
@@ -987,6 +1049,8 @@ def main(argv=None):
                         help='把这次的发现存成基线，下次用 --baseline 读它')
     parser.add_argument('--runtime', metavar='PROBE_JSON',
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
+    parser.add_argument('--poke', metavar='POKE_JSON',
+                        help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
     args = parser.parse_args(argv)
 
     if not os.path.exists(args.input):
@@ -1050,6 +1114,8 @@ def main(argv=None):
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
         if args.runtime:
             text += '\n'.join(render_runtime(load_probe(args.runtime), names))
+        if args.poke:
+            text += '\n'.join(render_poke(load_poke(args.poke)))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
         findings = audit_pe(facts)
@@ -1102,6 +1168,8 @@ def main(argv=None):
             if args.runtime:
                 probe = load_probe(args.runtime)
                 text += '\n'.join(render_runtime(probe, set(facts['channels'])))
+            if args.poke:
+                text += '\n'.join(render_poke(load_poke(args.poke)))
 
     if args.out:
         parent = os.path.dirname(os.path.abspath(args.out))

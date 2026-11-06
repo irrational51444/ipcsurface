@@ -351,6 +351,26 @@ class InputErrorTests(unittest.TestCase):
         self.assertIn('没这个文件', str(ctx.exception))
 
 
+class PokeTests(unittest.TestCase):
+    def test_swallowed_inputs_get_their_own_section(self):
+        rows = [{'channel': 'a:1', 'payload': 'undefined', 'ok': True, 'result': '1'}]
+        text = '\n'.join(ipc.render_poke(rows))
+        self.assertIn('照收的', text)
+        self.assertIn('a:1', text)
+
+    def test_thrown_errors_go_apart(self):
+        rows = [{'channel': 'a:2', 'payload': 'null', 'ok': False, 'error': 'boom'}]
+        text = '\n'.join(ipc.render_poke(rows))
+        self.assertIn('抛错的', text)
+        self.assertIn('a:2', text)
+
+    def test_empty_result_is_said_out_loud(self):
+        self.assertIn('没有结果', '\n'.join(ipc.render_poke([])))
+
+    def test_unreachable_is_reported(self):
+        self.assertIn('没跑起来', '\n'.join(ipc.render_poke({'error': '调试口没开'})))
+
+
 class BaselineTests(unittest.TestCase):
     def test_roundtrip(self):
         findings = [('high', '一条 sender 校验都没有', 'main 进程')]
