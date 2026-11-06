@@ -517,14 +517,25 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
 
     harvested = facts.get('harvested') or {}
     if harvested:
+        mine = {k: v for k, v in harvested.items() if v[1] == 'self'}
+        others = {k: v for k, v in harvested.items() if v[1] != 'self'}
         out.append('## 长得像通道的字符串')
         out.append('')
-        out.append(f'调用点认不出了，但名字本身还躺在字符串里。打捞上来 {len(harvested)} 个：')
+        out.append(f'调用点认不出了，但名字本身还躺在字符串里。捞上来 {len(harvested)} 个，'
+                   f'其中 {len(mine)} 个是这个应用自己写的：')
         out.append('')
-        for value in sorted(harvested)[:20]:
-            out.append(f'- `{value}`  `{harvested[value]}`')
-        if len(harvested) > 20:
-            out.append(f'- 还有 {len(harvested) - 20} 个')
+        for value in sorted(mine)[:20]:
+            out.append(f'- `{value}`  `{mine[value][0]}`')
+        if len(mine) > 20:
+            out.append(f'- 还有 {len(mine) - 20} 个自己的')
+        if others:
+            out.append('')
+            out.append(f'另外 {len(others)} 个在第三方库和测试里，噪音大，先折起来：')
+            out.append('')
+            for value in sorted(others)[:5]:
+                out.append(f'- `{value}`  `{others[value][0]}`')
+            if len(others) > 5:
+                out.append(f'- 还有 {len(others) - 5} 个，加 `--all` 看全')
         out.append('')
         out.append('> 这些只保证「长得像 `前缀:名字`」，不保证是通道。一个个去代码里搜，比从零翻快得多。')
         out.append('')
@@ -1258,10 +1269,28 @@ STRING_LIT = re.compile(r"'([^'\\\n]{4,80})'" r'|"([^"\\\n]{4,80})"')
 JS_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts')
 
 
+DEP_MARKERS = ('/node_modules/', '/vendor/', '/third_party/', '/bower_components/')
+TEST_MARKERS = ('.test.', '.spec.', '/test/', '/tests/', '/__tests__/', '/__mocks__/')
+
+
+def classify_path(rel):
+    """这个文件是谁写的。自己的 / 第三方 / 测试。
+
+    不跳过它们——第三方里也可能藏着东西。只是分开摆，别混在一起吵。
+    """
+    low = '/' + rel.lower().replace('\\', '/').lstrip('/')
+    if any(marker in low for marker in DEP_MARKERS):
+        return 'dep'
+    if any(marker in low for marker in TEST_MARKERS):
+        return 'test'
+    return 'self'
+
+
 def harvest_strings(files):
     """压缩过的包里，调用点认不出了，但名字本身常常还躺在字符串里。
 
     这不是解析，是打捞。捞上来的不一定是通道，只保证「长得像」。
+    顺手记下这个文件是谁的，好把第三方库那堆噪音分开放。
     """
     seen = {}
     for rel, blob in files.items():
@@ -1271,6 +1300,7 @@ def harvest_strings(files):
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
+        kind = classify_path(rel)
         for match in STRING_LIT.finditer(text):
             value = match.group(1) or match.group(2)
             if not CHANNELISH.match(value):
@@ -1282,7 +1312,7 @@ def harvest_strings(files):
             if re.fullmatch(r'[A-Za-z]{1,3}\d{1,5}', prefix):
                 continue
             if value not in seen:
-                seen[value] = f'{rel}:{line_of(text, match.start())}'
+                seen[value] = (f'{rel}:{line_of(text, match.start())}', kind)
     return seen
 
 

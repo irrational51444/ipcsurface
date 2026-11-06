@@ -378,6 +378,18 @@ class SourcemapTests(unittest.TestCase):
         self.assertEqual(ipc.scan_sourcemaps({'a.js.map': blob}), {})
 
 
+class ClassifyTests(unittest.TestCase):
+    def test_node_modules_is_third_party(self):
+        self.assertEqual(ipc.classify_path('node_modules/pkg/index.js'), 'dep')
+
+    def test_test_file_is_test(self):
+        self.assertEqual(ipc.classify_path('src/main.test.js'), 'test')
+
+    def test_own_code_is_self(self):
+        self.assertEqual(ipc.classify_path('src/main.js'), 'self')
+        self.assertEqual(ipc.classify_path('lib/desktop/preload.js'), 'self')
+
+
 class HarvestTests(unittest.TestCase):
     def test_channel_like_string_is_kept(self):
         got = ipc.harvest_strings({'a.js': b"ipcMain.handle('vault:unlock', f)"})
