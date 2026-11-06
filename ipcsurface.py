@@ -123,6 +123,7 @@ def collect(result):
         'channels': channels,
         'families': families,
         'dyn_channels': dyn_channels,
+        'native_addons': summary.get('native_addon_bindings'),
         'ipc': summary.get('ipc') or {},
         'sender_checks': summary.get('sender_validation_observations'),
         'limitations': result.get('limitations') or [],
@@ -160,6 +161,25 @@ def render_markdown(facts, findings):
     out.append(f"- 解析 {stats.get('parsed_javascript_files', '?')} 个 JS 文件，"
                f"{stats.get('visited_ast_nodes', '?')} 个 AST 节点，"
                f"失败 {stats.get('parse_failures', 0)} 个")
+    out.append('')
+    unknown_total = sum(f['unknown'] for f in facts['families'])
+    blind = []
+    if facts['dyn_channels']:
+        blind.append(f"{len(facts['dyn_channels'])} 处通道名是算出来的")
+    if unknown_total:
+        blind.append(f"{unknown_total} 处关系没解析出来")
+    out.append('## 这份报告能信多少')
+    out.append('')
+    if blind:
+        out.append('有东西没看透：' + '、'.join(blind) + '。')
+        out.append('表里没写的，不等于没有。')
+    else:
+        out.append('没撞上压过的代码，也没有算出来的通道名，表里写的差不多就是全部。')
+    native = facts['native_addons'] or 0
+    if native:
+        out.append(f"- 挂了 {native} 个 native 模块，越界、泄漏、重复释放要找它们，不在 JS 这层")
+    else:
+        out.append('- 没挂 native 模块，越界这类本来就不该出在 JS 这层，硬查是空转')
     out.append('')
     out.append('## 窗口')
     if facts['windows']:
