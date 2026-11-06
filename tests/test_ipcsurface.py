@@ -601,6 +601,23 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertEqual(passes, 1)
 
 
+    def test_resolved_names_are_a_weaker_kind_of_literal(self):
+        # 名字是从常量对象里查出来的，不是逐字写在那儿，强度要低一档
+        source = (b"const CH = { boot: 'a:b' };\nipcMain.handle(CH.boot, f)\n")
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertIn('a:b', facts['resolved'])
+        sources = ipc.channel_sources(facts)
+        self.assertEqual(sources['a:b']['sources'], ['literal-resolved'])
+        self.assertLess(sources['a:b']['strength'], 1.0)
+
+    def test_plain_literal_stays_full_strength(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('x:y', f)"})
+        self.assertEqual(facts['resolved'], [])
+        sources = ipc.channel_sources(facts)
+        self.assertEqual(sources['x:y']['sources'], ['literal'])
+        self.assertEqual(sources['x:y']['strength'], 1.0)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

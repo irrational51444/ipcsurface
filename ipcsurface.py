@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.19.0'
+__version__ = '0.20.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -679,6 +679,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
     obfuscation = []
+    resolved = set()   # 靠还原才认出名字的那些，强度低一档
     scanned = 0
     # 先收一遍全包的常量，跨文件那种才配得上
     global_consts, global_members = build_global_tables(files)
@@ -702,6 +703,14 @@ def scan_asar(files, allow_eval=True, max_passes=1):
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
+        # 原文先扫一遍，记下哪些名字是「写在那儿」的。
+        # 还原之后才出现的，和它不是一个强度，别混着算。
+        literal_names = set()
+        for kind, pattern in PATTERNS:
+            if kind in ('handle', 'invoke'):
+                for match in pattern.finditer(text):
+                    literal_names.add(match.group(1).strip())
+
         text = restore_all(text, allow_eval=allow_eval, extra=global_consts,
                            members=global_members, original_size=len(text),
                            max_passes=max_passes)[0]
@@ -718,6 +727,8 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                     if rest[:1] in ('+', '.'):
                         dynamic.append((f'{kind}: {value} + …', where))
                         continue
+                    if value not in literal_names:
+                        resolved.add(value)
                     (handlers if kind == 'handle' else invokes).append((value, where))
                 elif kind in ('dynamic_handle', 'dynamic_invoke'):
                     if not value.startswith(("'", '"')):
@@ -738,6 +749,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'obfuscation': sorted(set(obfuscation))[:200],
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
+        'resolved': sorted(resolved),
     }
 
 
@@ -772,7 +784,11 @@ def channel_sources(facts, probe=None):
             item['where'] = where
 
     for name, where in facts['handlers'] + facts['invokes'] + facts['exposes']:
-        add(name, 'literal', 1.0, where)
+        if name in facts.get('resolved', ()):
+            # 名字是靠还原推出来的，不是逐字写在那儿，强度低一档
+            add(name, 'literal-resolved', 0.9, where)
+        else:
+            add(name, 'literal', 1.0, where)
     if probe and not probe.get('error'):
         for name in probe.get('handlers') or []:
             add(name, 'runtime', 0.8)
@@ -800,6 +816,11 @@ def confidence_levels(facts, probe=None, poke=None):
     所以这一层既给人看，也直接进 JSON：强度用数字，未知用 null，不用 0 顶替。
     """
     literal = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
+    resolved_names = set(facts.get('resolved') or ())
+    literal_resolved = sum(
+        1 for name, _where in facts['handlers'] + facts['invokes'] + facts['exposes']
+        if name in resolved_names)
+    literal_direct = literal - literal_resolved
     harvested = facts.get('harvested') or {}
     own = sum(1 for value in harvested.values()
               if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
@@ -822,13 +843,24 @@ def confidence_levels(facts, probe=None, poke=None):
     levels.append({
         'id': 'literal',
         'label': '写死的名字',
-        'count': literal,
+        'count': literal_direct,
         'unit': '条',
         'strength': 1.0,
         'can_prove': '源码里逐字写着，file:line 能回到原文复核',
         'cannot_prove': '只覆盖写死的写法；拼出来的、算出来的它看不见',
         'next_step': '直接引用，但别当成完整清单',
     })
+    if literal_resolved:
+        levels.append({
+            'id': 'literal-resolved',
+            'label': '靠还原才认出的',
+            'count': literal_resolved,
+            'unit': '条',
+            'strength': 0.9,
+            'can_prove': '名字是从本包的字符串池、常量或常量对象里查出来的，原始出处还在源码里',
+            'cannot_prove': '查得出不等于它真是通道；表可能被覆盖、字段可能同名不同义',
+            'next_step': '能和运行时对上一个就更硬；对不上要回原文看那张表',
+        })
 
     if probe and not probe.get('error'):
         levels.append({
@@ -960,6 +992,8 @@ def confidence_ladder(facts, probe=None, poke=None):
                    f"{level['can_prove']} | {level['cannot_prove']}；{level['next_step']} |")
     out.append('')
     out.append('> 这张表里的任何一层都不该被单独引用。报告是给人做判断用的地图，不是判决书。')
+    out.append('> 每层会重叠——同一个名字可能既靠还原查出来，又被运行时看见，两行都会算它。')
+    out.append('> 所以别把这一列加起来当总数，它不是分类，是几张不同的标签。')
     out.append('> 每个名字各自的来源记在 JSON 的 `evidence` 里——一个包里，写死的名字和')
     out.append('> 只在运行时见过的名字不是一回事，混在一起会互相借光。')
     out.append('')
