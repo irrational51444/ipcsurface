@@ -263,10 +263,11 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -v   # 三十七个用例，只用标准库
+bash scripts/smoke.sh                     # 把每条命令真跑一遍，十一项
 ```
 
-十六个用例，只用标准库，不需要装 REA。asar 的解析器在测试里用手搓的包验证，靶子应用在 `examples/`。
+单元测试测函数，冒烟测命令行。分开是因为它们会挂的原因不一样——函数写错是逻辑问题，命令跑不通是参数问题，后者单元测试看不见。
 
 ## 为什么只有一个文件
 

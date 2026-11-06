@@ -273,6 +273,20 @@ class AsarAuditTests(unittest.TestCase):
         self.assertEqual(facts['nested_asar'], ['inner.asar'])
 
 
+class PeAuditTests(unittest.TestCase):
+    def test_thread_injection_pair_is_high(self):
+        facts = {'libraries': {'k.dll': ['CreateRemoteThread', 'WriteProcessMemory']}}
+        self.assertIn('high', [f[0] for f in ipc.audit_pe(facts)])
+
+    def test_unsafe_string_func_is_medium(self):
+        facts = {'libraries': {'m.dll': ['strcpy', 'printf']}}
+        levels = [f[0] for f in ipc.audit_pe(facts)]
+        self.assertIn('medium', levels)
+
+    def test_harmless_imports_produce_nothing(self):
+        self.assertEqual(ipc.audit_pe({'libraries': {'a.dll': ['printf', 'malloc']}}), [])
+
+
 class BaselineTests(unittest.TestCase):
     def test_roundtrip(self):
         findings = [('high', '一条 sender 校验都没有', 'main 进程')]
