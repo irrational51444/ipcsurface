@@ -66,6 +66,19 @@ REA 只认 `.asar`，所以先打包再分析。
 
 这一项验的是「压过的包能不能翻回来」。能，但只在这个包里恰好带着 map 的时候能。
 
+## obf2-asar
+
+名字全提到数组里，代码里只按下标取：
+
+```js
+var _0x4a2f = ['vault:unlock', 'vault:lock', 'vault:__export_all', 'vault:status'];
+ipcMain.handle(_0x4a2f[0], (event, payload) => ...);
+```
+
+期望结果：四条通道全部认出来，行号准确。
+
+这是能还原的那一档。字符串池 + 数字下标，不需要执行代码，把下标换成字面量就行。解码函数、二次引用、控制流平坦化那些还原不了——那些得算值，算值就是执行。
+
 ## 怎么跑
 
 需要 Node、[REA](https://github.com/morluto/rea)、`@electron/asar`。

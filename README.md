@@ -178,9 +178,10 @@ ipcsurface evidence --poke poke.json -o surface.md
 
 0 条不奇怪。真实应用发出去的时候是打包压过的，`ipcMain.handle(a.b, ...)` 这种写法字符串早就没了，字符串级粗扫到这儿就断。
 
-**但这个 0 不是死的。** 有三条路能翻回来：
+**但这个 0 不是死的。** 有四条路能翻回来：
 
-- **死字符串拼的，先折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。`dyn-asar` 里那四种拼法，这种现在能进表，另外三种（函数拼、模板串、跨变量）折不了，照旧进「没看清的地方」。
+- **字符串池，先拆开。** `var _0x = ['vault:unlock', ...]` 配 `_0x[0]` 这种最常见的一层混淆，能还原：找到全是字符串的数组，把下标换回字面量。`obf2-asar` 那个靶子四条通道全认出来了。不需要执行代码，也不需要解释器。
+- **死字符串拼的，再折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。
 - **包里带 sourcemap，就翻回原样。** `.map` 里的 `sourcesContent` 就是没压过的源码。`map-asar` 这个靶子就是靠它，从一个压得只剩 `a.ipcMain.handle(b.c,d)` 的包里，把 `vault:unlock` 和 `vault:__export_all` 捞出来的。
 - **调用点认不出，名字还在字符串里。** 压缩工具改得了变量名，改不掉你写死的字符串。所以还留着一步打捞：把所有长成 `前缀:名字` 的字符串抽出来，去个噪（Excel 单元格、URL scheme 这些），按位置列出来。真跑一个 2.2 万文件的包，捞到 217 个候选，里面有 `agent-notify:from-client-connection`、`client-route:HELLO` 这种一看就是内部名字的。
 

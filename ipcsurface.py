@@ -108,6 +108,42 @@ OBF_PATTERNS = [
 CONCAT_QUOTES = re.compile(r"""(['"])([^'"\\]*)\1\s*\+\s*(['"])([^'"\\]*)\3""")
 
 
+# 混淆最常见的一招：名字提到数组里，代码里按数字取。
+#   var _0x4a2f = ['ledger', ':', 'add'];
+#   ipcMain.handle(_0x4a2f[0], ...)
+# 这一层不用解释器：找到数组、找到下标，换成字面量就行。
+ARRAY_DECL = re.compile(r"(?:var|let|const)\s+([A-Za-z_$][\w$]*)\s*=\s*\[([^\]]{0,6000})\]")
+INDEX_USE = re.compile(r"([A-Za-z_$][\w$]*)\s*\[\s*(\d{1,3})\s*\]")
+LIT_IN_ARRAY = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1""")
+
+
+def restore_string_arrays(text):
+    """把「字符串池 + 数字下标」这层拆掉。
+
+    只认最直白的那种：一个变量存了个全字符串的数组，后面按下标取。
+    取值里的解码函数、二次引用、拆分存储，这一层都还原不了——那些得算值，
+    算值就得执行，不在这儿干。
+    """
+    pools = {}
+    for match in ARRAY_DECL.finditer(text):
+        name, body = match.group(1), match.group(2)
+        items = [m.group(2) for m in LIT_IN_ARRAY.finditer(body)]
+        # 全是字符串、起码三个，才当字符串池看。零零散散的数组不算。
+        if len(items) >= 3 and len(items) == len(re.findall(r"""(['"]).*?\1""", body, re.S)):
+            pools[name] = items
+    if not pools:
+        return text
+
+    def replace(match):
+        name, index = match.group(1), int(match.group(2))
+        items = pools.get(name)
+        if items and 0 <= index < len(items):
+            return "'" + items[index] + "'"
+        return match.group(0)
+
+    return INDEX_USE.sub(replace, text)
+
+
 def fold_literals(text):
     for _ in range(4):
         folded = CONCAT_QUOTES.sub(
@@ -152,6 +188,7 @@ def scan_asar(files):
             obfuscation.extend(detect_obfuscation(text, rel))
         if not hot_ipc:
             continue
+        text = restore_string_arrays(text)
         text = fold_literals(text)
         scanned += 1
         for kind, pattern in PATTERNS:

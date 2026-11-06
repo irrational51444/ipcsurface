@@ -264,6 +264,29 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
 
 
+class StringPoolTests(unittest.TestCase):
+    def test_pool_index_is_restored(self):
+        source = (b"var _0x = ['vault:unlock','vault:lock','vault:status'];\n"
+                  b"ipcMain.handle(_0x[1], (e,p) => p);")
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertIn('vault:lock', [n for n, _ in facts['handlers']])
+
+    def test_two_item_array_is_not_treated_as_pool(self):
+        source = (b"var a = ['x:y','b:c'];\n"
+                  b"ipcMain.handle(a[0], (e,p) => p);")
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertEqual(facts['handlers'], [])
+
+    def test_index_out_of_range_is_left_alone(self):
+        restored = ipc.restore_string_arrays(
+            "var _0x = ['a:b','c:d','e:f'];\nx = _0x[9];")
+        self.assertIn('_0x[9]', restored)
+
+    def test_restore_is_a_no_op_without_pools(self):
+        text = "ipcMain.handle('a:b', f)"
+        self.assertEqual(ipc.restore_string_arrays(text), text)
+
+
 class LiteralFoldTests(unittest.TestCase):
     def test_single_quotes_are_folded(self):
         self.assertIn("'ledger:add'", ipc.fold_literals("ipcMain.handle('ledger:' + 'add')"))
