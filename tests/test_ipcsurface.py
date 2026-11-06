@@ -465,6 +465,14 @@ class HarvestTests(unittest.TestCase):
 
 
 class ConfidenceTests(unittest.TestCase):
+    def test_rule_channel_count_matches_the_report(self):
+        # 报告说「N 条通道」和基线里存的必须是同一批名字，不含 window 暴露
+        source = (b"ipcMain.handle('a:1', f)\nexposeInMainWorld('api', {})\n"
+                  b"ipcRenderer.invoke('b:2')\n")
+        facts = ipc.scan_asar({'a.js': source})
+        self.assertEqual(facts['channels'], ['a:1', 'b:2'])
+        self.assertIn('api', [name for name, _w in facts['exposes']])
+
     def test_rule_unknown_is_null(self):
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
         levels = {level['id']: level for level in ipc.confidence_levels(facts)}

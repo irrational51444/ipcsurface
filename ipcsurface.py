@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.30.0'
+__version__ = '0.30.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -750,9 +750,9 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
         'resolved': sorted(resolved),
-        'channels': sorted({name for name, _w in handlers}
-                           | {name for name, _w in invokes}
-                           | {name for name, _w in exposes}),
+        # 通道就是主进程注册和页面侧调用的那些名字，不含 window 上暴露的 API。
+        # 口径要和报告里「N 条通道」一致，否则基线存一份、报告说另一份。
+        'channels': sorted({name for name, _w in handlers} | {name for name, _w in invokes}),
     }
 
 
