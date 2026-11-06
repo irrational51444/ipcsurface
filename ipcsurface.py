@@ -329,6 +329,20 @@ def loc(evidence):
     return '?'
 
 
+def load_probe(path):
+    """读探针的输出。读不了就说清楚，别甩堆栈。"""
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        raise SystemExit(f'运行时结果读不了：{path}\n'
+                         '先用 probe/run.js 跑一遍，把它的输出存成文件:\n'
+                         '  node probe/run.js 应用目录 6 > probe.json')
+    if not isinstance(data, dict):
+        raise SystemExit(f'运行时结果不是那个格式：{path}')
+    return data
+
+
 def collect_evidence(result):
     graph = result['graph']
     summary = result.get('summary') or {}
@@ -918,6 +932,9 @@ def main(argv=None):
         raise SystemExit(f'这是个目录，不是文件：{args.input}\n'
                          '要分析没打包的应用，用 probe/run.js，不要用这个命令')
 
+    if args.diff and args.baseline:
+        print('注意：比版本的时候 --baseline 用不上，这次忽略它', file=sys.stderr)
+
     if args.diff:
         # 两边可以都是 asar，也可以都是 Evidence——手上只有包的时候也能比
         def side(path):
@@ -969,8 +986,7 @@ def main(argv=None):
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
         if args.runtime:
-            with open(args.runtime, encoding='utf-8-sig') as fh:
-                text += '\n'.join(render_runtime(json.load(fh), names))
+            text += '\n'.join(render_runtime(load_probe(args.runtime), names))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
         findings = audit_pe(facts)
@@ -1021,8 +1037,7 @@ def main(argv=None):
         else:
             text = render_evidence(facts, findings, known_count=known_count, show_all=args.all)
             if args.runtime:
-                with open(args.runtime, encoding='utf-8-sig') as fh:
-                    probe = json.load(fh)
+                probe = load_probe(args.runtime)
                 text += '\n'.join(render_runtime(probe, set(facts['channels'])))
 
     if args.out:

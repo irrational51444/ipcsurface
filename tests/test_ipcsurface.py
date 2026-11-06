@@ -299,6 +299,17 @@ class InputErrorTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_bad_probe_json_says_where_to_get_it(self):
+        with tempfile.NamedTemporaryFile(suffix='.json', mode='w', delete=False) as fh:
+            fh.write('nope')
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                ipc.load_probe(path)
+            self.assertIn('probe/run.js', str(ctx.exception))
+        finally:
+            os.unlink(path)
+
     def test_missing_file_is_reported_before_anything_else(self):
         with self.assertRaises(SystemExit) as ctx:
             ipc.main(['nope-不存在的文件.asar'])
