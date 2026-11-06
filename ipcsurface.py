@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.12.0'
+__version__ = '0.12.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -906,8 +906,10 @@ def render_poke(rows):
     if gated:
         out.append('### 被拦下的')
         out.append('')
-        out.append('拦的话是程序自己说的，原话抄在下面。这一档大概率是有校验，')
-        out.append('但「大概率」三个字要留着——同一句话背后的实现我没看过。')
+        out.append('拦的话是程序自己说的，原话抄在下面。')
+        out.append('这一档能证明的只有一件事：**有个门**，不合适的调用被挡在门外。')
+        out.append('它证明不了门后面对参数做过校验——sender 校验管的是「谁在调」，')
+        out.append('不是「传了什么」。所以这一档的正确读法是：有门，门后逻辑未审。')
         out.append('')
         shown = []
         for channel in gated[:12]:
@@ -920,10 +922,11 @@ def render_poke(rows):
         out.append('')
 
     if business:
-        out.append('### 抛了错但不是拦你的')
+        out.append('### 这一档：门禁未知')
         out.append('')
-        out.append('这类最容易被误读成「有校验」。它抛是因为前置条件没满足，')
-        out.append('不是因为它检查了你的输入。')
+        out.append('它抛了错，但抛的不是拦截类的话。所以这条错误**不提供门禁信息**——')
+        out.append('既不能说它有门，也不能说它没有。')
+        out.append('要判断得回去看代码，别把这一档读成「可以试试打穿」。')
         out.append('')
         for channel in business[:8]:
             words = reasons[channel][0] if reasons[channel] else ''

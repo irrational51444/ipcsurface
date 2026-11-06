@@ -520,7 +520,9 @@ class PokeTests(unittest.TestCase):
         # 业务错误和拦截错误不能混成一档：混了就变成「抛错=有校验」
         rows = [{'channel': 'a:2', 'payload': 'null', 'ok': False, 'error': 'boom'}]
         text = '\n'.join(ipc.render_poke(rows))
-        self.assertIn('抛了错但不是拦你的', text)
+        self.assertIn('门禁未知', text)
+        # 未知不能说成「没有门禁」，否则下游读成「可以试试打穿」
+        self.assertIn('不提供门禁信息', text)
         self.assertIn('a:2', text)
 
     def test_gate_words_land_in_the_gated_bucket(self):
@@ -528,8 +530,9 @@ class PokeTests(unittest.TestCase):
                  'error': 'rejected IPC without a sender frame'}]
         text = '\n'.join(ipc.render_poke(rows))
         self.assertIn('### 被拦下的', text)
-        self.assertNotIn('抛了错但不是拦你的', text)
-        self.assertIn('大概率', text)
+        self.assertNotIn('门禁未知', text)
+        # 有门不等于门后有校验，这句边界必须写在档里
+        self.assertIn('门后逻辑未审', text)
 
     def test_empty_result_is_said_out_loud(self):
         self.assertIn('没有结果', '\n'.join(ipc.render_poke([])))
