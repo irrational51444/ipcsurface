@@ -586,6 +586,21 @@ class ConfidenceTests(unittest.TestCase):
         self.assertIn(('dsh:save', 'src/main.js:1'), facts['handlers'])
 
 
+class RestoreLoopTests(unittest.TestCase):
+    def test_chain_collapses_in_one_pass(self):
+        # 数组 → 模板这是两层，但还原顺序本来就排好了，一趟就该走完
+        text = "var _0x=['vault:unlock'];ipcMain.handle(`${_0x[0]}`, f)"
+        out, passes, unstable = ipc.restore_all(text)
+        self.assertIn('vault:unlock', out)
+        self.assertEqual(passes, 1)
+        self.assertFalse(unstable)
+
+    def test_deep_mode_is_opt_in(self):
+        text = "const A = 'a:b';"
+        _out, passes, _unstable = ipc.restore_all(text)
+        self.assertEqual(passes, 1)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

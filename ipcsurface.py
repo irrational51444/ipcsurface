@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.17.0'
+__version__ = '0.18.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -616,7 +616,51 @@ def build_global_constants(files):
     return table
 
 
-def scan_asar(files, allow_eval=True):
+RESTORE_STEPS = 6
+# 还能不能有下一趟。这几样都不剩了，再转一趟纯属白跑。
+RESTORE_HINTS = ('_0x[', '${', '\\u', "' + ", '" + ', "'+", '"+')
+
+
+def restore_all(text, allow_eval=True, extra=None, members=None, original_size=None,
+                max_passes=1):
+    """还原。默认只走一趟，`--deep-restore` 才多转几趟。
+
+    走到两趟以上是为了这种写法：先还原字符串池，露出一段模板串，
+    再摊平模板才得到真名。但还原顺序本来就排好了——数组在模板前、
+    模板在常量前——所以这类链条一趟就走完了。
+
+    留这个开关是因为换一批样本可能有别的顺序问题；默认关着，
+    是因为实测多转一趟在这批样本上一条都没多认出，白花 1.6 秒。
+    """
+    original_size = original_size if original_size is not None else len(text)
+    passes = 0
+    unstable = False
+    limit = max(1, max_passes if max_passes > 1 else 1)
+    for _ in range(limit):
+        before = text
+        text = restore_string_arrays(text)
+        if allow_eval:
+            text = restore_decode_calls(text)
+        text = decode_unicode_strings(text)
+        text = fold_templates(text)
+        text = propagate_constants(text, extra=extra)
+        text = propagate_members(text, members or {})
+        text = resolve_ipc_arg(text, extra=extra)
+        text = fold_literals(text)
+        passes += 1
+        if text == before:
+            break
+        if len(text) > max(original_size * 3, original_size + 65536):
+            # 越还原越大，说明碰上了解不开的写法，收手，别再往坏里改
+            unstable = True
+            text = before
+            break
+        if not any(hint in text for hint in RESTORE_HINTS):
+            break   # 已经没有什么能再还原的了，别白转
+    return text, passes, unstable
+
+
+def scan_asar(files, allow_eval=True, max_passes=1):
     """按字符串扫一遍源码。粗，但不用装任何东西。"""
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
@@ -644,15 +688,9 @@ def scan_asar(files, allow_eval=True):
             text = blob.decode('utf-8')
         except UnicodeDecodeError:
             text = blob.decode('latin-1', 'ignore')
-        text = restore_string_arrays(text)
-        if allow_eval:
-            text = restore_decode_calls(text)
-        text = decode_unicode_strings(text)
-        text = fold_templates(text)
-        text = propagate_constants(text, extra=global_consts)
-        text = propagate_members(text, global_members)
-        text = resolve_ipc_arg(text, extra=global_consts)
-        text = fold_literals(text)
+        text = restore_all(text, allow_eval=allow_eval, extra=global_consts,
+                           members=global_members, original_size=len(text),
+                           max_passes=max_passes)[0]
         scanned += 1
         for kind, pattern in PATTERNS:
             for match in pattern.finditer(text):
@@ -1913,12 +1951,12 @@ def harvest_strings(files):
     return seen
 
 
-def analyse_asar(path, allow_eval=True):
+def analyse_asar(path, allow_eval=True, max_passes=1):
     header, files = read_asar(path)
     # 文件表是开着源文件按需切的，用完得自己关。Windows 上不关，
     # 这个包删都删不掉。
     try:
-        facts = scan_asar(files, allow_eval=allow_eval)
+        facts = scan_asar(files, allow_eval=allow_eval, max_passes=max_passes)
         recovered = scan_sourcemaps(files)
         if recovered:
             extra = scan_asar(recovered)
@@ -1962,6 +2000,8 @@ def main(argv=None):
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
     parser.add_argument('--no-eval', action='store_true',
                         help='关掉自解码还原。默认开着：它只做模式匹配，不执行目标里的代码')
+    parser.add_argument('--deep-restore', action='store_true',
+                        help='还原多转几趟。默认一趟：实测多转在这批样本上没多认出东西，还慢')
     parser.add_argument('--poke', metavar='POKE_JSON',
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
     args = parser.parse_args(argv)
@@ -2002,7 +2042,8 @@ def main(argv=None):
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
-        facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval)
+        facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval,
+                                           max_passes=6 if args.deep_restore else 1)
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         probe_data = load_probe(args.runtime) if args.runtime else None
