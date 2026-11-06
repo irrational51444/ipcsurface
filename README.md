@@ -73,12 +73,12 @@ pip install .
 
 ## 发布
 
-当前 **0.11.1**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.11.2**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.11.1    # 想看某一个版本就切到它的 tag
+git checkout v0.11.2    # 想看某一个版本就切到它的 tag
 python ipcsurface.py --version
 ```
 

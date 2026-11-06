@@ -11,7 +11,9 @@
  *   node poke.js <未打包的应用目录> [等待秒数]
  */
 const { spawn } = require('child_process');
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const electron = require('electron');
 const WebSocket = require('ws');
@@ -108,7 +110,9 @@ const POKE = `(async () => {
 (async () => {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(electron, [`--inspect=${inspectPort}`, target], {
+  // 和 run.js 一样：锁按 userData 目录加，目标已经开着的话第二个进程会自己退出。
+  const userData = process.argv[4] || fs.mkdtempSync(path.join(os.tmpdir(), 'poke-userdata-'));
+  const child = spawn(electron, [`--inspect=${inspectPort}`, `--user-data-dir=${userData}`, target], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env,
   });
