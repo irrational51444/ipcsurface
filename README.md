@@ -3,8 +3,13 @@
 **把一个 Electron 应用的能力面，压成一页纸。**
 
 [![ci](https://github.com/irrational51444/ipcsurface/actions/workflows/ci.yml/badge.svg)](https://github.com/irrational51444/ipcsurface/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-MIT-black)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.9%2B-black)](pyproject.toml)
+[![version](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/badges/version.svg)](CHANGELOG.md)
+[![tests](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/badges/tests.svg)](tests/test_ipcsurface.py)
+[![python](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/badges/python.svg)](pyproject.toml)
+[![dependencies](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/badges/deps.svg)](ipcsurface.py)
+[![license](https://raw.githubusercontent.com/irrational51444/ipcsurface/main/docs/badges/license.svg)](LICENSE)
+
+> 徽章都是仓库里自己的 SVG，不连 shields.io——那层代理在国内经常是空的，图会挂成一条竖线。
 
 ---
 
@@ -65,6 +70,30 @@ pip install .
 ```
 
 不装也行，`python ipcsurface.py --help` 直接跑。只有想用语法级分析才需要 REA：`npm install -g rea-agents`。
+
+## 发布
+
+当前 **0.9.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+
+```bash
+git clone https://github.com/irrational51444/ipcsurface
+cd ipcsurface
+git checkout v0.9.0     # 想看某一个版本就切到它的 tag
+python ipcsurface.py --version
+```
+
+近几版各解决了什么，一句话一个：
+
+| 版本 | 一句话 |
+| --- | --- |
+| 0.9.0 | 一条通道都没扫到的时候，报告顶上先喊「我不知道」，不装干净 |
+| 0.8.0 | 解包改成按需 mmap 切片，峰值 498 MB → 411 MB |
+| 0.7.1 | 混淆那六条先探子串再起正则，真包 3.9 秒 → 3.5 秒 |
+| 0.7.0 | 混淆识别和打捞都改在字节上做，5.9 秒 → 3.9 秒 |
+| 0.6.1 | 跨文件常量：通道名写在 a.js、用在 b.js 也配得上 |
+| 0.6.0 | 把藏起来的名字尽量捞回来：字符串池、死拼接、模板、自解码函数、打捞兜底 |
+
+版本号只在这种时候动：输出的东西变了、多认了一种写法、或者变的代价得让人知道。重构不动版本号。
 
 ## 快速开始
 
