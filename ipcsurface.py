@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.29.0'
+__version__ = '0.30.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -806,6 +806,9 @@ RULES = [
      'text': '独立性按全部两两组合判定，不靠举例；静态来源之间不算独立，运行时与任一静态来源算'},
     {'id': 'primary_action_not_alone',
      'text': 'primary_action 只是先做哪件事，不能替代 actions'},
+    {'id': 'unregistered_aggregate_is_caught',
+     'text': 'evidence 里出现既不在白名单也不在登记表里的字段，必须被报出来；'
+             '这条判定是正向扫描，不靠字段名字'},
     {'id': 'aggregates_have_detail_and_constraint',
      'text': '每个聚合字段（strength / corroborated / primary_action / weakest_strength）'
              '都必须在 AGGREGATE_FIELDS 里登记明细字段和 must_not，否则测试会红'},
@@ -851,6 +854,14 @@ CONFIDENCE_SEMANTICS = {
     'weakest_sources_semantics':
         'weakest_sources 是列表，并列最弱时全部列出，不任取其一；'
         'weakest_strength 是那个最弱的分值本身。',
+    'must_not_semantics':
+        'must_not 表示「工具声明了这条禁令，并且它有出处」，'
+        '不表示「工具能检测消费方有没有遵守」。工具负责声明，消费方负责执行。'
+        '看到 must_not 请当成一条要自己守的规矩，不是一道会拦住你的闸门。',
+    'aggregate_rule':
+        '聚合字段的判定是正向扫描：evidence 里出现一个既不在 EVIDENCE_FIELDS 白名单、'
+        '也不在 AGGREGATE_FIELDS 登记表里的字段，就当成疑似聚合字段报出来。'
+        '不靠字段名，也不靠人记得去登记。',
     'corroboration_kinds': CORROBORATION_KINDS,
     'compat_rule': {
         'bump_schema_when': [
@@ -1756,6 +1767,26 @@ AGGREGATE_FIELDS = [
      'must_not': 'use_weakest_without_list'},
 ]
 
+# evidence 里每个名字允许出现的字段。不在这张白名单、也不在 AGGREGATE_FIELDS 里的新字段，
+# 一律当成「疑似聚合字段」报出来——这是正向扫描，不是靠字段名字长得像。
+EVIDENCE_FIELDS = {
+    'sources', 'strength', 'where', 'actions', 'primary_action',
+    'corroboration', 'corroborated', 'independent_pairs',
+    'strength_by_source', 'weakest_sources', 'weakest_strength',
+}
+
+
+def unregistered_evidence_fields(entry):
+    """正向检查：这条记录里有没有谁都没登记过的字段。
+
+    聚合字段的判定规则就写在这儿——不是看名字像不像，是看它有没有登记。
+    新加字段忘了登记，这里会报出来；判错的代价是必须去登记或加白名单，
+    而不是等下次想起来。
+    """
+    registered = {agg['field'] for agg in AGGREGATE_FIELDS}
+    return sorted(set(entry) - EVIDENCE_FIELDS - registered)
+
+
 BASELINE_SCHEMA = 'ipcsurface/baseline/1'
 
 
@@ -2424,7 +2455,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/9',
+                'schema': 'ipcsurface/asar/10',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

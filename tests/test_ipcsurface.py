@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/9')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/10')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -778,6 +778,15 @@ class RuleRegistryTests(unittest.TestCase):
         self.assertEqual(item['weakest_sources'], ['computed'])
         self.assertLess(item['strength_by_source']['computed'],
                         item['strength_by_source']['runtime'])
+
+    def test_rule_unregistered_aggregate_is_caught(self):
+        # 这条把「我手工试过 new_agg」变成「每次都会试」
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('v:1', f)"})
+        probe = {'handlers': ['v:1'], 'windows': []}
+        item = dict(ipc.channel_sources(facts, probe=probe)['v:1'])
+        self.assertEqual(ipc.unregistered_evidence_fields(item), [])
+        item['new_agg'] = 42
+        self.assertIn('new_agg', ipc.unregistered_evidence_fields(item))
 
     def test_rule_aggregates_have_detail_and_constraint(self):
         constraints = ipc.CONFIDENCE_SEMANTICS['usage_constraints']
