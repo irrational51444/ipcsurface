@@ -44,7 +44,7 @@ asm=$(ls examples/build/*.asar 2>/dev/null | head -1)
 dyn=$(ls examples/build/dyn-asar.asar 2>/dev/null | head -1)
 obf=$(ls examples/build/obf-asar.asar 2>/dev/null | head -1)
 mapfile=$(ls examples/map.asar 2>/dev/null | head -1)
-ev=${EVIDENCE:-$(find . -maxdepth 4 \( -type f -o -type d \) -name 'ev-*' 2>/dev/null | head -1)}
+ev=${EVIDENCE:-$(find . -maxdepth 4 \( -type f -o -type d \) -name 'ev-*' -size +1k 2>/dev/null | head -1)}
 
 run "版本" $cmd --version
 run "帮助" $cmd --help
