@@ -18,7 +18,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.7.0'
+__version__ = '0.7.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -94,12 +94,12 @@ def stamp():
 
 # 分两档。strong 才算「这包被人动过」，weak 只是常见写法，报出来供参考。
 OBF_PATTERNS = [
-    ('eval 直接执行字符串', re.compile(rb'\beval\s*\('), 'strong'),
-    ('十六进制标识符', re.compile(rb'\b_0x[0-9a-fA-F]{2,}'), 'strong'),
-    ('超长单行（压过）', re.compile(rb'[^\n]{2000,}'), 'strong'),
-    ('base64 现场解码', re.compile(rb'\batob\s*\('), 'weak'),
-    ('Function 构造器拼代码', re.compile(rb'\bnew\s+Function\s*\('), 'weak'),
-    ('charCode 拼字符串', re.compile(rb'fromCharCode'), 'weak'),
+    ('eval 直接执行字符串', re.compile(rb'\beval\s*\('), 'strong', b'eval'),
+    ('十六进制标识符', re.compile(rb'\b_0x[0-9a-fA-F]{2,}'), 'strong', b'_0x'),
+    ('超长单行（压过）', re.compile(rb'[^\n]{2000,}'), 'strong', None),
+    ('base64 现场解码', re.compile(rb'\batob\s*\('), 'weak', b'atob'),
+    ('Function 构造器拼代码', re.compile(rb'\bnew\s+Function\s*\('), 'weak', b'Function'),
+    ('charCode 拼字符串', re.compile(rb'fromCharCode'), 'weak', b'fromCharCode'),
 ]
 
 
@@ -360,9 +360,16 @@ def fold_literals(text):
 
 
 def detect_obfuscation(blob, rel):
-    """在字节上找混淆特征。这几条全是 ASCII，不必先解码。"""
+    """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
+
+    每条先拿一个必现的子串探一下，探不到就不跑正则。
+    正则再快也比不过 memchr 找一遍字节；大部分文件只中一两条，
+    六条全跑一遍是白烧。
+    """
     hits = []
-    for name, pattern, level in OBF_PATTERNS:
+    for name, pattern, level, needle in OBF_PATTERNS:
+        if needle is not None and needle not in blob:
+            continue
         match = pattern.search(blob)
         if match:
             line = blob.count(b'\n', 0, match.start()) + 1
