@@ -790,6 +790,19 @@ def read_pe_imports(path):
     return {'machine': machine, 'is_64': is_64, 'libraries': libraries, 'sections': len(sections)}
 
 
+def audit_pe(facts):
+    """导入表也能当门禁。同一条 --fail-on，三条路一个标准。"""
+    names = {fn.split('@')[0] for funcs in facts['libraries'].values() for fn in funcs}
+    findings = []
+    if 'CreateRemoteThread' in names and 'WriteProcessMemory' in names:
+        findings.append(('high', '既会改别人的内存，又会往别人进程里塞线程', '导入表'))
+    for fn in sorted(names & set(DANGEROUS_IMPORTS)):
+        if fn in ('CreateRemoteThread', 'WriteProcessMemory'):
+            continue
+        findings.append(('medium', f'{fn}：{DANGEROUS_IMPORTS[fn]}', '导入表'))
+    return findings
+
+
 def render_pe(target, facts, size):
     total = sum(len(v) for v in facts['libraries'].values())
     out = ['# 模块导入了什么', '']
@@ -802,6 +815,10 @@ def render_pe(target, facts, size):
     out.append('')
     out.append('导入表只说「这个模块引了外头的哪些函数」，不说它怎么用。')
     out.append('同一个 strcpy，写对了就是写对了，写错才是洞。这里给的是线索，不是判决。')
+    if '\\windows\\' in ('\\' + target.lower()) and ('system32' in target.lower()
+                                                     or 'syswow64' in target.lower()):
+        out.append('')
+        out.append('这是系统自带的库。那几张表里的名字对它来说本来就该有，别拿这份报告去怀疑它。')
     out.append('')
 
     flagged = {}
@@ -903,7 +920,19 @@ def main(argv=None):
 
         old = side(args.input)
         new = side(args.diff)
-        text = render_diff(old, new, os.path.basename(args.input), os.path.basename(args.diff))
+        if args.format == 'json':
+            old_set, new_set = set(old['channels']), set(new['channels'])
+            text = json.dumps({
+                'mode': 'diff',
+                'old': args.input,
+                'new': args.diff,
+                'added': sorted(new_set - old_set),
+                'removed': sorted(old_set - new_set),
+                'channels': {'old': len(old_set), 'new': len(new_set)},
+                'version': __version__,
+            }, ensure_ascii=False, indent=2)
+        else:
+            text = render_diff(old, new, os.path.basename(args.input), os.path.basename(args.diff))
         findings = []
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
@@ -936,6 +965,7 @@ def main(argv=None):
                 text += '\n'.join(render_runtime(json.load(fh), names))
     elif looks_like_pe(args.input):
         facts = read_pe_imports(args.input)
+        findings = audit_pe(facts)
         size = os.path.getsize(args.input)
         if args.format == 'json':
             flagged = sorted({fn.split('@')[0] for funcs in facts['libraries'].values()
@@ -950,7 +980,6 @@ def main(argv=None):
             }, ensure_ascii=False, indent=2)
         else:
             text = render_pe(args.input, facts, size)
-        findings = []
         total_funcs = sum(len(v) for v in facts['libraries'].values())
         summary_line = f"{len(facts['libraries'])} 个库，{total_funcs} 个函数"
     else:
