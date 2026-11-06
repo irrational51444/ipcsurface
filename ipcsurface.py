@@ -289,6 +289,20 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                                             sorted(groups.items(), key=lambda kv: -kv[1])[:8]))
         out.append('')
 
+    harvested = facts.get('harvested') or {}
+    if harvested:
+        out.append('## 长得像通道的字符串')
+        out.append('')
+        out.append(f'调用点认不出了，但名字本身还躺在字符串里。打捞上来 {len(harvested)} 个：')
+        out.append('')
+        for value in sorted(harvested)[:20]:
+            out.append(f'- `{value}`  `{harvested[value]}`')
+        if len(harvested) > 20:
+            out.append(f'- 还有 {len(harvested) - 20} 个')
+        out.append('')
+        out.append('> 这些只保证「长得像 `前缀:名字`」，不保证是通道。一个个去代码里搜，比从零翻快得多。')
+        out.append('')
+
     out.append('## 没看清的地方')
     out.append('')
     out.append('这张表只能证明哪些看清了，不能证明没有什么。')
@@ -1008,6 +1022,44 @@ def scan_sourcemaps(files):
     return recovered
 
 
+# 长得像通道名的字符串：`前缀:名字`，两头都是字母数字。压缩过的代码里
+# 调用点认不出，但这些字面量往往还留在原地。
+CHANNELISH = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{1,24}:[A-Za-z][A-Za-z0-9_.-]{1,48}$')
+NOISE_PREFIX = {'http', 'https', 'file', 'data', 'mailto', 'chrome', 'ws', 'wss',
+                'node', 'blob', 'about', 'javascript', 'utf', 'iso'}
+STRING_LIT = re.compile(r"'([^'\\\n]{4,80})'" r'|"([^"\\\n]{4,80})"')
+
+JS_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts')
+
+
+def harvest_strings(files):
+    """压缩过的包里，调用点认不出了，但名字本身常常还躺在字符串里。
+
+    这不是解析，是打捞。捞上来的不一定是通道，只保证「长得像」。
+    """
+    seen = {}
+    for rel, blob in files.items():
+        if not rel.endswith(JS_EXT):
+            continue
+        try:
+            text = blob.decode('utf-8')
+        except UnicodeDecodeError:
+            text = blob.decode('latin-1', 'ignore')
+        for match in STRING_LIT.finditer(text):
+            value = match.group(1) or match.group(2)
+            if not CHANNELISH.match(value):
+                continue
+            prefix = value.split(':', 1)[0]
+            if prefix.lower() in NOISE_PREFIX:
+                continue
+            # A1:A13 这种是 Excel 单元格，不是通道
+            if re.fullmatch(r'[A-Za-z]{1,3}\d{1,5}', prefix):
+                continue
+            if value not in seen:
+                seen[value] = f'{rel}:{line_of(text, match.start())}'
+    return seen
+
+
 def analyse_asar(path):
     header, files = read_asar(path)
     facts = scan_asar(files)
@@ -1019,6 +1071,7 @@ def analyse_asar(path):
             facts[key] = sorted(merged)
         facts['scanned'] += extra['scanned']
     facts['recovered'] = sorted(recovered)
+    facts['harvested'] = harvest_strings(files)
     total = sum(len(v) for v in files.values())
     return facts, len(files), total
 

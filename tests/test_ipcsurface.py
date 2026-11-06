@@ -290,6 +290,30 @@ class SourcemapTests(unittest.TestCase):
         self.assertEqual(ipc.scan_sourcemaps({'a.js.map': blob}), {})
 
 
+class HarvestTests(unittest.TestCase):
+    def test_channel_like_string_is_kept(self):
+        got = ipc.harvest_strings({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        self.assertIn('vault:unlock', got)
+
+    def test_excel_cell_is_dropped(self):
+        got = ipc.harvest_strings({'a.js': b"sheet('A1:B10')"})
+        self.assertEqual(got, {})
+
+    def test_url_scheme_is_dropped(self):
+        got = ipc.harvest_strings({'a.js': b"fetch('https://example.com/api')"})
+        self.assertEqual(got, {})
+
+    def test_non_js_file_is_skipped(self):
+        got = ipc.harvest_strings({'a.png': b"'vault:unlock'"})
+        self.assertEqual(got, {})
+
+    def test_harvested_block_shows_up_in_report(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:unlock', f)"})
+        facts['harvested'] = {'vault:unlock': 'a.js:1'}
+        report = ipc.render_asar('x.asar', facts, 1, 10)
+        self.assertIn('长得像通道的字符串', report)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
