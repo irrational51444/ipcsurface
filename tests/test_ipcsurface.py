@@ -287,6 +287,24 @@ class PeAuditTests(unittest.TestCase):
         self.assertEqual(ipc.audit_pe({'libraries': {'a.dll': ['printf', 'malloc']}}), [])
 
 
+class InputErrorTests(unittest.TestCase):
+    def test_plain_text_gets_a_human_error(self):
+        with tempfile.NamedTemporaryFile(suffix='.txt', mode='w', delete=False) as fh:
+            fh.write('hello')
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                ipc.load_record(path)
+            self.assertIn('Evidence', str(ctx.exception))
+        finally:
+            os.unlink(path)
+
+    def test_missing_file_is_reported_before_anything_else(self):
+        with self.assertRaises(SystemExit) as ctx:
+            ipc.main(['nope-不存在的文件.asar'])
+        self.assertIn('没这个文件', str(ctx.exception))
+
+
 class BaselineTests(unittest.TestCase):
     def test_roundtrip(self):
         findings = [('high', '一条 sender 校验都没有', 'main 进程')]

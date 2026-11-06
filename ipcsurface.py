@@ -297,8 +297,16 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
 # ---------------------------------------------------------------- evidence
 
 def load_record(path):
-    with open(path, encoding='utf-8-sig') as fh:
-        data = json.load(fh)
+    try:
+        with open(path, encoding='utf-8-sig') as fh:
+            data = json.load(fh)
+    except UnicodeDecodeError:
+        raise SystemExit(f'读不了这个文件，它不是文本：{path}\n'
+                         '要分析应用就给 .asar，要分析模块给 .exe 或 .dll')
+    except json.JSONDecodeError:
+        raise SystemExit(f'这不是 REA 的 Evidence：{path}\n'
+                         '要么直接给 .asar / .exe / .dll，要么先跑一遍\n'
+                         '  rea analyze-javascript-application app.asar --detail summary --evidence_output ev')
     if isinstance(data, dict) and 'records' in data:
         records = data['records']
     elif isinstance(data, list):
