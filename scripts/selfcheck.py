@@ -94,6 +94,118 @@ def check_output_contract(ok):
     return ok
 
 
+TARGET_EXPECT = {
+    # README 靶场表里写死的期望值，这里照抄一份。改坏还原逻辑这里会红。
+    'static-asar.asar': 5,
+    'dyn-asar.asar': 3,
+    'obf-asar.asar': 0,
+    'obf2-asar.asar': 4,
+    'obf3-asar.asar': 2,
+    'obf4-asar.asar': 1,
+    'obf5-asar.asar': 2,
+    'bulk-asar.asar': 800,
+    'native-asar.asar': 2,
+}
+
+
+def check_targets(ok):
+    """九个靶子的期望值。靶场是这套东西的答案纸，掉了没人发现就白写了。"""
+    built = os.path.join(ROOT, 'examples', 'build')
+    if not os.path.isdir(built):
+        print('  SKIP 靶场还没 build，跳过（跑 examples/build.sh 再自查）')
+        return ok
+    for name, expect in sorted(TARGET_EXPECT.items()):
+        path = os.path.join(built, name)
+        if not os.path.exists(path):
+            ok &= check(f'靶子 {name} 在', False)
+            continue
+        facts, _count, _total = t.analyse_asar(path)
+        got = len(facts['channels'])
+        ok &= check(f'{name} 认得出 {expect} 条', got == expect, f'实际 {got}')
+    return ok
+
+
+def check_output_parity(ok):
+    """同一份东西，md 说几条、json 说几条，必须是一个数。
+
+    这条是被打过的：报告抬头 41 条，基线里存了 52，差在算不算 window 暴露。
+    """
+    sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+    if not os.path.exists(sample):
+        print('  SKIP 没有靶场样本，跳过')
+        return ok
+    facts, count, total = t.analyse_asar(sample)
+    md = t.render_asar(sample, facts, count, total)
+    head = re.search(r'其中 (\d+) 个提到 IPC', md)
+    from_md = len(facts['channels'])
+    ok &= check('md 与 channels 口径一致',
+                head is not None and int(head.group(1)) == facts['scanned'],
+                f'提到 IPC {head.group(1) if head else "?"} / scanned {facts["scanned"]}')
+    ok &= check('通道数不含 window 暴露',
+                all(not name.startswith('window.') for name in facts['channels']),
+                f'{from_md} 条')
+    return ok
+
+
+def check_bad_input(ok):
+    """坏输入必须非零退出，不能吐一份空报告当没事。"""
+    import tempfile
+    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as fh:
+        fh.write('{}')
+        bad = fh.name
+    try:
+        code = t.main([bad])
+    except SystemExit as exc:
+        code = exc.code if isinstance(exc.code, int) else 1
+    finally:
+        os.unlink(bad)
+    ok &= check('空证据文件退出码非 0', code not in (0, None), f'exit={code}')
+    return ok
+
+
+BASH_CANDIDATES = ['bash', r'C:\Program Files\Git\bin\bash.exe', '/bin/bash']
+
+
+def find_bash():
+    for candidate in BASH_CANDIDATES:
+        try:
+            probe = subprocess.run([candidate, '-c', 'echo ok'], capture_output=True, text=True,
+                                   timeout=20)
+            if 'ok' in probe.stdout:
+                return candidate
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
+CN_DIGITS = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9}
+
+
+def parse_count(text):
+    """文档里有的写 15 项，有的写十五项，两种都得认。"""
+    match = re.search(r'([0-9]+)\s*项', text)
+    if match:
+        return int(match.group(1))
+    match = re.search(r'十([一二三四五六七八九])?\s*项', text)
+    if match:
+        return 10 + (CN_DIGITS.get(match.group(1), 0) if match.group(1) else 0)
+    return None
+
+
+def check_smoke_count(ok, readme):
+    bash = find_bash()
+    if not bash:
+        print('  SKIP 这台机器没有 bash，跳过冒烟计数')
+        return ok
+    out = subprocess.run([bash, 'scripts/smoke.sh'], cwd=ROOT, capture_output=True,
+                         text=True, encoding='utf-8', errors='replace', timeout=600).stdout
+    passed = out.count('[OK]')
+    said = parse_count(readme)
+    return ok & check('冒烟项数和 README 说的一致',
+                      passed > 0 and said == passed,
+                      f'实际 {passed} 项 / README {said}')
+
+
 def main():
     ok = True
     print('== 一、版本与文档口径 ==')
@@ -148,9 +260,21 @@ def main():
         text = t.render_asar(REAL, facts, count, total)
         ok &= check('报告里有可信度分层', '可信度分层' in text)
         ok &= check('报告里写明层不能相加', '别把这一列加起来当总数' in text)
-    ok &= check('报告里有「没看清的地方」', '没看清的地方' in text)
+        ok &= check('报告里有「没看清的地方」', '没看清的地方' in text)
 
-    print('== 五、基线闸门 ==')
+    print('== 五、靶场期望值 ==')
+    ok = check_targets(ok)
+
+    print('== 六、两种输出口径一致 ==')
+    ok = check_output_parity(ok)
+
+    print('== 七、坏输入必须报错 ==')
+    ok = check_bad_input(ok)
+
+    print('== 八、冒烟项数与文档一致 ==')
+    ok = check_smoke_count(ok, readme)
+
+    print('== 九、基线闸门 ==')
     import tempfile
     with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8') as fh:
         json.dump({'channels': [], 'findings': []}, fh)
@@ -165,7 +289,7 @@ def main():
     finally:
         os.unlink(bad)
 
-    print('== 六、工作区状态 ==')
+    print('== 十、工作区状态 ==')
     status = subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT,
                             capture_output=True, text=True).stdout.strip()
     ok &= check('工作区干净', status == '', status[:80])
