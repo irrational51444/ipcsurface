@@ -530,6 +530,33 @@ def render_diff(old_facts, new_facts, old_name, new_name):
     return '\n'.join(out)
 
 
+def render_runtime(probe, static_channels=None):
+    """把探针跑出来的东西并进来。这一段是程序自己报的，不是猜的。"""
+    out = ['', '## 跑起来之后看见的', '']
+    if probe.get('error'):
+        out.append(f'- 没跑起来：{probe["error"]}')
+        out.append('')
+        return out
+    handlers = probe.get('handlers') or []
+    out.append(f'- 主进程上挂着 {len(handlers)} 条 invoke 通道')
+    missing = 0
+    for name in handlers:
+        mark = ''
+        if static_channels is not None and name not in static_channels:
+            mark = '  ← 静态那边没看见'
+            missing += 1
+        out.append(f'  - `{name}`{mark}')
+    if missing:
+        out.append(f'- 其中 {missing} 条静态没看见。可能是算出来的名字，也可能是 Electron 自己的，得看一眼')
+    for win in probe.get('windows') or []:
+        out.append(f"- 窗口：contextIsolation={win.get('contextIsolation')} "
+                   f"nodeIntegration={win.get('nodeIntegration')} sandbox={win.get('sandbox')}")
+        out.append(f"  preload={win.get('preload')}")
+    out.append('')
+    out.append('> 这些名字是程序自己报的。但注册过不等于调得到，还得看谁有权调。')
+    return out
+
+
 # ---------------------------------------------------------------- pe
 
 # 一眼就知道不该乱来的那些。不是漏洞，是提醒。
@@ -722,6 +749,8 @@ def main(argv=None):
     parser.add_argument('--format', choices=('md', 'json'), default='md')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
     parser.add_argument('--diff', metavar='OTHER', help='把 input 当成旧版，和另一份 Evidence 比')
+    parser.add_argument('--runtime', metavar='PROBE_JSON',
+                        help='probe/run.js 的输出，把跑起来看见的通道并进报告')
     args = parser.parse_args(argv)
 
     if args.diff:
@@ -763,6 +792,10 @@ def main(argv=None):
             text = json.dumps(payload, ensure_ascii=False, indent=2)
         else:
             text = render_evidence(facts, findings)
+            if args.runtime:
+                with open(args.runtime, encoding='utf-8-sig') as fh:
+                    probe = json.load(fh)
+                text += '\n'.join(render_runtime(probe, set(facts['channels'])))
 
     if args.out:
         with open(args.out, 'w', encoding='utf-8') as fh:

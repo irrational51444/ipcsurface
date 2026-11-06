@@ -9,3 +9,5 @@ out2/
 examples/*/*.asar
 out2/
 build/
+probe/node_modules/
+probe/package-lock.json

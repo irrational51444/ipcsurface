@@ -120,6 +120,19 @@ ipcsurface some.dll -o imports.md
 ipcsurface evidence surface.md --fail-on high || echo "有高危，人工看一眼再合"
 ```
 
+**让程序自己说**，跑起来看真值：
+
+```bash
+cd probe && npm install          # 要 Electron 和 ws
+
+node probe/run.js examples/static-asar 6 > probe.json
+ipcsurface evidence --runtime probe.json -o surface.md
+```
+
+报告末尾会多一段「跑起来之后看见的」。静态没看见的通道会被标出来——包括 `makeChannel(op)` 这种算出来的，也包括 Electron 自己注册的那些。窗口真实的 `sandbox` 值也在这一段里，静态分析只能说「源码没写」。
+
+细节见 [`probe/README.md`](probe/README.md)。
+
 ## 输出长什么样
 
 下面这段是真跑出来的，不是示意。

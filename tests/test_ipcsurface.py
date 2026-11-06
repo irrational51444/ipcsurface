@@ -229,6 +229,25 @@ class PeTests(unittest.TestCase):
         self.assertIn('没撞上下面的表', ipc.render_pe('x.dll', facts, 10))
 
 
+class RuntimeTests(unittest.TestCase):
+    def test_missing_channel_is_marked(self):
+        probe = {'handlers': ['a:1', 'b:2'],
+                 'windows': [{'contextIsolation': True, 'nodeIntegration': False,
+                              'sandbox': True, 'preload': 'p.js'}]}
+        text = '\n'.join(ipc.render_runtime(probe, {'a:1'}))
+        self.assertIn('`b:2`', text)
+        self.assertIn('静态那边没看见', text)
+
+    def test_probe_error_is_reported(self):
+        text = '\n'.join(ipc.render_runtime({'error': '调试口没开'}))
+        self.assertIn('调试口没开', text)
+
+    def test_sandbox_shows_up(self):
+        probe = {'handlers': [], 'windows': [{'contextIsolation': True,
+                                              'nodeIntegration': False, 'sandbox': True}]}
+        self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
+
+
 class DiffTests(unittest.TestCase):
     def test_added_and_removed(self):
         old = ipc.collect_evidence(minimal_evidence(['a:1', 'a:2']))
