@@ -599,5 +599,12 @@ class AdversarialTests(unittest.TestCase):
         self.assertEqual(ipc.fold_templates(source).count('\n'), source.count('\n'))
 
 
+    def test_reported_line_points_at_real_line(self):
+        # 跨行模板以前会被压成一行，行号一路往前偏。这条盯着它。
+        source = "const t = `a\nb\nc`;\nipcMain.handle('vault:unlock', f)\n"
+        facts = ipc.scan_asar({'a.js': source.encode('utf-8')})
+        self.assertIn(('vault:unlock', 'a.js:4'), facts['handlers'])
+
+
 if __name__ == '__main__':
     unittest.main()
