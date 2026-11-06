@@ -185,6 +185,7 @@ ipcsurface evidence --poke poke.json -o surface.md
 
   这一档默认开着，因为它**不执行目标里的任何代码**：只认几种形状，自己算，认不出就放弃。想关就加 `--no-eval`。
 - **字符串池，先拆开。** `var _0x = ['vault:unlock', ...]` 配 `_0x[0]` 这种最常见的一层混淆，能还原：找到全是字符串的数组，把下标换回字面量。`obf2-asar` 那个靶子四条通道全认出来了。不需要执行代码，也不需要解释器。
+- **模板串和常量，能摊的先摊。** `` `ledger:${'tpl'}` `` 里的插值如果是写死的，直接摊成 `"ledger:tpl"`；`const PREFIX = 'ledger:'` 配 `PREFIX + name`，把前缀代回去，变成 `"ledger:" + name`——值不完整，但前缀出来了，比光写个变量名强。
 - **死字符串拼的，再折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。
 - **包里带 sourcemap，就翻回原样。** `.map` 里的 `sourcesContent` 就是没压过的源码。`map-asar` 这个靶子就是靠它，从一个压得只剩 `a.ipcMain.handle(b.c,d)` 的包里，把 `vault:unlock` 和 `vault:__export_all` 捞出来的。
 - **调用点认不出，名字还在字符串里。** 压缩工具改得了变量名，改不掉你写死的字符串。所以还留着一步打捞：把所有长成 `前缀:名字` 的字符串抽出来，去个噪（Excel 单元格、URL scheme 这些），按位置列出来。真跑一个 2.2 万文件的包，捞到 217 个候选，里面有 `agent-notify:from-client-connection`、`client-route:HELLO` 这种一看就是内部名字的。

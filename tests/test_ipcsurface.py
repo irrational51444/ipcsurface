@@ -264,6 +264,27 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
 
 
+class TemplateTests(unittest.TestCase):
+    def test_literal_interpolation_is_folded(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle(`vault:${'unlock'}`, f)"})
+        self.assertIn('vault:unlock', [n for n, _ in facts['handlers']])
+
+    def test_variable_interpolation_is_left_alone(self):
+        out = ipc.fold_templates("x = `vault:${name}`")
+        self.assertIn('${', out)
+
+
+class ConstPropTests(unittest.TestCase):
+    def test_prefix_before_plus_is_substituted(self):
+        out = ipc.propagate_constants("const PREFIX = 'ledger:';\nX(PREFIX + name)")
+        self.assertIn('ledger:', out)
+        self.assertNotIn('PREFIX + name', out)
+
+    def test_short_names_are_not_touched(self):
+        src = "const ab = 'xx:';\nX(ab + name)"
+        self.assertEqual(ipc.propagate_constants(src), src)
+
+
 class DecodeCallTests(unittest.TestCase):
     SOURCE = ("function _d(s){var o='';for(var i=0;i<s.length;i++){"
               "o+=String.fromCharCode(s.charCodeAt(i)^7)}return o}\n"

@@ -283,6 +283,44 @@ def _restore_one_pass(text):
     return text
 
 
+TPL_STRING = re.compile(r'`([^`\\]{0,300})`')
+TPL_LITERAL = re.compile(r"\$\{\s*(['\"])((?:\\.|(?!\1)[^\\]){1,80})\1\s*\}")
+
+
+def fold_templates(text):
+    """模板串里只插字面量的，直接摊平：`ledger:${'tpl'}` → "ledger:tpl"。
+
+    插值是变量的不碰——那要算运行时的值，不在这儿猜。
+    """
+    def replace(match):
+        body = match.group(1)
+        flattened = TPL_LITERAL.sub(lambda m: m.group(2), body)
+        if '${' in flattened:
+            return match.group(0)
+        return json.dumps(flattened, ensure_ascii=False)
+
+    return TPL_STRING.sub(replace, text)
+
+
+CONST_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]{3,})\s*=\s*"
+                       r"""(['"])((?:\\.|(?!\2)[^\\]){1,120})\2\s*;""")
+
+
+def propagate_constants(text):
+    """把 `const PREFIX = 'ledger:'` 这种常量，代回到拼接的地方。
+
+    代不回完整值也没关系——`"ledger:" + name` 至少告诉你前缀是什么，
+    比光写 `PREFIX + name` 强。只代后面紧跟加号的位置，别处不动。
+    """
+    constants = {m.group(1): m.group(3) for m in CONST_DEF.finditer(text)}
+    if not constants:
+        return text
+    for name, value in constants.items():
+        pattern = re.compile(r'(?<![\w$.])' + re.escape(name) + r'(\s*\+)')
+        text = pattern.sub(lambda m, v=value: json.dumps(v, ensure_ascii=False) + m.group(1), text)
+    return text
+
+
 def fold_literals(text):
     for _ in range(4):
         folded = CONCAT_QUOTES.sub(
@@ -330,6 +368,8 @@ def scan_asar(files, allow_eval=True):
         text = restore_string_arrays(text)
         if allow_eval:
             text = restore_decode_calls(text)
+        text = fold_templates(text)
+        text = propagate_constants(text)
         text = fold_literals(text)
         scanned += 1
         for kind, pattern in PATTERNS:
