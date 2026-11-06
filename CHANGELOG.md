@@ -2,6 +2,30 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.28.0 — 2026-11-07
+
+**一个名字现在带两个强度，所以得说清它们不是一回事。**
+
+`strength` 回答「这条记录里最好的证据有多硬」，`weakest_sources` / `weakest_strength` 回答「这条记录里最薄的环节有多薄」。两个问题不同，不能互相替代——只看 strength，会漏掉一条 0.9 的记录里还挂着 0.2 的来源。
+
+这是「聚合字段不能替代明细」第三次出现（前面是 primary_action 不能替代 actions、corroborated 不能替代分侧强度）。所以这次不光写说明，还配了 must_not，和别的约束同构。
+
+**`weakest_source` 改名 `weakest_sources`，值改成列表**
+
+单数字段名会让人以为只有一个。并列最弱时全部列出，不任取其一；另外给一个 `weakest_strength` 表示那个分值本身。
+
+**meta-test 的边界从「说明」升级成「约束」**
+
+原来只是 `confidence_semantics` 里一句话，会被读但不会被拦。现在是一条正经约束 `meta_test_green_is_not_verified`，`must_not` 写的是 `treat_meta_test_green_as_rule_verified`。
+
+**基线拒绝时，两条命令确实在 stderr 里**
+
+刚跑了一次确认：错误信息里直接印出 `ipcsurface <包> --write-baseline <基线文件>` 和下一句怎么比，不是只写在变更记录里。
+
+schema 升到 `asar/8`：字段改名、约束新增。
+
+用例 116 → 118：一条验「两个强度回答不同问题」，一条验「并列最弱全列出来」。
+
 ## 0.27.0 — 2026-11-07
 
 **「对上」不是均质的，把每一侧的硬度也摆出来。**

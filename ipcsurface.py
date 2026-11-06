@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.27.0'
+__version__ = '0.28.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -836,11 +836,14 @@ CONFIDENCE_SEMANTICS = {
         'corroborated 只说明两条路互不依赖，不说明两条路都硬。'
         'computed+runtime 和 literal-resolved+runtime 都算对上，'
         '但前者静态那一侧本身就是需要人工看的低强度来源。'
-        '所以看 strength_by_source 和 weakest_source，别把「对上」当成一个均质的强证据集合。',
-    'rule_registry_note':
-        'meta-test 检查的是「每条规则都有用例」，不检查「用例真的在测那条规则」。'
-        '它防的是缺用例这种最常见的失效，不防用例写了但没测到东西。'
-        '绿了只代表覆盖存在，不代表覆盖有效。',
+        '看 strength_by_source 和 weakest_sources，别把「对上」当成均质的强证据集合。',
+    'strength_vs_weakest':
+        'strength 回答「这条记录里最好的证据有多硬」，'
+        'weakest_sources / weakest_strength 回答「这条记录里最薄的环节有多薄」。'
+        '两个问题不同，不能互相替代：只看 strength 会漏掉一条 0.9 的记录里还挂着 0.2 的来源。',
+    'weakest_sources_semantics':
+        'weakest_sources 是列表，并列最弱时全部列出，不任取其一；'
+        'weakest_strength 是那个最弱的分值本身。',
     'corroboration_kinds': CORROBORATION_KINDS,
     'compat_rule': {
         'bump_schema_when': [
@@ -889,6 +892,14 @@ CONFIDENCE_SEMANTICS = {
                     '和拆层单用是同一个错，只是发生在字段级。',
             'must_not': ['use_primary_action_alone', 'drop_lower_guarantee_sources'],
             'instead': '用 primary_action 决定先干什么，用 actions 和 sources 决定这条到底有多稳',
+        },
+        {
+            'id': 'meta_test_green_is_not_verified',
+            'text': 'meta-test 绿了只代表「每条规则都有用例」，不代表「用例真的在测那条规则」。'
+                    '一条用例可以挂在规则名下、断言却和规则无关，照样绿。'
+                    '它防的是缺用例，不防用例无效。',
+            'must_not': ['treat_meta_test_green_as_rule_verified'],
+            'instead': '抽查用例断言的内容，或者让用例里带上规则自己的数据',
         },
         {
             'id': 'check_schema_before_parse',
@@ -975,8 +986,11 @@ def channel_sources(facts, probe=None):
         # 「对上」只说明两条路互不依赖，不说明两条路都硬。
         # 把每一侧的硬度也带上，免得一个布尔把差异盖掉。
         item['strength_by_source'] = {s: SOURCE_STRENGTH.get(s, 0.0) for s in item['sources']}
-        item['weakest_source'] = min(item['sources'],
-                                     key=lambda s: SOURCE_STRENGTH.get(s, 0.0))
+        # 最弱可能不止一个，用列表；字段名要是单数，读的人会以为只有一个
+        lowest = min(item['strength_by_source'].values())
+        item['weakest_sources'] = sorted(s for s, v in item['strength_by_source'].items()
+                                         if v == lowest)
+        item['weakest_strength'] = lowest
         item['independent_pairs'] = ['%s+%s' % (a, b) for a, b in pairs if independent(a, b)]
     return seen
 
@@ -2370,7 +2384,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/7',
+                'schema': 'ipcsurface/asar/8',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,

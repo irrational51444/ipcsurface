@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/7')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/8')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -775,9 +775,27 @@ class RuleRegistryTests(unittest.TestCase):
         probe = {'handlers': ['chan:one'], 'windows': []}
         item = ipc.channel_sources(facts, probe=probe)['chan:one']
         self.assertTrue(item['corroborated'])
-        self.assertEqual(item['weakest_source'], 'computed')
+        self.assertEqual(item['weakest_sources'], ['computed'])
         self.assertLess(item['strength_by_source']['computed'],
                         item['strength_by_source']['runtime'])
+
+    def test_rule_strength_vs_weakest(self):
+        # strength 说「最好的那条多硬」，weakest 说「最薄的环节多薄」，两个问题
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('v:1', f)"})
+        probe = {'handlers': ['v:1'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['v:1']
+        self.assertEqual(item['strength'], 1.0)
+        self.assertEqual(item['weakest_strength'], 0.8)
+        self.assertEqual(item['weakest_sources'], ['runtime'])
+
+    def test_rule_weakest_sources_semantics(self):
+        # 并列最弱时全列出来，不任取其一
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        facts['dynamic'] = [('c:1', 'a.js:1')]
+        facts['harvested'] = {'c:1': ('a.js:2', 'self')}
+        item = ipc.channel_sources(facts)['c:1']
+        self.assertEqual(item['weakest_sources'], ['harvested'])
+        self.assertEqual(item['weakest_strength'], 0.2)
 
 
 class AsarAuditTests(unittest.TestCase):
