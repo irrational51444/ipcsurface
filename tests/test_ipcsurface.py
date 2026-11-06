@@ -564,7 +564,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/8')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/9')
         self.assertIn('limits', data)
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
@@ -778,6 +778,39 @@ class RuleRegistryTests(unittest.TestCase):
         self.assertEqual(item['weakest_sources'], ['computed'])
         self.assertLess(item['strength_by_source']['computed'],
                         item['strength_by_source']['runtime'])
+
+    def test_rule_aggregates_have_detail_and_constraint(self):
+        constraints = ipc.CONFIDENCE_SEMANTICS['usage_constraints']
+        banned = {m for item in constraints for m in item.get('must_not', [])}
+        for agg in ipc.AGGREGATE_FIELDS:
+            # 每个聚合字段都得有明细字段，不然就是一个会盖住差异的布尔/单值
+            self.assertTrue(agg['detail'])
+            self.assertIn(agg['must_not'], banned,
+                          f"{agg['field']} 缺一条 must_not 约束")
+
+    def test_rule_aggregate_detail_fields_exist_in_output(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('v:1', f)"})
+        probe = {'handlers': ['v:1'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['v:1']
+        for agg in ipc.AGGREGATE_FIELDS:
+            self.assertIn(agg['field'], item)
+            self.assertIn(agg['detail'], item,
+                          f"{agg['field']} 的明细 {agg['detail']} 没进输出")
+
+    def test_rule_baseline_error_carries_next_step(self):
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False,
+                                         encoding='utf-8') as fh:
+            json.dump({'channels': [], 'findings': []}, fh)
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit) as ctx:
+                ipc.load_baseline(path)
+        finally:
+            os.unlink(path)
+        message = str(ctx.exception)
+        # 拒绝之后必须给出下一步，而且得是能直接抄的命令
+        self.assertIn('--write-baseline', message)
+        self.assertIn('--baseline', message)
 
     def test_rule_strength_vs_weakest(self):
         # strength 说「最好的那条多硬」，weakest 说「最薄的环节多薄」，两个问题

@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.28.0'
+__version__ = '0.29.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -806,8 +806,15 @@ RULES = [
      'text': '独立性按全部两两组合判定，不靠举例；静态来源之间不算独立，运行时与任一静态来源算'},
     {'id': 'primary_action_not_alone',
      'text': 'primary_action 只是先做哪件事，不能替代 actions'},
+    {'id': 'aggregates_have_detail_and_constraint',
+     'text': '每个聚合字段（strength / corroborated / primary_action / weakest_strength）'
+             '都必须在 AGGREGATE_FIELDS 里登记明细字段和 must_not，否则测试会红'},
+    {'id': 'aggregate_detail_fields_exist_in_output',
+     'text': '聚合字段对应的明细字段必须真的出现在输出里，不能只写文档'},
     {'id': 'baseline_schema',
      'text': '基线文件自带 schema 号；对不上就拒绝，不静默按旧口径比'},
+    {'id': 'baseline_error_carries_next_step',
+     'text': '基线被拒绝时，错误信息里必须带重写和比较的两条命令'},
     {'id': 'unknown_is_null',
      'text': '未知写 null，不写 0；0 会被读成「查过，没有」'},
 ]
@@ -892,6 +899,25 @@ CONFIDENCE_SEMANTICS = {
                     '和拆层单用是同一个错，只是发生在字段级。',
             'must_not': ['use_primary_action_alone', 'drop_lower_guarantee_sources'],
             'instead': '用 primary_action 决定先干什么，用 actions 和 sources 决定这条到底有多稳',
+        },
+        {
+            'id': 'strength_alone_is_not_enough',
+            'text': 'strength 是「最好的那条有多硬」，不是这条记录的整体硬度。'
+                    '一条 0.9 的记录里可能挂着 0.2 的来源。',
+            'must_not': ['use_strength_alone'],
+            'instead': '同时看 strength_by_source，或直接看 weakest_sources',
+        },
+        {
+            'id': 'corroborated_is_not_uniform',
+            'text': 'corroborated 说明两条路互不依赖，不说明两条路都硬。',
+            'must_not': ['use_corroborated_as_uniform'],
+            'instead': '看 strength_by_source 里每一侧各自多少',
+        },
+        {
+            'id': 'weakest_needs_the_list',
+            'text': 'weakest_strength 只是一个分，并列最弱时是谁得看 weakest_sources。',
+            'must_not': ['use_weakest_without_list'],
+            'instead': '用 weakest_sources 拿到全部最弱来源',
         },
         {
             'id': 'meta_test_green_is_not_verified',
@@ -1716,6 +1742,20 @@ def audit_evidence(facts):
     return findings
 
 
+# 聚合字段登记表。每加一个「把多条信息压成一个数/一个布尔」的字段，
+# 就得在这里登记它的明细字段和一个 must_not，否则 meta-test 会红。
+# 这是第四次加聚合字段时会先漏再补的那个缺口，用检查堵上。
+AGGREGATE_FIELDS = [
+    {'field': 'strength', 'detail': 'strength_by_source',
+     'must_not': 'use_strength_alone'},
+    {'field': 'corroborated', 'detail': 'strength_by_source',
+     'must_not': 'use_corroborated_as_uniform'},
+    {'field': 'primary_action', 'detail': 'actions',
+     'must_not': 'use_primary_action_alone'},
+    {'field': 'weakest_strength', 'detail': 'weakest_sources',
+     'must_not': 'use_weakest_without_list'},
+]
+
 BASELINE_SCHEMA = 'ipcsurface/baseline/1'
 
 
@@ -2384,7 +2424,7 @@ def main(argv=None):
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
             text = json.dumps({
-                'schema': 'ipcsurface/asar/8',
+                'schema': 'ipcsurface/asar/9',
                 'mode': 'asar',
                 'subject': args.input,
                 'files': count,
