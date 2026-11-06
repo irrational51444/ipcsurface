@@ -530,10 +530,180 @@ def render_diff(old_facts, new_facts, old_name, new_name):
     return '\n'.join(out)
 
 
+# ---------------------------------------------------------------- pe
+
+# 一眼就知道不该乱来的那些。不是漏洞，是提醒。
+DANGEROUS_IMPORTS = {
+    'strcpy': '不查长度',
+    'strcat': '不查长度',
+    'wcscpy': '不查长度',
+    'lstrcpyA': '不查长度',
+    'lstrcpyW': '不查长度',
+    'gets': '不查长度',
+    'sprintf': '不查长度',
+    'vsprintf': '不查长度',
+    'wsprintfA': '不查长度',
+    'memcpy': '长度可控时危险',
+    'memmove': '长度可控时危险',
+    'system': '起外部命令',
+    'WinExec': '起外部命令',
+    'ShellExecuteA': '起外部命令',
+    'ShellExecuteW': '起外部命令',
+    'CreateProcessA': '起外部命令',
+    'CreateProcessW': '起外部命令',
+    'LoadLibraryA': '运行时加载',
+    'LoadLibraryW': '运行时加载',
+    'GetProcAddress': '运行时找函数',
+    'VirtualAlloc': '可执行内存',
+    'WriteProcessMemory': '改别人的内存',
+    'CreateRemoteThread': '往别人进程里塞线程',
+}
+
+PE_MAGIC = (b'MZ',)
+
+
+def _rva_to_offset(rva, sections):
+    for va, vsize, raw_ptr, raw_size in sections:
+        if va <= rva < va + max(vsize, raw_size):
+            return rva - va + raw_ptr
+    return None
+
+
+def read_pe_imports(path):
+    """读 PE 的导入表。只回答一件事：这个模块引了外头哪些函数。"""
+    with open(path, 'rb') as fh:
+        data = fh.read()
+    if data[:2] != b'MZ':
+        raise SystemExit('这不是 PE：开头不是 MZ')
+    try:
+        pe_off = struct.unpack_from('<I', data, 0x3C)[0]
+        if data[pe_off:pe_off + 4] != b'PE\0\0':
+            raise SystemExit('这不是 PE：找不到 PE 签名')
+        coff = pe_off + 4
+        machine, nsections = struct.unpack_from('<HH', data, coff)
+        size_opt = struct.unpack_from('<H', data, coff + 16)[0]
+        opt = coff + 20
+        magic = struct.unpack_from('<H', data, opt)[0]
+        is_64 = magic == 0x20B
+        dirs = opt + (112 if is_64 else 96)
+        import_rva, import_size = struct.unpack_from('<II', data, dirs + 8)
+        sections = []
+        sect = opt + size_opt
+        for i in range(nsections):
+            base = sect + i * 40
+            vsize, va, raw_size, raw_ptr = struct.unpack_from('<IIII', data, base + 8)
+            sections.append((va, vsize, raw_ptr, raw_size))
+    except struct.error:
+        raise SystemExit('这不是 PE：头部读不通')
+
+    if not import_rva:
+        return {'machine': machine, 'is_64': is_64, 'libraries': {}, 'sections': len(sections)}
+
+    libraries = {}
+    offset = _rva_to_offset(import_rva, sections)
+    if offset is None:
+        raise SystemExit('PE 导入表不在任何节里，可能被改过')
+    thunk_size = 8 if is_64 else 4
+    ordinal_flag = 1 << (63 if is_64 else 31)
+
+    for _ in range(512):  # 防御：导入描述符不会太多
+        desc = data[offset:offset + 20]
+        if len(desc) < 20 or desc == b'\0' * 20:
+            break
+        original_thunk, _stamp, _chain, name_rva, first_thunk = struct.unpack('<IIIII', desc)
+        name_off = _rva_to_offset(name_rva, sections)
+        if name_off is None:
+            break
+        end = data.find(b'\0', name_off)
+        dll = data[name_off:end].decode('latin-1', 'replace')
+        funcs = []
+        walk = original_thunk or first_thunk
+        walk_off = _rva_to_offset(walk, sections) if walk else None
+        if walk_off is not None:
+            for _i in range(4096):
+                raw = data[walk_off:walk_off + thunk_size]
+                if len(raw) < thunk_size:
+                    break
+                value = int.from_bytes(raw, 'little')
+                if value == 0:
+                    break
+                if value & ordinal_flag:
+                    funcs.append(f'#{value & 0xFFFF}')
+                else:
+                    name_at = _rva_to_offset(value, sections)
+                    if name_at is None:
+                        funcs.append('?')
+                    else:
+                        # 跳过 2 字节 hint
+                        fend = data.find(b'\0', name_at + 2)
+                        funcs.append(data[name_at + 2:fend].decode('latin-1', 'replace'))
+                walk_off += thunk_size
+        libraries[dll] = funcs
+        offset += 20
+
+    return {'machine': machine, 'is_64': is_64, 'libraries': libraries, 'sections': len(sections)}
+
+
+def render_pe(target, facts, size):
+    total = sum(len(v) for v in facts['libraries'].values())
+    out = ['# 模块导入了什么', '']
+    out.append(f'- 目标：`{target}`')
+    out.append(f'- {"64" if facts["is_64"] else "32"} 位，{facts["sections"]} 个节，'
+               f'{size / 1024:.0f} KB')
+    out.append(f'- {len(facts["libraries"])} 个动态库，{total} 个函数')
+    out.append('')
+    out.append('## 这份报告能信多少')
+    out.append('')
+    out.append('导入表只说「这个模块引了外头的哪些函数」，不说它怎么用。')
+    out.append('同一个 strcpy，写对了就是写对了，写错才是洞。这里给的是线索，不是判决。')
+    out.append('')
+
+    flagged = {}
+    for dll, funcs in facts['libraries'].items():
+        for fn in funcs:
+            base = fn.split('@')[0]
+            if base in DANGEROUS_IMPORTS:
+                flagged.setdefault(base, []).append(dll)
+
+    out.append('## 值得看一眼的')
+    if flagged:
+        out.append('')
+        for fn in sorted(flagged):
+            where = '、'.join(sorted(set(flagged[fn])))
+            out.append(f'- `{fn}` — {DANGEROUS_IMPORTS[fn]}  （来自 {where}）')
+    else:
+        out.append('- 没撞上下面的表')
+    out.append('')
+
+    out.append('## 全部导入')
+    out.append('')
+    for dll in sorted(facts['libraries'], key=str.lower):
+        funcs = facts['libraries'][dll]
+        head = ', '.join(funcs[:12])
+        more = f' …共 {len(funcs)} 个' if len(funcs) > 12 else ''
+        out.append(f'- **{dll}**（{len(funcs)}）{head}{more}')
+    out.append('')
+    out.append('## 下一步')
+    out.append('')
+    if flagged:
+        out.append(f'1. 去找 `{sorted(flagged)[0]}` 被调用的地方，看长度参数是从哪来的')
+        out.append('2. 这批函数本身没错，错在传进去的值。反编译看调用点，不要看导入表')
+    else:
+        out.append('1. 导入表这边没什么可看的，换方向')
+    out.append('2. 真要定漏洞，得上动态：喂异常输入看崩不崩')
+    out.append('')
+    out.append('> 只读文件头，不加载、不执行。')
+    return '\n'.join(out)
+
+
 # ---------------------------------------------------------------- cli
 
 def looks_like_asar(path):
     return path.lower().endswith('.asar')
+
+
+def looks_like_pe(path):
+    return path.lower().endswith(('.exe', '.dll', '.node', '.pyd', '.efi', '.sys'))
 
 
 def analyse_asar(path):
@@ -567,6 +737,12 @@ def main(argv=None):
         findings = []
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         summary_line = f'{len(names)} 条通道，{len(facts["dynamic"])} 处名字是算的'
+    elif looks_like_pe(args.input):
+        facts = read_pe_imports(args.input)
+        text = render_pe(args.input, facts, os.path.getsize(args.input))
+        findings = []
+        total_funcs = sum(len(v) for v in facts['libraries'].values())
+        summary_line = f"{len(facts['libraries'])} 个库，{total_funcs} 个函数"
     else:
         facts = collect_evidence(load_record(args.input))
         findings = audit_evidence(facts)

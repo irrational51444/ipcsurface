@@ -204,6 +204,31 @@ class ObfuscationTests(unittest.TestCase):
         self.assertIn('## 混淆痕迹', report)
 
 
+class PeTests(unittest.TestCase):
+    def test_rejects_non_pe(self):
+        with tempfile.NamedTemporaryFile(suffix='.exe', delete=False) as fh:
+            fh.write(b'MZ' + b'\0' * 200)
+            path = fh.name
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.read_pe_imports(path)
+        finally:
+            os.unlink(path)
+
+    def test_report_flags_dangerous_import(self):
+        facts = {'machine': 0x8664, 'is_64': True, 'sections': 4,
+                 'libraries': {'msvcrt.dll': ['strcpy', 'printf'], 'k.dll': ['memcpy']}}
+        report = ipc.render_pe('demo.dll', facts, 1024)
+        self.assertIn('strcpy', report.split('## 值得看一眼的')[1])
+        self.assertIn('memcpy', report.split('## 值得看一眼的')[1])
+        self.assertNotIn('printf —', report)
+
+    def test_report_without_flags_says_so(self):
+        facts = {'machine': 0x8664, 'is_64': True, 'sections': 3,
+                 'libraries': {'a.dll': ['printf']}}
+        self.assertIn('没撞上下面的表', ipc.render_pe('x.dll', facts, 10))
+
+
 class DiffTests(unittest.TestCase):
     def test_added_and_removed(self):
         old = ipc.collect_evidence(minimal_evidence(['a:1', 'a:2']))
