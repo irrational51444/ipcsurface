@@ -1,0 +1,28 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 装
+        run: pip install .
+      - name: 语法与入口
+        run: |
+          python -m compileall -q ipcsurface.py
+          ipcsurface --help
+      - name: 拿不到证据时要报错，不能静悄悄过
+        run: |
+          set +e
+          echo '{}' > empty.json
+          ipcsurface empty.json > /dev/null 2>&1
+          code=$?
+          echo "exit=$code"
+          test "$code" -ne 0
