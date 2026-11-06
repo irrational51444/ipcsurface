@@ -318,7 +318,9 @@ cd examples && bash build.sh
 | `bulk` | 八百条通道 | 报告不散架 |
 | `native` | 带 `.node` 模块 | 说明「越界只在那些文件里」 |
 
-另外有一组 **12 条对抗样本**，同一句 `vault:unlock` 换十二种写法（池子套池子、反转、base64、unicode、注释插在拼接处、方括号调用、名字放 json、模板套模板、`fromCharCode`、两跳变量……）。现在认出 3 条，另外 9 条如实标成「名字是算出来的」。
+另外有一组 **12 条对抗样本**，同一句 `vault:unlock` 换十二种写法（池子套池子、反转、base64、unicode、注释插在拼接处、方括号调用、名字放 json、模板套模板、`fromCharCode`、两跳变量……）。现在认出三处，另外九条如实标成「名字是算出来的」。
+
+注意一件事：那三处用的是同一个名字，所以通道表里**去重后只有 1 条**。样本数和通道数不是一回事，写在这里免得下次自己看错。
 
 这组样本比数字有用：它每次都在提醒，**认不出的时候不许装认出**。上一版就是它撞出来的——模板套模板会把输出拼坏，跨行模板摊平会让行号一路偏。
 
@@ -371,7 +373,7 @@ python scripts/selfcheck.py
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 127 个用例，只用标准库
+python -m unittest discover -s tests -v   # 129 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py                 # 三十多项自查，含真包实测
 ```
@@ -396,12 +398,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.31.2**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.32.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.31.2
+git checkout v0.32.0
 python ipcsurface.py --version
 ```
 
@@ -409,7 +411,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.31.2 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.32.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

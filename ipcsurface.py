@@ -20,7 +20,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.31.2'
+__version__ = '0.32.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1521,30 +1521,67 @@ def loc(evidence):
     return '?'
 
 
+def read_json_input(path, what, next_step, expect=None):
+    """读一份 JSON 输入。坏在哪、下一步做什么，一次说清。
+
+    畸形输入不是只有「空文件」一种：截断、编码错、嵌套太深、类型不对，
+    每一样以前都会甩一段堆栈或者被当成正常数据吃掉。这里统一挡在门口。
+    """
+    try:
+        with open(path, 'rb') as fh:
+            raw = fh.read()
+    except OSError:
+        raise SystemExit(f'{what}打不开：{path}\n{next_step}')
+    try:
+        text = raw.decode('utf-8-sig')
+    except UnicodeDecodeError:
+        raise SystemExit(f'{what}不是 UTF-8：{path}\n'
+                         '可能是写的时候编码选错了，重跑一遍把它重新生成出来。\n' + next_step)
+    if not text.strip():
+        raise SystemExit(f'{what}是空的：{path}\n{next_step}')
+    try:
+        data = json.loads(text)
+    except RecursionError:
+        raise SystemExit(f'{what}嵌套太深，解不开：{path}\n'
+                         '这不是正常输出，八成是文件损坏。\n' + next_step)
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f'{what}不是合法的 JSON：{path}\n'
+                         f'  第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}\n'
+                         '文件可能被截断了。\n' + next_step)
+    if expect is not None and not expect(data):
+        raise SystemExit(f'{what}的形状不对：{path}\n'
+                         '这不是那个脚本会输出的东西。\n' + next_step)
+    return data
+
+
 def load_probe(path):
     """读探针的输出。读不了就说清楚，别甩堆栈。"""
-    try:
-        with open(path, encoding='utf-8-sig') as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        raise SystemExit(f'运行时结果读不了：{path}\n'
-                         '先用 probe/run.js 跑一遍，把它的输出存成文件:\n'
-                         '  node probe/run.js 应用目录 6 > probe.json')
-    if not isinstance(data, dict):
-        raise SystemExit(f'运行时结果不是那个格式：{path}')
-    return data
+    next_step = ('先用 probe/run.js 跑一遍，把它的输出存成文件:\n'
+                 '  node probe/run.js 应用目录 6 > probe.json')
+
+    def shape(data):
+        if not isinstance(data, dict):
+            return False
+        for key in ('handlers', 'listeners', 'windows'):
+            value = data.get(key)
+            if value is not None and not isinstance(value, list):
+                return False
+        return True
+
+    return read_json_input(path, '运行时结果', next_step, expect=shape)
 
 
 def load_poke(path):
-    """敲击结果是一串记录，不是对象。读坏了还是那句话。"""
-    try:
-        with open(path, encoding='utf-8-sig') as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        raise SystemExit(f'敲击结果读不了：{path}\n'
-                         '先用 probe/poke.js 跑一遍:\n'
-                         '  node probe/poke.js 应用目录 6 > poke.json')
-    return data
+    """敲击结果是一串记录，不是对象。读坏了还是那句话，但要说清坏在哪。"""
+    next_step = ('先用 probe/poke.js 跑一遍:\n'
+                 '  node probe/poke.js 应用目录 6 > poke.json')
+
+    def shape(data):
+        if not isinstance(data, list):
+            return False
+        return all(isinstance(row, dict) and 'channel' in row for row in data)
+
+    return read_json_input(path, '敲击结果', next_step, expect=shape)
 
 
 # 拦截类的话。抛错本身不算证据，得看它抛的是不是这一类。
@@ -1800,11 +1837,10 @@ def load_baseline(path):
     """
     if not path:
         return {'findings': [], 'channels': [], 'schema': BASELINE_SCHEMA}
-    try:
-        with open(path, encoding='utf-8-sig') as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError):
-        raise SystemExit('基线读不动：' + path)
+    data = read_json_input(
+        path, '基线', '要么用当前版本重新写一份基线，要么人工比：\n'
+        '  ipcsurface <包> --write-baseline <基线文件>',
+        expect=lambda d: isinstance(d, dict))
     saved = data.get('schema')
     if saved != BASELINE_SCHEMA:
         raise SystemExit(

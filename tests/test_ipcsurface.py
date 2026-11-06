@@ -900,6 +900,60 @@ class OutputContractTests(unittest.TestCase):
             self.assertEqual(code, expected)
 
 
+class MalformedInputTests(unittest.TestCase):
+    """畸形输入不是只有「空文件」一种。截断、编码错、嵌套太深、类型不对，
+    以前会甩堆栈或者被当成正常数据吃掉。现在是三样都要：非零退出、说清坏在哪、给出下一步。
+    """
+
+    CASES = {
+        'empty': ('', {}, '空'),
+        'truncated': ('{"handlers": ["a:b"', {}, '不是合法的 JSON'),
+        'not-json': ('这不是 JSON', {}, '不是合法的 JSON'),
+        'wrong-type-array': ('[1,2,3]', {}, '形状不对'),
+        'wrong-type-string': ('"hello"', {}, '形状不对'),
+        'deep': ('[' * 20000 + ']' * 20000, {}, '嵌套太深'),
+        'bad-utf8': (b'{"handlers": ["\xff\xfe"]}', {'binary': True}, '不是 UTF-8'),
+        'handlers-not-list': (json.dumps({'handlers': 'a:b'}), {}, '形状不对'),
+    }
+
+    def _write(self, data, binary=False):
+        if binary:
+            fh = tempfile.NamedTemporaryFile('wb', suffix='.json', delete=False)
+        else:
+            fh = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False,
+                                             encoding='utf-8')
+        fh.write(data)
+        fh.close()
+        return fh.name
+
+    def test_every_loader_rejects_every_malformed_case(self):
+        loaders = (ipc.load_probe, ipc.load_poke, ipc.load_baseline)
+        for name, (data, kwargs, hint) in self.CASES.items():
+            path = self._write(data, **kwargs)
+            try:
+                for loader in loaders:
+                    with self.subTest(case=name, loader=loader.__name__):
+                        with self.assertRaises(SystemExit) as ctx:
+                            loader(path)
+                        message = str(ctx.exception)
+                        # 报错要说清坏在哪，还得给出下一步
+                        self.assertGreater(len(message.splitlines()), 1)
+                        # 基线有自己的一道闸（schema 号），形状问题可能先被它挡下
+                        if loader is not ipc.load_baseline:
+                            self.assertIn(hint, message)
+            finally:
+                os.unlink(path)
+
+    def test_probe_shape_checks_the_list_types(self):
+        # 类型对了但字段类型不对，也不能放过去：不然 len('a:b') 会当成三条通道
+        path = self._write(json.dumps({'handlers': 'a:b'}))
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.load_probe(path)
+        finally:
+            os.unlink(path)
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

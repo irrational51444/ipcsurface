@@ -105,19 +105,28 @@ TARGET_EXPECT = {
     'obf5-asar.asar': 2,
     'bulk-asar.asar': 800,
     'native-asar.asar': 2,
+    'adv-asar.asar': 1,      # 十二种写法里认出三处，但同名，去重后是 1 条通道
 }
 
 
 def check_targets(ok):
-    """九个靶子的期望值。靶场是这套东西的答案纸，掉了没人发现就白写了。"""
+    """九个靶子的期望值。靶场是这套东西的答案纸，掉了没人发现就白写了。
+
+    样本一改，期望值必须跟着改——所以这里先比集合：多一个靶子没登记、或者
+    登记了却没有这个靶子，都算红。不然期望值会从保护变成噪音。
+    """
     built = os.path.join(ROOT, 'examples', 'build')
     if not os.path.isdir(built):
         print('  SKIP 靶场还没 build，跳过（跑 examples/build.sh 再自查）')
         return ok
+    present = {name for name in os.listdir(built) if name.endswith('.asar')}
+    missing = sorted(set(TARGET_EXPECT) - present)
+    extra = sorted(present - set(TARGET_EXPECT))
+    ok &= check('每个靶子都有期望值', not missing, '、'.join(missing))
+    ok &= check('没有靶子没登记期望值', not extra, '、'.join(extra))
     for name, expect in sorted(TARGET_EXPECT.items()):
         path = os.path.join(built, name)
         if not os.path.exists(path):
-            ok &= check(f'靶子 {name} 在', False)
             continue
         facts, _count, _total = t.analyse_asar(path)
         got = len(facts['channels'])
