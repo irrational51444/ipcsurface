@@ -273,9 +273,13 @@ class DecodeCallTests(unittest.TestCase):
         out = ipc.restore_decode_calls(self.SOURCE)
         self.assertIn('vault:unlock', out)
 
-    def test_without_eval_flag_nothing_changes(self):
-        facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')})
+    def test_eval_can_be_turned_off(self):
+        facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')}, allow_eval=False)
         self.assertEqual(facts['handlers'], [])
+
+    def test_eval_is_on_by_default(self):
+        facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')})
+        self.assertIn('vault:unlock', [n for n, _ in facts['handlers']])
 
     def test_with_eval_flag_channel_is_found(self):
         facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')}, allow_eval=True)

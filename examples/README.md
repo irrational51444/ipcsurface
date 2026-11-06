@@ -88,12 +88,9 @@ function _d(s){ var out=''; for(...){ out += String.fromCharCode(s.charCodeAt(i)
 ipcMain.handle(_d('\x71\x66\x72\x6b\x73...'), (e, p) => ...);
 ```
 
-期望结果：
+期望结果：两条通道都还原（`vault:unlock`、`vault:lock`）。默认就会还原，不用加开关。
 
-- 不加 `--eval`：通道 0 条，两处名字标成「是算出来的」。这就是静态能到的尽头。
-- 加 `--eval`：两条通道都还原（`vault:unlock`、`vault:lock`）。
-
-这一档要真的把 `_d` 跑一遍。跑的地方是 `tools/eval.js`，Node 的 vm 沙箱，2 秒超时，不给 require 和 process。默认关着，因为它等于执行目标里的一小段代码。
+这一档原来是交给 Node 沙箱跑的（`tools/eval.js`），现在改成纯 Python：认函数体的形状，自己算，一行目标代码都不执行。所以它敢一直开着。想关就加 `--no-eval`。
 
 ## obf4-asar
 

@@ -144,7 +144,62 @@ def restore_string_arrays(text):
     return INDEX_USE.sub(replace, text)
 
 
-EVAL_JS = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tools', 'eval.js')
+# 解码函数长得有数。认得出形状的，用纯 Python 算；认不出就放弃。
+# 这样不执行目标里的任何代码，也就不用沙箱，可以直接开着。
+DECODE_SHAPES = [
+    (re.compile(r'charCodeAt\([^)]*\)\s*\^\s*(\d+)'), 'xor'),
+    (re.compile(r'charCodeAt\([^)]*\)\s*\+\s*(\d+)'), 'add'),
+    (re.compile(r'charCodeAt\([^)]*\)\s*-\s*(\d+)'), 'sub'),
+]
+
+
+def build_decoder(body):
+    """看函数体的形状，挑一个纯 Python 的实现。认不出返回 None。
+
+    只认这几种：逐字符异或、加、减，还有整体反转。
+    别的形状一律放弃——猜出来的值比没有更坏。
+    """
+    if 'fromCharCode' in body:
+        for pattern, kind in DECODE_SHAPES:
+            match = pattern.search(body)
+            if not match:
+                continue
+            shift = int(match.group(1))
+            if shift > 0xFFFF:
+                return None
+            if kind == 'xor':
+                return lambda s, k=shift: _map_chars(s, lambda n: n ^ k)
+            if kind == 'add':
+                return lambda s, k=shift: _map_chars(s, lambda n: n + k)
+            return lambda s, k=shift: _map_chars(s, lambda n: n - k)
+    if 'reverse()' in body and 'join(' in body and 'split(' in body:
+        return lambda s: s[::-1]
+    return None
+
+
+JS_ESC = re.compile(r'\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)')
+
+
+def js_unescape(text):
+    """把 JS 字符串里的转义还原成真字符。\\x71 变成 q 那种。"""
+    def replace(match):
+        seq = match.group(1)
+        if seq[0] in 'xu' and len(seq) > 1:
+            return chr(int(seq[1:], 16))
+        return {'n': '\n', 't': '\t', 'r': '\r', '0': '\0',
+                '\\': '\\', "'": "'", '"': '"'}.get(seq, seq)
+    return JS_ESC.sub(replace, text)
+
+
+def _map_chars(text, fn):
+    """一个字符一个字符地变换。落在可打印范围外就当算不出来。"""
+    out = []
+    for ch in text:
+        value = fn(ord(ch))
+        if not 0 <= value <= 0x10FFFF:
+            return None
+        out.append(chr(value))
+    return ''.join(out)
 FUNC_HEAD = re.compile(r'function\s+([A-Za-z_$][\w$]*)\s*\(([^)]{0,120})\)\s*\{')
 
 
@@ -206,21 +261,20 @@ def restore_decode_calls(text):
 def _restore_one_pass(text):
     defs = {}
     for name, params, body in find_functions(text):
-        if any(hint in body for hint in DECODE_HINTS):
-            defs[name] = (params, body)
+        decoder = build_decoder(body)
+        if decoder is not None:
+            defs[name] = decoder
     if not defs:
         return text
 
-    for name, (params, body) in defs.items():
+    for name, decoder in defs.items():
         # 参数必须是写死的字符串，单双引号都认。带引号整段留住，
         # 这样套两层的时候，里层算完变成 "vault:unlock"，外层还能接着认。
         call = re.compile(re.escape(name) + r"""\(\s*('[^'\n]{1,300}'|"[^"\n]{1,300}")\s*\)""")
 
-        def replace(match, name=name, params=params, body=body):
-            literal = match.group(1)
-            code = (f"(function(){{function {name}({params}){{{body}}} "
-                    f"return {name}({literal});}})()")
-            value = _node_eval(code)
+        def replace(match, decoder=decoder):
+            literal = match.group(1)[1:-1]
+            value = decoder(js_unescape(literal))
             if value is None:
                 return match.group(0)
             return json.dumps(value, ensure_ascii=False)
@@ -248,7 +302,7 @@ def detect_obfuscation(text, rel):
     return hits
 
 
-def scan_asar(files, allow_eval=False):
+def scan_asar(files, allow_eval=True):
     """按字符串扫一遍源码。粗，但不用装任何东西。"""
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
@@ -1192,7 +1246,7 @@ def harvest_strings(files):
     return seen
 
 
-def analyse_asar(path, allow_eval=False):
+def analyse_asar(path, allow_eval=True):
     header, files = read_asar(path)
     facts = scan_asar(files, allow_eval=allow_eval)
     recovered = scan_sourcemaps(files)
@@ -1234,8 +1288,8 @@ def main(argv=None):
                         help='把这次的发现存成基线，下次用 --baseline 读它')
     parser.add_argument('--runtime', metavar='PROBE_JSON',
                         help='probe/run.js 的输出，把跑起来看见的通道并进报告')
-    parser.add_argument('--eval', action='store_true',
-                        help='允许把自解码函数交给 Node 沙箱算（会执行目标里的一小段代码）')
+    parser.add_argument('--no-eval', action='store_true',
+                        help='关掉自解码还原。默认开着：它只做模式匹配，不执行目标里的代码')
     parser.add_argument('--poke', metavar='POKE_JSON',
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
     args = parser.parse_args(argv)
@@ -1276,7 +1330,7 @@ def main(argv=None):
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
-        facts, count, total = analyse_asar(args.input, allow_eval=args.eval)
+        facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval)
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         if args.format == 'json':
