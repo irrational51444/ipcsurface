@@ -73,12 +73,12 @@ pip install .
 
 ## 发布
 
-当前 **0.9.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.10.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases) 那一页，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.9.0     # 想看某一个版本就切到它的 tag
+git checkout v0.10.0    # 想看某一个版本就切到它的 tag
 python ipcsurface.py --version
 ```
 
@@ -86,6 +86,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
+| 0.10.0 | 对抗测试照出来的三处：行号一直有偏差、unicode 和方括号写法认不出 |
 | 0.9.0 | 一条通道都没扫到的时候，报告顶上先喊「我不知道」，不装干净 |
 | 0.8.0 | 解包改成按需 mmap 切片，峰值 498 MB → 411 MB |
 | 0.7.1 | 混淆那六条先探子串再起正则，真包 3.9 秒 → 3.5 秒 |
@@ -244,7 +245,7 @@ cd examples && bash build.sh
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 79 个用例，只用标准库
+python -m unittest discover -s tests -v   # 84 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 ```
 

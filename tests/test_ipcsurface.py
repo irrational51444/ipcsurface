@@ -570,5 +570,34 @@ class DiffTests(unittest.TestCase):
         self.assertIn('makeChannel(op)', report)
 
 
+class AdversarialTests(unittest.TestCase):
+    """同一句 vault:unlock 换十二种写法。认不出可以，把原文搞坏不行。"""
+
+    def test_bracket_member_call(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain['handle']('vault:unlock', f)"})
+        self.assertIn(('vault:unlock', 'a.js:1'), facts['handlers'])
+
+    def test_unicode_escape_decoded(self):
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('vault:\\u0075nlock', f)"})
+        self.assertIn(('vault:unlock', 'a.js:1'), facts['handlers'])
+
+    def test_control_char_escape_not_decoded(self):
+        # \u000a 一还原就多一行，行号全废
+        source = b"ipcMain.handle('vault:\\u000anlock', f)"
+        text = ipc.decode_unicode_strings(source.decode('utf-8'))
+        self.assertEqual(text.count('\n'), 0)
+
+    def test_nested_template_left_alone(self):
+        source = "ipcMain.handle(`vault:${`un` + 'lock'}`, f)"
+        folded = ipc.fold_templates(source)
+        self.assertIn('`vault:${`un`', folded)
+        # 原样的引号和反引号都得还在，不能被换成一对双引号
+        self.assertEqual(folded.count('`'), source.count('`'))
+
+    def test_template_folding_keeps_line_count(self):
+        source = "const a = `one\ntwo`;\nconst b = `x:${'y'}`;\n"
+        self.assertEqual(ipc.fold_templates(source).count('\n'), source.count('\n'))
+
+
 if __name__ == '__main__':
     unittest.main()

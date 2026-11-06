@@ -10,7 +10,9 @@
  * 只读。不写目标、不改目标、不发任何通道消息。
  */
 const { spawn } = require('child_process');
+const fs = require('fs');
 const http = require('http');
+const os = require('os');
 const path = require('path');
 const electron = require('electron');
 const WebSocket = require('ws');
@@ -113,7 +115,16 @@ const QUERY = `(() => {
 (async () => {
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE; // 否则会被当成普通 node 跑
-  const child = spawn(electron, [`--inspect=${inspectPort}`, '--remote-debugging-port=0', target], {
+  // 单实例锁是按 userData 目录加的。用默认目录的话，目标应用只要已经在跑，
+  // 第二个进程就会把锁让出去然后自己退出，调试口还没等我们连上就没了。
+  // 给它一份独立的目录，锁就落在别处，进程能老老实实起来。
+  const userData = process.argv[4] || fs.mkdtempSync(path.join(os.tmpdir(), 'probe-userdata-'));
+  const child = spawn(electron, [
+    `--inspect=${inspectPort}`,
+    '--remote-debugging-port=0',
+    `--user-data-dir=${userData}`,
+    target,
+  ], {
     stdio: ['ignore', 'pipe', 'pipe'],
     env,
   });

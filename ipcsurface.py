@@ -19,7 +19,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.9.0'
+__version__ = '0.10.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -137,10 +137,15 @@ TEXT_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.json', '.html', '.asar')
 
 PATTERNS = [
     ('expose', re.compile(r"exposeInMainWorld\(\s*['\"]([^'\"]+)['\"]")),
-    ('handle', re.compile(r"ipcMain\.(?:handle|handleOnce|on)\(\s*['\"]([^'\"]+)['\"]")),
-    ('invoke', re.compile(r"ipcRenderer\.(?:invoke|send|sendSync)\(\s*['\"]([^'\"]+)['\"]")),
-    ('dynamic_handle', re.compile(r"ipcMain\.(?:handle|on)\(\s*([^'\"\s][^,)]*\)?)")),
-    ('dynamic_invoke', re.compile(r"ipcRenderer\.(?:invoke|send)\(\s*([^'\"\s][^,)]*\)?)")),
+    # ipcMain.handle(...) 和 ipcMain['handle'](...) 是同一件事，后者只是写法绕。
+    ('handle', re.compile(r"ipcMain(?:\.(?:handle|handleOnce|on)|\[\s*['\"](?:handle|handleOnce|on)['\"]\s*\])"
+                          r"\(\s*['\"]([^'\"]+)['\"]")),
+    ('invoke', re.compile(r"ipcRenderer(?:\.(?:invoke|send|sendSync)|\[\s*['\"](?:invoke|send|sendSync)['\"]\s*\])"
+                          r"\(\s*['\"]([^'\"]+)['\"]")),
+    ('dynamic_handle', re.compile(r"ipcMain(?:\.(?:handle|on)|\[\s*['\"](?:handle|on)['\"]\s*\])"
+                                  r"\(\s*([^'\"\s][^,)]*\)?)")),
+    ('dynamic_invoke', re.compile(r"ipcRenderer(?:\.(?:invoke|send)|\[\s*['\"](?:invoke|send)['\"]\s*\])"
+                                  r"\(\s*([^'\"\s][^,)]*\)?)")),
     ('preload', re.compile(r"preload\s*:\s*([^,\n}]+)")),
     ('contextIsolation', re.compile(r"contextIsolation\s*:\s*(\w+)")),
     ('nodeIntegration', re.compile(r"nodeIntegration\s*:\s*(\w+)")),
@@ -357,15 +362,65 @@ def fold_templates(text):
     """模板串里只插字面量的，直接摊平：`ledger:${'tpl'}` → "ledger:tpl"。
 
     插值是变量的不碰——那要算运行时的值，不在这儿猜。
+    套在别的模板里面的也不碰：`` `a:${`b`}` `` 要是把里层摊成 "b"，
+    外层那段就变形了，报告里会印出一截谁也看不懂的东西。
     """
-    def replace(match):
+    pieces = []
+    pos = 0
+    while True:
+        match = TPL_STRING.search(text, pos)
+        if not match:
+            break
         body = match.group(1)
+        # 体里还有没闭合的 ${ ，说明这段是被里面那层反引号截断的。
+        # 从这儿到下一个反引号之间原样留着，一个字都不改。
+        if body.count('${') > body.count('}'):
+            nxt = text.find('`', match.end())
+            if nxt < 0:
+                break
+            pieces.append(text[pos:nxt + 1])
+            pos = nxt + 1
+            continue
         flattened = TPL_LITERAL.sub(lambda m: m.group(2), body)
-        if '${' in flattened:
-            return match.group(0)
-        return json.dumps(flattened, ensure_ascii=False)
+        pieces.append(text[pos:match.start()])
+        if '${' in flattened or '\n' in body:
+            # 带换行的模板摊平会把行数压掉，行号一错，报告里的定位就全废了。
+            pieces.append(match.group(0))
+        else:
+            pieces.append(json.dumps(flattened, ensure_ascii=False))
+        pos = match.end()
+    pieces.append(text[pos:])
+    return ''.join(pieces)
 
-    return TPL_STRING.sub(replace, text)
+
+UNICODE_ESCAPE = re.compile(r'\\u([0-9a-fA-F]{4})')
+QUOTED = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1""")
+
+
+def decode_unicode_strings(text):
+    """字面量里的 \\u0075 这种，先还原成真字符。
+
+    只在引号里面动，而且还原出来的要是引号或反斜杠就跳过——
+    不然一个转义反手把整个字符串的边界拆了，后面全乱。
+    """
+
+    def fix(match):
+        body = match.group(2)
+        if '\\u' not in body:
+            return match.group(0)
+        quote = match.group(1)
+
+        def one(m):
+            char = chr(int(m.group(1), 16))
+            # 引号、反斜杠会拆掉字符串边界；控制字符会把行数撑开，
+            # 行号一乱，报告里的定位就全废了。这几类一概不还原。
+            if char in ('"', "'", '\\') or ord(char) < 0x20:
+                return m.group(0)
+            return char
+
+        return quote + UNICODE_ESCAPE.sub(one, body) + quote
+
+    return QUOTED.sub(fix, text)
 
 
 CONST_DEF = re.compile(r"(?:const|let|var)\s+([A-Za-z_$][\w$]{3,})\s*=\s*"
@@ -393,7 +448,8 @@ def propagate_constants(text, extra=None):
         lambda m: json.dumps(constants[m.group(1)], ensure_ascii=False) + m.group(2), text)
 
 
-IPC_ARG = re.compile(r'(ipcMain\.(?:handle|handleOnce|on)|ipcRenderer\.(?:invoke|send))'
+IPC_ARG = re.compile(r'(ipcMain(?:\.(?:handle|handleOnce|on)|\[\s*[\'"](?:handle|handleOnce|on)[\'"]\s*\])'
+                     r'|ipcRenderer(?:\.(?:invoke|send)|\[\s*[\'"](?:invoke|send)[\'"]\s*\]))'
                      r'\(\s*([A-Za-z_$][\w$]*)\s*([,)])')
 
 
@@ -510,6 +566,7 @@ def scan_asar(files, allow_eval=True):
         text = restore_string_arrays(text)
         if allow_eval:
             text = restore_decode_calls(text)
+        text = decode_unicode_strings(text)
         text = fold_templates(text)
         text = propagate_constants(text, extra=global_consts)
         text = resolve_ipc_arg(text, extra=global_consts)
