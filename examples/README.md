@@ -95,6 +95,14 @@ ipcMain.handle(_d('\x71\x66\x72\x6b\x73...'), (e, p) => ...);
 
 这一档要真的把 `_d` 跑一遍。跑的地方是 `tools/eval.js`，Node 的 vm 沙箱，2 秒超时，不给 require 和 process。默认关着，因为它等于执行目标里的一小段代码。
 
+## obf4-asar
+
+套两层：名字先加一，再异或 7。`_d(_e('...'))`。
+
+期望结果：加 `--eval` 之后一条通道还原成 `vault:unlock`。一轮只能剥一层，所以工具会来回跑几轮，直到不再变化。
+
+这一项验的是「嵌套剥不剥得开」。剥得开，但只在这个参数是死字符串的前提下。
+
 ## 怎么跑
 
 需要 Node、[REA](https://github.com/morluto/rea)、`@electron/asar`。

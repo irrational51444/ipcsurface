@@ -281,6 +281,16 @@ class DecodeCallTests(unittest.TestCase):
         facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')}, allow_eval=True)
         self.assertIn('vault:unlock', [n for n, _ in facts['handlers']])
 
+    def test_nested_calls_are_peeled(self):
+        # 套两层：先加一，再异或 7。一轮剥一层，来回跑就剥开了
+        src = ("function _e(s){var o='';for(var i=0;i<s.length;i++){"
+               "o+=String.fromCharCode(s.charCodeAt(i)+1)}return o}\n"
+               "function _d(s){var o='';for(var i=0;i<s.length;i++){"
+               "o+=String.fromCharCode(s.charCodeAt(i)^7)}return o}\n"
+               "ipcMain.handle(_d(_e('\\x70\\x65\\x71\\x6a\\x72\\x3c\\x71\\x68\\x6a\\x67\\x63\\x6b')), f)")
+        out = ipc.restore_decode_calls(src)
+        self.assertIn('vault:unlock', out)
+
     def test_unknown_function_is_left_alone(self):
         src = "someFunc('\\x71\\x66')"
         self.assertEqual(ipc.restore_decode_calls(src), src)

@@ -192,13 +192,18 @@ def _node_eval(code):
 def restore_decode_calls(text):
     """把「自解码函数 + 字面量参数」这种算出来。
 
-    认的是这种形状：
-        function _0x9f2a(s){ ... charCodeAt ... }
-        ipcMain.handle(_0x9f2a('鄏鄐'), ...)
-
-    参数必须是死字符串，函数必须是本文件里定义的。两条都不满足就不碰——
-    碰了就是在猜。算出来的值交给 Node 沙箱，不自己写引擎。
+    一轮只能拆一层：`_d(_e('xx'))` 得先算里面那层，再算外面。
+    所以来回跑几轮，直到不再变化。层数深就多跑几轮。
     """
+    for _ in range(6):
+        updated = _restore_one_pass(text)
+        if updated == text:
+            break
+        text = updated
+    return text
+
+
+def _restore_one_pass(text):
     defs = {}
     for name, params, body in find_functions(text):
         if any(hint in body for hint in DECODE_HINTS):
@@ -207,14 +212,14 @@ def restore_decode_calls(text):
         return text
 
     for name, (params, body) in defs.items():
-        # 只认单引号、单行、没有内嵌引号的调用。别的形状不碰。
-        call = re.compile(re.escape(name) + r"\(\s*'([^'\n]{1,300})'\s*\)")
+        # 参数必须是写死的字符串，单双引号都认。带引号整段留住，
+        # 这样套两层的时候，里层算完变成 "vault:unlock"，外层还能接着认。
+        call = re.compile(re.escape(name) + r"""\(\s*('[^'\n]{1,300}'|"[^"\n]{1,300}")\s*\)""")
 
         def replace(match, name=name, params=params, body=body):
             literal = match.group(1)
-            # literal 本身就是源码里的写法（可能带 \x 转义），原样嵌回去
             code = (f"(function(){{function {name}({params}){{{body}}} "
-                    f"return {name}('{literal}');}})()")
+                    f"return {name}({literal});}})()")
             value = _node_eval(code)
             if value is None:
                 return match.group(0)

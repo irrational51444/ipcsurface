@@ -181,7 +181,7 @@ ipcsurface evidence --poke poke.json -o surface.md
 
 **但这个 0 不是死的。** 有五条路能翻回来：
 
-- **名字是算出来的，就让 Node 算一遍（`--eval`，默认关）。** `function _d(s){...charCodeAt(i)^7...}` 配 `_d('\x71...')` 这种，把那段定义加一个调用丢进 `tools/eval.js` 的沙箱跑一次就有值。`obf3-asar` 不加开关是 0 条通道，加上是 2 条。默认关，因为它等于执行目标里的一小段代码——这条线得你自己跨。
+- **名字是算出来的，就让 Node 算一遍（`--eval`，默认关）。** `function _d(s){...charCodeAt(i)^7...}` 配 `_d('\x71...')` 这种，把那段定义加一个调用丢进 `tools/eval.js` 的沙箱跑一次就有值。套两层也行——`_d(_e('...'))` 一轮剥一层，来回跑几轮就全剥开了。`obf3-asar` 不加开关是 0 条通道，加上是 2 条；`obf4-asar` 那两层也是这么解的。默认关，因为它等于执行目标里的一小段代码——这条线得你自己跨。
 - **字符串池，先拆开。** `var _0x = ['vault:unlock', ...]` 配 `_0x[0]` 这种最常见的一层混淆，能还原：找到全是字符串的数组，把下标换回字面量。`obf2-asar` 那个靶子四条通道全认出来了。不需要执行代码，也不需要解释器。
 - **死字符串拼的，再折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。
 - **包里带 sourcemap，就翻回原样。** `.map` 里的 `sourcesContent` 就是没压过的源码。`map-asar` 这个靶子就是靠它，从一个压得只剩 `a.ipcMain.handle(b.c,d)` 的包里，把 `vault:unlock` 和 `vault:__export_all` 捞出来的。
