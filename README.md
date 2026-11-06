@@ -129,6 +129,7 @@ ipcsurface evidence --baseline baseline.json -o surface.md --fail-on high
 | `--diff OTHER` | 把输入当旧版，和另一份 Evidence 比 |
 | `--baseline FILE` | 只报基线里没有的发现 |
 | `--write-baseline FILE` | 把这次的发现存成基线 |
+| `--eval` | 允许把自解码函数交给 Node 沙箱算。默认关 |
 | `--runtime PROBE` | 把运行时探针的结果并进报告 |
 | `--all` | 不截断 |
 | `--format json` | 三种输入都支持，输出结构化结果 |
@@ -178,8 +179,9 @@ ipcsurface evidence --poke poke.json -o surface.md
 
 0 条不奇怪。真实应用发出去的时候是打包压过的，`ipcMain.handle(a.b, ...)` 这种写法字符串早就没了，字符串级粗扫到这儿就断。
 
-**但这个 0 不是死的。** 有四条路能翻回来：
+**但这个 0 不是死的。** 有五条路能翻回来：
 
+- **名字是算出来的，就让 Node 算一遍（`--eval`，默认关）。** `function _d(s){...charCodeAt(i)^7...}` 配 `_d('\x71...')` 这种，把那段定义加一个调用丢进 `tools/eval.js` 的沙箱跑一次就有值。`obf3-asar` 不加开关是 0 条通道，加上是 2 条。默认关，因为它等于执行目标里的一小段代码——这条线得你自己跨。
 - **字符串池，先拆开。** `var _0x = ['vault:unlock', ...]` 配 `_0x[0]` 这种最常见的一层混淆，能还原：找到全是字符串的数组，把下标换回字面量。`obf2-asar` 那个靶子四条通道全认出来了。不需要执行代码，也不需要解释器。
 - **死字符串拼的，再折一遍。** `'ledger:' + 'shadow'` 两头都是字面量，折成 `'ledger:shadow'` 就认得出了。
 - **包里带 sourcemap，就翻回原样。** `.map` 里的 `sourcesContent` 就是没压过的源码。`map-asar` 这个靶子就是靠它，从一个压得只剩 `a.ipcMain.handle(b.c,d)` 的包里，把 `vault:unlock` 和 `vault:__export_all` 捞出来的。

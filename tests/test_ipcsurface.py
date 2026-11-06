@@ -264,6 +264,28 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn('sandbox=True', '\n'.join(ipc.render_runtime(probe, set())))
 
 
+class DecodeCallTests(unittest.TestCase):
+    SOURCE = ("function _d(s){var o='';for(var i=0;i<s.length;i++){"
+              "o+=String.fromCharCode(s.charCodeAt(i)^7)}return o}\n"
+              "ipcMain.handle(_d('\\x71\\x66\\x72\\x6b\\x73\\x3d\\x72\\x69\\x6b\\x68\\x64\\x6c'), f)")
+
+    def test_decode_call_is_restored(self):
+        out = ipc.restore_decode_calls(self.SOURCE)
+        self.assertIn('vault:unlock', out)
+
+    def test_without_eval_flag_nothing_changes(self):
+        facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')})
+        self.assertEqual(facts['handlers'], [])
+
+    def test_with_eval_flag_channel_is_found(self):
+        facts = ipc.scan_asar({'a.js': self.SOURCE.encode('utf-8')}, allow_eval=True)
+        self.assertIn('vault:unlock', [n for n, _ in facts['handlers']])
+
+    def test_unknown_function_is_left_alone(self):
+        src = "someFunc('\\x71\\x66')"
+        self.assertEqual(ipc.restore_decode_calls(src), src)
+
+
 class StringPoolTests(unittest.TestCase):
     def test_pool_index_is_restored(self):
         source = (b"var _0x = ['vault:unlock','vault:lock','vault:status'];\n"
