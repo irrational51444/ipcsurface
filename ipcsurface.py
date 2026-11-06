@@ -86,6 +86,31 @@ def collect(result):
             exports[props.get('entry') or '?'].add((channel, where))
 
     channels = sorted(set(invokes) | set(handles))
+
+    semantic = result.get('semantic_graph') or {}
+    coverage = semantic.get('coverage') or {}
+    families = []
+    for fam in coverage.get('families') or []:
+        unknown = len(fam.get('unknown_ids') or [])
+        if fam.get('status') != 'complete' or unknown:
+            families.append({
+                'name': fam.get('family'),
+                'status': fam.get('status'),
+                'unknown': unknown,
+                'retained': fam.get('retained_relations'),
+            })
+    families.sort(key=lambda f: (-f['unknown'], f['name'] or ''))
+
+    dyn_channels = []
+    for edge in graph['edges']:
+        props = edge.get('properties') or {}
+        if not props.get('channel'):
+            continue
+        if props.get('channel_expression') or props.get('resolution') in ('dynamic', 'unresolved', 'computed'):
+            expr = props.get('channel_expression') or '?'
+            dyn_channels.append((expr, loc(edge.get('evidence'))))
+    dyn_channels = sorted(set(dyn_channels))
+
     return {
         'subject': result.get('input_path') or '?',
         'sha': result.get('root_artifact_sha256') or '?',
@@ -96,6 +121,8 @@ def collect(result):
         'handles': handles,
         'exports': exports,
         'channels': channels,
+        'families': families,
+        'dyn_channels': dyn_channels,
         'ipc': summary.get('ipc') or {},
         'sender_checks': summary.get('sender_validation_observations'),
         'limitations': result.get('limitations') or [],
@@ -166,6 +193,26 @@ def render_markdown(facts, findings):
     out.append('')
     out.append(f'字面通道 {len(facts["channels"])} 条，两头都对上 {paired_count} 条，'
                f'动态通道 {ipc.get("dynamic_channel_operations", 0)} 条')
+    out.append('')
+    out.append('## 没看清的地方')
+    out.append('')
+    out.append('这张表只能证明哪些看清了，不能证明没有什么。')
+    out.append('')
+    for expr, where in facts['dyn_channels'][:20]:
+        out.append(f'- 通道名是算出来的不是写死的：`{expr}`  `{where}`')
+    if not facts['dyn_channels'] and facts['ipc'].get('dynamic_channel_operations'):
+        out.append(f"- {facts['ipc']['dynamic_channel_operations']} 个通道操作是动态的，名字没定下来")
+    loud = [f for f in facts['families'] if f['unknown']]
+    quiet = [f for f in facts['families'] if not f['unknown']]
+    for fam in loud[:8]:
+        out.append(f"- {fam['name']}：{fam['status']}，{fam['unknown']} 处没解析出来")
+    if len(loud) > 8:
+        out.append(f'- 另外 {len(loud) - 8} 类也有没解析出来的')
+    if quiet:
+        out.append(f"- 这 {len(quiet)} 类只覆盖了一部分：" + '、'.join(f['name'] for f in quiet))
+    out.append('- 混淆过的代码认不出来；打包压缩后的通道名会被当成算出来的值')
+    out.append('- 动态 require、eval、拼接出来的路径，进不了这张表')
+    out.append('- 内存层面它不看，越界、泄漏、重复释放要在运行时或者 native 那边查')
     out.append('')
     out.append('## 可疑项')
     if findings:
