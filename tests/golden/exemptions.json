@@ -1,9 +1,12 @@
 {
   "protected": 2,
   "total": 3,
+  "declarative": 2,
+  "substitutive": 0,
+  "allowed_substitutive": 0,
   "locked_at_ratio": 0.6667,
-  "locked_at_version": "0.55.0",
-  "policy": "按版本 + 按比率双锁：比率上涨就红，必须显式更新 locked_at_ratio 并写理由；版本号对不上也红，防止跨版本静默沿用。",
-  "reason": "分母重新定义：只数「空集合上平凡为真」的 vacuous 断言。assertTrue(any(...)) 空集合直接失败、assertFalse(any(...)) 空集合语义正确，这两类不再进分母——之前 91% 里绝大部分是它们，属于判据误报而不是豁免膨胀。",
-  "note": "注释豁免的 vacuous 断言处数 / vacuous 断言处数。警报线，不是安全线。"
+  "locked_at_version": "0.56.0",
+  "policy": "门禁只挂在「替代型」条数上（allowed_substitutive，默认 0）；总比率是背景报告，不构成失败条件。版本号对不上也红。",
+  "reason": "替代型 = 本该写 non_empty() 却用注释替代信任。总比率把合理声明和该检查没检查混在一起，拦它说不清拦的是哪一种，所以阈值不再挂在比率上。",
+  "note": "比率仅供观察：protected/total 的分子分母都只算 vacuous 断言。"
 }

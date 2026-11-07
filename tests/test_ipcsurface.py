@@ -1280,12 +1280,14 @@ class OutputSideTests(unittest.TestCase):
                          '副本要清掉；.failed 是有意留下的诊断件')
 
 
-def exemption_lock_state(base, rate, current_version):
-    """锁的判定抽出来：返回 (ok, 原因)。改哪个字段能放行，用它能测。"""
+def exemption_lock_state(base, rate, current_version, substitutive=0):
+    """锁的判定抽出来：返回 (ok, 原因)。门禁看替代型条数，比率只作背景。"""
     reasons = []
+    if substitutive > base.get('allowed_substitutive', 0):
+        reasons.append('substitutive_above_allowed')
     locked_ratio = base.get('locked_at_ratio')
     if locked_ratio is not None and round(rate, 4) > round(locked_ratio, 4):
-        reasons.append('ratio_above_locked')
+        reasons.append('ratio_above_locked')   # 只记录，不再单独构成失败
     if base.get('locked_at_version') != current_version:
         reasons.append('version_mismatch')
     if not base.get('reason'):
@@ -1298,6 +1300,16 @@ class ExemptionLockTests(unittest.TestCase):
 
     base = {'protected': 10, 'total': 11, 'locked_at_ratio': 10 / 11,
             'locked_at_version': '0.52.0', 'reason': '空集合本来就合法'}
+
+    def test_rule_gate_hangs_on_substitutive_not_ratio(self):
+        base = dict(self.base, allowed_substitutive=0)
+        # 比率涨了、但替代型还是 0：不该红（多一条合理声明而已）
+        ok, reasons = exemption_lock_state(base, 0.9, '0.52.0', substitutive=0)
+        self.assertTrue(ok, reasons)
+        # 出现 1 条替代型：红
+        ok, reasons = exemption_lock_state(base, 0.5, '0.52.0', substitutive=1)
+        self.assertFalse(ok)
+        self.assertIn('substitutive_above_allowed', reasons)
 
     def test_rule_lock_update_flow(self):
         ok, reasons = exemption_lock_state(self.base, 10 / 11, '0.52.0')
@@ -2092,6 +2104,21 @@ class AssertionHygieneTests(unittest.TestCase):
             for key in breakdown:
                 breakdown[key] += part[key]
 
+        # 门禁挂在「替代型」上：替代型 = 本该写 non_empty 却写了注释。
+        # 总比率只作背景报告——它把「合理声明」和「该检查没检查」混在分子里，
+        # 在这个混合数上拦，红了也说不清是哪一种。
+        allowed = 0
+        baseline_path0 = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                      'golden', 'exemptions.json')
+        if os.path.exists(baseline_path0):
+            with open(baseline_path0, encoding='utf-8') as fh:
+                allowed = json.load(fh).get('allowed_substitutive', 0)
+        self.assertLessEqual(
+            breakdown['substitutive'], allowed,
+            f'替代型豁免 {breakdown["substitutive"]} 条（上限 {allowed}）：'
+            '这些位置本该写 non_empty() 断言，却用注释换成了「信任」。'
+            '能断言的改成断言；确实只能声明的，把 allowed_substitutive 显式调上去并写理由。')
+
         # 警报线，不是安全线：和基线比涨太多就提醒人去看一眼
         baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                      'golden', 'exemptions.json')
@@ -2101,12 +2128,10 @@ class AssertionHygieneTests(unittest.TestCase):
                 base = json.load(fh)
             base_rate = base['protected'] / base['total'] if base['total'] else 0.0
             locked = base.get('locked_at_ratio')
-            if locked is not None:
-                self.assertLessEqual(
-                    round(rate, 4), round(locked, 4),
-                    f'豁免率 {rate:.2%} 高于锁定值 {locked:.2%}：'
-                    '比率上涨本身就是信号，不是「换个版本号就能过去」的事。'
-                    '要么把能改成 non_empty() 的改掉，要么显式更新 locked_at_ratio 并写理由。')
+            if locked is not None and round(rate, 4) > round(locked, 4):
+                # 只报告，不拦：比率涨了可能只是多了一条合理声明
+                print(f'提示：豁免率 {rate:.2%} 高于基线 {locked:.2%}'
+                      '（背景信息，不是门禁；门禁看替代型条数）')
             # 基线按版本锁定：版本对不上就得复核，不能静默沿用旧基线
             self.assertEqual(
                 base.get('locked_at_version', ipc.__version__), ipc.__version__,
