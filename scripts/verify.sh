@@ -13,18 +13,25 @@ cd "$(dirname "$0")/.." || exit 1
 fail=0
 
 echo "== 1/3 单元用例 =="
-if python -m unittest discover -s tests 2>&1 | tail -3; then
+# 管道会把退出码换成 tail 的，必须显式取左边那个
+python -m unittest discover -s tests > /tmp/verify-unit.log 2>&1
+unit=$?
+tail -3 /tmp/verify-unit.log
+if [ "$unit" -eq 0 ]; then
   echo "   通过"
 else
-  echo "   没过"
+  echo "   没过（退出码 $unit，完整输出在 /tmp/verify-unit.log）"
   fail=1
 fi
 
 echo "== 2/3 冒烟 =="
-if bash scripts/smoke.sh 2>&1 | tail -2; then
+bash scripts/smoke.sh > /tmp/verify-smoke.log 2>&1
+smoke=$?
+tail -2 /tmp/verify-smoke.log
+if [ "$smoke" -eq 0 ]; then
   echo "   通过"
 else
-  echo "   没过"
+  echo "   没过（退出码 $smoke，完整输出在 /tmp/verify-smoke.log）"
   fail=1
 fi
 
