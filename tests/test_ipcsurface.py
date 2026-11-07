@@ -1111,11 +1111,36 @@ class OutputSideTests(unittest.TestCase):
         self.assertTrue(os.path.exists(stale))
         self.assertTrue(any('未处理' in note for note in result.warnings))
 
+    def test_rule_unsupported_fsync_is_unknown_not_yes(self):
+        # Windows 上「没法确认」必须报 unknown，不能报 yes
+        with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.UNSUPPORTED):
+            result = ipc.write_output(self.path, '新的\n')
+        self.assertEqual(result.durable, ipc.DURABLE_UNKNOWN)
+        self.assertFalse(result.durable_known)
+        self.assertTrue(any('无法确认' in note for note in result.warnings))
+
+    def test_rule_clock_going_backwards_does_not_delete(self):
+        # 时间戳在「未来」（时钟回拨），按太新处理，不删
+        stamp = int((time.time() + 3600) * 1000)
+        future = os.path.join(self.dir, f'.report.md.{stamp}.deadbeef.bak')
+        with open(future, 'w', encoding='utf-8') as fh:
+            fh.write('来自未来的副本')
+        ipc.write_output(self.path, '新的\n')
+        self.assertTrue(os.path.exists(future), '时钟回拨时不能把副本当过期删掉')
+
+    def test_rule_near_miss_name_is_not_ours(self):
+        # 位数不对的「像但不匹配」名字，不许动
+        near = os.path.join(self.dir, '.report.md.12345.deadbeef.bak')
+        with open(near, 'w', encoding='utf-8') as fh:
+            fh.write('长得像但不是我们生成的')
+        ipc.write_output(self.path, '新的\n')
+        self.assertTrue(os.path.exists(near))
+
     def test_rule_dir_fsync_failure_is_reported_not_fatal(self):
         ipc.write_output(self.path, '旧的\n')
-        with mock.patch.object(ipc, '_fsync_dir', return_value=False):
+        with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.FAILED):
             result = ipc.write_output(self.path, '新的\n')
-        self.assertFalse(result.durable, '目录没刷成功，就不能说持久化了')
+        self.assertEqual(result.durable, ipc.DURABLE_NO, '目录没刷成功，就不能说持久化了')
         self.assertEqual(self.read(), '新的\n')
         self.assertTrue(any('fsync' in note for note in result.warnings), '这个状态必须能被观察到')
 

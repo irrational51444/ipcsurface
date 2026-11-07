@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import enum
 import errno
 import hashlib
 import json
@@ -25,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.39.0'
+__version__ = '0.40.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1610,6 +1611,7 @@ def json_depth(text):
 
 
 WRITE_TMP_PREFIX = '.ipcsurface-'
+_windows_hint_shown = False
 STALE_BACKUP_SECONDS = 24 * 3600
 
 # 写出去的坏法也得有类别。磁盘满、没权限、写了一半，都要说清是哪一种。
@@ -1652,35 +1654,57 @@ def _output_kind(exc):
     return 'write_failed'
 
 
+class FsyncResult(enum.Enum):
+    """目录刷盘这件事，有三种可能，不是两种。"""
+
+    OK = 'ok'
+    UNSUPPORTED = 'unsupported'   # 这套系统没有这个能力（Windows）
+    FAILED = 'failed'
+
+
+DURABLE_YES = 'yes'
+DURABLE_NO = 'no'
+DURABLE_UNKNOWN = 'unknown'
+
+
 class WriteResult:
-    """写完之后的事实，不是二元的成与败。"""
+    """写完之后的事实。
+
+    durable 是三态：yes / no / unknown。
+    把「这套系统根本没法确认」报成 yes，就是拿不知道冒充知道——
+    这个项目从第一天起反对的就是这件事。
+    """
 
     def __init__(self, path, durable, warnings):
         self.path = path
-        self.durable = durable
+        self.durable = durable              # 'yes' | 'no' | 'unknown'
         self.warnings = list(warnings)
 
+    @property
+    def durable_known(self):
+        return self.durable != DURABLE_UNKNOWN
+
     def __repr__(self):
-        return f'WriteResult(path={self.path!r}, durable={self.durable}, warnings={self.warnings})'
+        return f'WriteResult(path={self.path!r}, durable={self.durable!r}, warnings={self.warnings})'
 
 
 def _fsync_dir(directory):
-    """替换之后刷一次目录，让 rename 真正落到盘上。
+    """替换之后刷一次目录，让 rename 真正落到盘上。返回 FsyncResult。
 
-    返回 None 表示这套系统不支持刷目录（Windows），既不是成功也不是失败；
-    返回 False 才是真的刷失败了——那才需要「已写入但可能回退」这个状态。
+    UNSUPPORTED 不等于 FAILED：前者是「这套系统没这个能力」，后者是「有这能力但没成功」。
+    混成一个 None/falsy，调用方迟早把未知当失败，或者把未知当成功。
     """
     if os.name == 'nt':
-        return None
+        return FsyncResult.UNSUPPORTED
     try:
         fd = os.open(directory, os.O_RDONLY)
     except OSError:
-        return False
+        return FsyncResult.FAILED
     try:
         os.fsync(fd)
-        return True
+        return FsyncResult.OK
     except OSError:
-        return False
+        return FsyncResult.FAILED
     finally:
         os.close(fd)
 
@@ -1698,11 +1722,17 @@ def _backup_stamp(name):
 
 
 def _backup_age(path):
-    """副本有多旧，只看文件名。取不到时间戳就返回 None（当作未知，不删）。"""
+    """副本有多旧，只看文件名。取不到时间戳就返回 None（当作未知，不删）。
+
+    年龄判断的可靠性上限就是系统时钟的可靠性：NTP 校正、手改时间、快照恢复
+    都会让时钟往回走。负年龄（副本「来自未来」）按「太新」处理，不删——
+    宁可留着一个旧副本，也不能因为时钟抽风把不该删的删掉。
+    """
     stamp = _backup_stamp(os.path.basename(path))
     if stamp is None:
         return None
-    return max(0.0, time.time() - stamp / 1000.0)
+    age = time.time() - stamp / 1000.0
+    return age if age >= 0 else 0.0
 
 
 def _ours(name, basename):
@@ -1827,11 +1857,21 @@ def write_output(path, text, expect_json=False):
                               '目标可能被别的程序占用，关掉它再试一次。原报告没动。' + kept_note)
 
         fsync_state = _fsync_dir(directory)
-        # Windows 上「不支持」不等于「失败」：文件本身已经 fsync 过了，
-        # 再拿一个必然为假的 durable 去报警，只会把真正的问题淹掉。
-        durable = fsync_state is not False
-        if fsync_state is False:
+        if fsync_state is FsyncResult.OK:
+            durable = DURABLE_YES
+        elif fsync_state is FsyncResult.FAILED:
+            durable = DURABLE_NO
             warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。')
+        else:
+            # 这套系统没法确认是不是落盘了。报 unknown：不阻塞，也不冒充知道。
+            durable = DURABLE_UNKNOWN
+            warnings.append('本平台不支持刷目录，无法确认持久性：文件已是新版，'
+                            '崩溃后是否回退取决于文件系统。')
+
+        if os.name == 'nt' and not _windows_hint_shown:
+            globals()['_windows_hint_shown'] = True
+            warnings.append('Windows 上这几条路径未经验证：replace 被占用、长路径、只读目录；'
+                            '真踩到问题请按 replace_failed 的提示处理。')
     except OutputError:
         raise
     except OSError as exc:
@@ -2754,7 +2794,8 @@ EXIT_CODES = {
     1: '输入有问题（文件不存在、不是 asar、参数不对）',
     2: '--fail-on 被触发',
     3: '内部错误：工具自己崩了，不是目标的问题',
-    4: '报告已写入但未持久化（目录 fsync 失败，崩溃后可能回退）',
+    4: '报告已写入但未持久化（目录 fsync 失败，崩溃后可能回退）；'
+       '文件已是新版，不要回滚、不要重跑',
 }
 
 
@@ -2813,11 +2854,21 @@ def main(argv=None):
         except (AttributeError, ValueError):
             pass
 
+    epilog = '''退出码
+  0  成功；持久性看 stderr 的 kind 行（durability_unknown = 本平台无法确认）
+  1  输入有问题（文件不存在、不是 asar、参数不对）
+  2  --fail-on 被触发
+  3  工具自己崩了，不是目标的问题
+  4  已写入但未持久化（目录 fsync 失败）；文件已是新版，不要回滚、不要重跑
+
+写失败时 stderr 带一行 kind: <类别>，输入侧与输出侧的类别见 README。'''
+
     parser = argparse.ArgumentParser(
         prog='ipcsurface',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
         description='把一个 Electron 应用的能力面压成一页纸。'
                     '输入可以是 .asar、REA 的 Evidence JSON，或者一个 dll/exe。',
-        epilog='报告第一节永远是「这份报告能信多少」，然后是证据，最后是下一步。')
+        epilog=epilog + '\n\n报告第一节永远是「这份报告能信多少」，然后是证据，最后是下一步。')
     parser.add_argument('input', help='.asar 包、REA 的 Evidence JSON，或 dll/exe')
     parser.add_argument('--version', action='version', version=f'ipcsurface {__version__}')
     parser.add_argument('-o', '--out', help='写到文件，不给就打到标准输出')
@@ -2998,12 +3049,15 @@ def main(argv=None):
             os.makedirs(parent, exist_ok=True)
         result = write_output(args.out, text,
                              expect_json=args.format in ('json', 'sarif'))
-        undurable = not result.durable
+        undurable = result.durable == DURABLE_NO
+        unknown = result.durable == DURABLE_UNKNOWN
         for note in result.warnings:
             print('注意：' + note, file=sys.stderr)
         if undurable:
             # 文件已经是新版，只是持久化没保证；这不是失败，但必须让 CI 看得见
             print('kind: not_durable', file=sys.stderr)
+        elif unknown:
+            print('kind: durability_unknown', file=sys.stderr)
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:

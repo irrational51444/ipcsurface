@@ -265,14 +265,17 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **退出码**
 
-| 码 | 意思 |
-| --- | --- |
-| 0 | 没有触发门禁 |
-| 1 | 输入有问题：文件不存在、不是 asar、参数不对 |
-| 2 | `--fail-on` 被触发 |
-| 3 | 工具自己崩了——不是目标的问题 |
+| 码 | 意思 | 该做什么 |
+| --- | --- | --- |
+| 0 | 成功；没有触发门禁 | 持久性看 stderr 的 `kind:` 行 |
+| 1 | 输入有问题：文件不存在、不是 asar、参数不对 | 照提示修输入 |
+| 2 | `--fail-on` 被触发 | 看报告里的可疑项 |
+| 3 | 工具自己崩了——不是目标的问题 | 报 issue |
+| 4 | 已写入但未持久化（目录 fsync 失败） | **文件已是新版，不要回滚、不要重跑** |
 
-代码里是 `EXIT_CODES`，测试直接断言这张表，改口径会红。
+代码里是 `EXIT_CODES`，测试直接断言这张表，改口径会红。`--help` 里也有这张表。
+
+**写入的持久性有三态**（`WriteResult.durable`）：`yes` / `no` / `unknown`。`unknown` 出现在本平台没有目录 fsync 能力时（Windows），退出码仍是 0，只在 stderr 说一次「无法确认持久性」。把「没法确认」报成 `yes`，就是拿不知道冒充知道。
 
 **输入错误的类别**（`INPUT_ERROR_KINDS`）
 
@@ -314,14 +317,14 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 几个明确的取舍：
 
-- **目录 fsync 失败不是写失败。** 内容已经替换，只是崩溃后可能回退。`write_output` 返回 `WriteResult`：`durable` 说明持久化到位没有，`warnings` 带着要说的话；CLI 把这句打到 stderr，并输出 `kind: not_durable`，退出码 **4**。重试不会让它变好——文件已经是新版，缺的是持久化保证。
-- **Windows 上「不支持刷目录」不算失败。** `_fsync_dir` 返回 `None` 表示这套系统没有这个能力，`durable` 视为真，退出码仍是 0，只在 stderr 说明一次。否则每次写都退 4，真正的问题会被淹掉。
+- **目录 fsync 有三态，不是两态。** `_fsync_dir` 返回 `FsyncResult.OK / UNSUPPORTED / FAILED`；`durable` 对应 `yes / no / unknown`。`no` 才退 4 并打 `kind: not_durable`；`unknown`（Windows 那种没有能力的平台）退 0，打 `kind: durability_unknown`，stderr 说清「无法确认」。混成 bool 迟早把未知当失败，或者把未知当成功。
 - **备份年龄只看文件名。** 名字里带毫秒时间戳，跨平台一个语义。用 ctime 是「碰巧在 Linux 上对」：那边它是 inode 变更时间，Windows 是创建时间，网络盘各说各话。用 mtime 更糟——`copy2` 会把原文件的修改时间带过来，一份三天前的报告，副本一诞生就「三天大」，立刻被当过期清掉。
+- **时钟回拨按「太新」处理。** 时间戳比现在还晚（NTP 校正、手改时间、快照恢复），不删。年龄判断的可靠性上限就是系统时钟的可靠性，这句话写进注释。
 - **只清自己生成的名字。** 严格匹配 `.{名}.{13位时间戳}.{8位hex}.bak` / `.failed`；你手工放的 `report.md.bak` 不动，也不会被误报成残骸。
 - **删副本前先看 target 在不在。** 但这只是最小防线：它只防「target 缺失」，不防「target 存在但已被别人截断或改坏」。那种情况检查不出来，别把它当安全保证。
 - **符号链接直接拒绝。** `copy2` 备份的是链接指向的内容，`os.replace` 替换的却是链接本身，两头不一致。报 `symlink_target`，错误里直接给出该用的真实路径。
 - **不自动恢复，但会提醒。** 每次写之前扫同目录，发现未过期的 `.bak` 就在 stderr 说「发现 N 个未处理副本」。不替人判断谁对谁错，但不闷着。
-- **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据；同样带时间戳，超过 24 小时按年龄清掉，不无限攒。
+- **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据；同样带时间戳，24 小时后按年龄清。注意它里面是报告正文，可能带应用路径和通道名——留得越久，敏感内容留得越久。这是权衡，不是白拿的方便。
 
 **测试矩阵**：`verify.sh` 在本地和 CI（Ubuntu）跑同一套用例。其中「真实文件系统」那类验的是真语义，「控制流」那类只证明调用顺序（比如 durable=False 只能靠 mock 注入，它证明的是「这个状态被正确传出去了」，不证明真实 ENOSPC 下 stderr 会怎么说）。代码里分两组标注。
 
@@ -441,7 +444,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 149 个用例，只用标准库
+python -m unittest discover -s tests -v   # 152 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -468,12 +471,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.39.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.40.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.39.0
+git checkout v0.40.0
 python ipcsurface.py --version
 ```
 
@@ -481,7 +484,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.39.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.40.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |
