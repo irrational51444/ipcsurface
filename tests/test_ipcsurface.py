@@ -1307,8 +1307,10 @@ class ReportContractTests(unittest.TestCase):
         self.assertTrue(headings, 'md 报告应该有章节')
         self.assertEqual(len(headings), len(set(headings)),
                          f'章节标题重复了：{headings}')
-        numbers = [h.split()[1] for h in headings if h.split()[1:2] and h.split()[1][0].isdigit()]
-        self.assertEqual(len(numbers), len(set(numbers)), f'章节编号重复了：{numbers}')
+        # 报告现在不带章节编号，所以「编号不许重」这条没有对象可查——
+        # 写下来免得下次以为这里验过编号。真要引入编号，得同时加编号断言。
+        self.assertFalse(any(h.split()[1:2] and h.split()[1][0].isdigit() for h in headings),
+                         '如果开始给章节编号，就得同时加「编号唯一」的断言')
 
     def test_rule_report_keys_are_whitelisted_catches_durable(self):
         # 有人以后顺手把 durable 写进报告，这条会当场红
