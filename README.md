@@ -295,7 +295,12 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **全称断言先证非空。** 对空集合说「全都满足」平凡为真——`numbered: []` 那种绿比红更危险。
 
-这一条由一条 AST 扫描用例守着，**边界写在类注释里**：扫 `tests/` 与 `scripts/` 下的 `.py`，产品代码不扫（那里的 `all()` 多是数据处理，不是断言）。认四种会让断言平凡为真的形态——`assertTrue(all(...))`、`assertFalse(any(...))`、`not [x for x in xs if bad(x)]`、循环体内的断言；认四种保护形态——`non_empty()`、`assert 集合变量`、`if not 集合:`、`# empty-allowed`。文本匹配不够用，注释和 f-string 里有同样的字。
+这一条由一条 AST 扫描用例守着。两条边界分开写：
+
+- **空间边界**：扫 `tests/` 与 `scripts/` 下的 `.py`；产品代码不扫。但「不扫」不等于「不管」——自查会用 AST 单独回答「产品代码里有没有全称断言」，现在的结果是 0 条（没有裸 `assert`，也没有 `assertTrue(all(...))`）。这个结论是每次自查重新算的，不是统计印象。
+- **模式边界**：只认四种形态——`assertTrue(all(...))`、`assertFalse(any(...))`、`not [x for x in xs if bad(x)]`、`for x in 参数: assert ...`。其他写法（`sum(1 for ...) == 0`、`len([...]) == 0`、`set(xs) <= set(good)`）**不在检测范围内**，需要人工 review 或扩规则。列举不是完备，写在这儿免得当成全覆盖。
+
+保护形态按语义认，不按长相认：`assert xs`（真值断言）算保护，`assert xs is not None` 不算——空列表能过；`if not xs: raise` 算，`if not xs: pass` 不算。`# empty-allowed` 必须出现在断言前 5 行内，不做整函数豁免，否则一个注释放行一片。
 
 **报告顶层键是有白名单的**（`REPORT_TOP_LEVEL_KEYS`），多一个键就有用例红。这条是把「别把 durable 之类写进报告」从文档承诺变成回归约束——README 只有读的人才记得，测试不读也会拦。
 
@@ -474,7 +479,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 168 个用例，只用标准库
+python -m unittest discover -s tests -v   # 172 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -501,12 +506,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.46.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.47.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.46.0
+git checkout v0.47.0
 python ipcsurface.py --version
 ```
 
@@ -514,7 +519,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.46.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.47.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

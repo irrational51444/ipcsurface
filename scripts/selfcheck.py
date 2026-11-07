@@ -294,6 +294,21 @@ def main():
     tests_count = tests_defined
     # 三个数语义不重叠：定义 = 写好多少个 / 实跑 = 真执行了 / 跳过 = 没执行的
     actually_ran = ran - skipped
+    # 产品代码不参与测试文件的 AST 扫描（那里的 all() 多是数据处理），
+    # 但「产品代码里有没有真空集合断言」要能被回答，不能只靠一句统计判断。
+    import ast as _ast
+    product_tree = _ast.parse(read('ipcsurface.py'))
+    risky = []
+    for node in _ast.walk(product_tree):
+        if isinstance(node, _ast.Assert):
+            risky.append(('<assert>', node.lineno))
+        if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute) \
+                and node.func.attr in ('assertTrue', 'assertFalse'):
+            for arg in node.args:
+                if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
+                    risky.append((node.func.attr, node.lineno))
+    ok &= check('产品代码里没有无人看管的全称断言', not risky,
+                f'发现 {risky[:3]}；产品代码不在扫描范围内，需人工确认空集合语义')
     ok &= check('用例三条数都对得上（定义 / 实跑 / 跳过）',
                 ran == tests_defined and actually_ran >= 0,
                 f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}（不计入实跑）')

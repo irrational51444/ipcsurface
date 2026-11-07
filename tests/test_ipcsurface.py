@@ -84,9 +84,9 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(facts['dynamic'], [])
 
     def test_computed_channel_is_dynamic(self):
-        # empty-allowed: 断言的是「不该出现某种标签」，没有通道时也应当成立
         facts = self.scan("ipcMain.handle(makeChannel(op), () => {})")
         self.assertEqual(facts['handlers'], [])
+        # empty-allowed: 断言的是「不该出现某种标签」，没有通道时也应当成立
         self.assertTrue(any('makeChannel' in what for what, _ in facts['dynamic']))
 
     def test_bridge_name(self):
@@ -174,18 +174,18 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('high', levels)
 
     def test_sender_check_present_clears_it(self):
-        # empty-allowed: 反证类断言，空集合是合法输入
         facts = ipc.collect_evidence(minimal_evidence(['a:1'], sender_checks=2))
         texts = [text for _, text, _ in ipc.audit_evidence(facts)]
+        # empty-allowed: 反证类断言，空集合是合法输入
         self.assertFalse(any('sender' in t and '校验都没有' in t for t in texts))
 
     def test_no_window_means_no_sender_claim(self):
-        # empty-allowed: 验的是「缺窗口时不乱下结论」，空集合正是被测场景
         # 只分析了一个文件，没看到窗口代码，就不能断言「没人校验」
         result = minimal_evidence(['a:1'], sender_checks=0)
         result['graph']['nodes'] = []
         facts = ipc.collect_evidence(result)
         texts = [text for _, text, _ in ipc.audit_evidence(facts)]
+        # empty-allowed: 验的是「缺窗口时不乱下结论」，空集合正是被测场景
         self.assertFalse(any('sender' in t for t in texts))
 
     def test_report_puts_blind_spots_first(self):
@@ -565,7 +565,6 @@ class ConfidenceTests(unittest.TestCase):
 
 
     def test_json_has_the_same_sections_as_the_markdown(self):
-        # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
         with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
             fh.write(blob)
@@ -584,6 +583,7 @@ class ConfidenceTests(unittest.TestCase):
         # 人看得见的那几节，机器也得看得见
         self.assertEqual(data['schema'], 'ipcsurface/asar/10')
         self.assertIn('limits', data)
+        # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
         self.assertIsNone(data['runtime'])
         self.assertIsNone(data['poke'])
@@ -686,10 +686,10 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertEqual(item['strength'], 0.9)
 
     def test_every_level_has_a_machine_action(self):
-        # empty-allowed: 层表本身是常量，空集合不可能出现；断言针对字段内容
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('x:y', f)"})
         for level in ipc.confidence_levels(facts):
             self.assertIn('action', level)
+        # empty-allowed: 层表本身是常量，空集合不可能出现；断言针对字段内容
             self.assertTrue(level['action'])
 
     def test_rule_primary_action_not_alone(self):
@@ -700,9 +700,9 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertIn('actions', rule['instead'])
 
     def test_schema_declares_compat_and_usage_rules(self):
-        # empty-allowed: 查的是字段内容，不涉及集合大小
         semantics = ipc.CONFIDENCE_SEMANTICS
         self.assertIn('bump_schema_when', semantics['compat_rule'])
+        # empty-allowed: 查的是字段内容，不涉及集合大小
         self.assertTrue(any('枚举' in line for line in semantics['compat_rule']['bump_schema_when']))
         # 约束是结构化的，不只是字符串：机器能照着拦
         ids = [item['id'] for item in semantics['usage_constraints']]
@@ -756,7 +756,6 @@ class RuleRegistryTests(unittest.TestCase):
     """
 
     def test_every_rule_has_a_test(self):
-        # empty-allowed: 规则表为空时「每条都有用例」平凡为真，但那种情况本身会被 RULES 检查抓
         module_tests = []
         for obj in globals().values():
             if isinstance(obj, type) and issubclass(obj, unittest.TestCase):
@@ -765,6 +764,7 @@ class RuleRegistryTests(unittest.TestCase):
         for rule in ipc.RULES:
             hit = any(name == rule['id'] or name.startswith(rule['id'] + '_')
                       for name in covered)
+        # empty-allowed: 规则表为空时「每条都有用例」平凡为真，但那种情况本身会被 RULES 检查抓
             self.assertTrue(hit, f'规则 {rule["id"]} 登记了但没有对应用例')
 
     def test_rule_independence_table_has_every_pair(self):
@@ -810,17 +810,16 @@ class RuleRegistryTests(unittest.TestCase):
         self.assertIn('new_agg', ipc.unregistered_evidence_fields(item))
 
     def test_rule_aggregates_have_detail_and_constraint(self):
-        # empty-allowed: 登记表是常量，空表说明配置丢了，另有「至少一条」的检查
         constraints = ipc.CONFIDENCE_SEMANTICS['usage_constraints']
         banned = {m for item in constraints for m in item.get('must_not', [])}
         for agg in ipc.AGGREGATE_FIELDS:
             # 每个聚合字段都得有明细字段，不然就是一个会盖住差异的布尔/单值
+        # empty-allowed: 登记表是常量，空表说明配置丢了，另有「至少一条」的检查
             self.assertTrue(agg['detail'])
             self.assertIn(agg['must_not'], banned,
                           f"{agg['field']} 缺一条 must_not 约束")
 
     def test_rule_aggregate_detail_fields_exist_in_output(self):
-        # empty-allowed: 逐字段检查，不涉及集合大小
         facts = ipc.scan_asar({'a.js': b"ipcMain.handle('v:1', f)"})
         probe = {'handlers': ['v:1'], 'windows': []}
         item = ipc.channel_sources(facts, probe=probe)['v:1']
@@ -962,7 +961,6 @@ class MalformedInputTests(unittest.TestCase):
                 os.unlink(path)
 
     def test_rule_input_errors_are_typed(self):
-        # empty-allowed: 同上，CASES 是常量表
         loaders = (ipc.load_probe, ipc.load_poke, ipc.load_baseline)
         expected = {
             'empty': 'empty_input',
@@ -974,6 +972,8 @@ class MalformedInputTests(unittest.TestCase):
             'bad-utf8': 'encoding_invalid',
             'handlers-not-list': 'shape_invalid',
         }
+        # empty-allowed: CASES 与 loaders 都是常量表，非空由定义保证；
+        # 空表说明测试本身丢了数据，不是「全都满足」
         for name, (data, kwargs, _hint) in self.CASES.items():
             path = self._write(data, **kwargs)
             try:
@@ -1129,16 +1129,17 @@ class OutputSideTests(unittest.TestCase):
             fh.write('唯一的旧版')
         # target 不存在时，那个副本可能是唯一的旧版，不能删
         result = ipc.write_output(self.path, '新的\n')
+        # empty-allowed: 逐字段检查，不涉及集合大小
         self.assertTrue(os.path.exists(stale))
         self.assertTrue(any('未处理' in note for note in result.warnings))
 
     def test_rule_unsupported_fsync_is_unknown_not_yes(self):
-        # empty-allowed: 验的是枚举分派，不涉及集合
         # Windows 上「没法确认」必须报 unknown，不能报 yes
         with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.UNSUPPORTED):
             result = ipc.write_output(self.path, '新的\n')
         self.assertEqual(result.durable, ipc.DURABLE_UNKNOWN)
         self.assertFalse(result.durable_known)
+        # empty-allowed: 验的是枚举分派，不涉及集合
         self.assertTrue(any('无法确认' in note for note in result.warnings))
 
     def test_rule_failed_dump_keeps_shorter_window(self):
@@ -1180,12 +1181,12 @@ class OutputSideTests(unittest.TestCase):
         self.assertTrue(os.path.exists(near))
 
     def test_rule_dir_fsync_failure_is_reported_not_fatal(self):
-        # empty-allowed: 验的是状态与警告，不涉及集合
         ipc.write_output(self.path, '旧的\n')
         with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.FAILED):
             result = ipc.write_output(self.path, '新的\n')
         self.assertEqual(result.durable, ipc.DURABLE_NO, '目录没刷成功，就不能说持久化了')
         self.assertEqual(self.read(), '新的\n')
+        # empty-allowed: 验的是状态与警告，不涉及集合
         self.assertTrue(any('fsync' in note for note in result.warnings), '这个状态必须能被观察到')
 
     def test_rule_replace_failure_keeps_the_intended_content(self):
@@ -1462,14 +1463,25 @@ class OutputConsistencyTests(unittest.TestCase):
 
 
 class AssertionHygieneTests(unittest.TestCase):
-    """全称断言的空集合防护：做成扫描规则，不是人工扫。
+    """全称断言的空集合防护：扫描规则，不是人工扫。
 
-    覆盖范围先说清（这是边界，不是遗漏）：
-    - 扫 tests/ 与 scripts/ 下的 .py；产品代码 ipcsurface.py 不扫——
-      那里的 all() 多是数据处理，不是断言。
-    - 认这几种形态：all( / any( / 「not [ ... for ... ]」/ sum(1 for ...)==0 / 循环体内断言。
-    - 保护形态认三种：non_empty(...) / 「assert 集合变量」/ 「if not 集合变量:」/ # empty-allowed。
+    空间边界：扫 tests/ 与 scripts/ 下的 .py；产品代码 ipcsurface.py 不扫，
+    它里面若出现「空集合平凡为真」的断言，只能靠 review 单独确认（selfcheck 里有一条
+    粗筛：产品代码里不许出现 assertTrue(all( / assert all(）。
+
+    模式边界：只认下面四种会让断言平凡为真的形态——
+    assertTrue(all(...)) / assertFalse(any(...)) / not [x for x in xs if bad(x)] / 循环体内断言。
+    其他写法（sum(1 for ...) == 0、len([...]) == 0、set(xs) <= set(good) 等）不在检测范围内，
+    需要人工 review 或扩展规则。列举不是完备，这句话必须写着。
+
+    保护形态按语义认，不按长相认：
+    - non_empty(...) 调用
+    - assert <变量>（真值断言；assert xs is not None 是存在性断言，空列表也能过，不算保护）
+    - if not <变量>: 且分支里有 raise / return / skip / fail（if not xs: pass 不算保护）
+    - # empty-allowed 注释，且必须在断言前 5 行内（不做整函数豁免，否则一个注释放行一片）
     """
+
+    PROTECT_WINDOW = 5
 
     @staticmethod
     def non_empty(items, why):
@@ -1477,76 +1489,148 @@ class AssertionHygieneTests(unittest.TestCase):
         return items
 
     def offenders_of(self, source):
-        """只看 AST，不靠文本匹配——文本匹配会把注释和 f-string 也算进去。
-
-        认这几种「可能对空集合平凡为真」的形态：
-        - assertTrue(all(...)) / assertFalse(any(...))
-        - 循环体内有断言（空集合从不进循环体）
-        """
         import ast as _ast
+        import io as _io
+        import tokenize as _tokenize
+
+        comment_lines = set()
+        try:
+            for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
+                if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
+                    comment_lines.add(token.start[0])
+        except _tokenize.TokenError:
+            pass
 
         def is_all_or_any(node):
             return (isinstance(node, _ast.Call)
                     and isinstance(node.func, _ast.Name)
                     and node.func.id in ('all', 'any'))
 
-        def has_universal_call(node):
+        def universal_nodes(node):
+            found = []
             for child in _ast.walk(node):
-                # assertTrue(all(...)) / assertFalse(any(...))
                 if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
                         and child.func.attr in ('assertTrue', 'assertFalse'):
                     for arg in child.args:
                         if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
-                            return True
-                        if is_all_or_any(arg) or any(is_all_or_any(n) for n in _ast.walk(arg)):
-                            return True
-                # 伪装形态：「not [x for x in xs if bad(x)]」
-                # 空集合 → not [] → True，和 assertTrue(all()) 是同一件事
+                            found.append(child)
+                        elif is_all_or_any(arg) or any(is_all_or_any(n) for n in _ast.walk(arg)):
+                            found.append(child)
                 if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
                         and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
-                    return True
-            return False
-
-        def loop_has_assert(node):
+                    found.append(child)
             for child in _ast.walk(node):
-                if not isinstance(child, _ast.For):
-                    continue
-                for inner in _ast.walk(child):
-                    if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
-                            and inner.func.attr.startswith('assert'):
+                # 只算「for x in 参数」这种；for label, case in CASES.items() 是表格驱动，不算
+                if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
+                    for inner in _ast.walk(child):
+                        if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
+                                and inner.func.attr.startswith('assert'):
+                            found.append(child)
+            return found
+
+        def exiting_body(body):
+            for stmt in body:
+                if isinstance(stmt, (_ast.Raise, _ast.Return)):
+                    return True
+                if isinstance(stmt, _ast.Expr) and isinstance(stmt.value, _ast.Call):
+                    name = getattr(stmt.value.func, 'attr', getattr(stmt.value.func, 'id', ''))
+                    if name in ('skip', 'skipTest', 'fail', 'exit'):
                         return True
             return False
 
-        def is_protected(node):
-            body_src = '\n'.join(source.splitlines()[node.lineno - 1:node.end_lineno])
-            if '# empty-allowed' in body_src:
-                return True
+        def is_protected(node, assertion_line):
             for child in _ast.walk(node):
-                if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
-                        and child.func.attr == 'non_empty':
-                    return True
-                if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Name) \
-                        and child.func.id == 'non_empty':
-                    return True
-                # assert 集合变量 / if not 集合: 也算有效保护
-                if isinstance(child, _ast.Assert) and isinstance(child.test, (_ast.Name, _ast.Attribute)):
+                if isinstance(child, _ast.Call):
+                    name = getattr(child.func, 'attr', getattr(child.func, 'id', ''))
+                    if name == 'non_empty':
+                        return True
+                # assert xs —— 真值断言才算；assert xs is not None 不算
+                if isinstance(child, _ast.Assert) and isinstance(child.test, _ast.Name):
                     return True
                 if isinstance(child, _ast.If) and isinstance(child.test, _ast.UnaryOp) \
                         and isinstance(child.test.op, _ast.Not):
-                    return True
-            return False
+                    if exiting_body(child.body):
+                        return True
+            # 注释豁免：断言前 5 行内出现过 # empty-allowed
+            return any(line in comment_lines
+                       for line in range(max(1, assertion_line - self.PROTECT_WINDOW),
+                                         assertion_line + 1))
 
         tree = _ast.parse(source)
         offenders = []
         for node in _ast.walk(tree):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            if not (has_universal_call(node) or loop_has_assert(node)):
+            spots = universal_nodes(node)
+            if not spots:
                 continue
-            if is_protected(node):
+            if any(is_protected(node, spot.lineno) for spot in spots):
                 continue
             offenders.append(node.name)
         return offenders
+
+    # ---- 扫描器元测试：每种形态都要有「无保护会报」的证据 ----
+
+    def test_rule_scanner_flags_unprotected(self):
+        cases = {
+            'assertTrue(all(...))':
+                'def a(self, xs):\n    self.assertTrue(all(x > 0 for x in xs))\n',
+            'assertFalse(any(...))':
+                'def b(self, xs):\n    self.assertFalse(any(x < 0 for x in xs))\n',
+            'not [x for x in xs if bad]':
+                'def c(self, xs):\n    return not [x for x in xs if x < 0]\n',
+            'loop assert':
+                'def d(self, xs):\n    for x in xs:\n        self.assertTrue(x > 0)\n',
+        }
+        for label, source in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.offenders_of(source), [source.split('(')[0].split()[-1]],
+                                 f'{label} 没被抓到')
+
+    def test_rule_scanner_accepts_real_protection(self):
+        protected = {
+            'non_empty': ('def a(self, xs):\n'
+                          '    self.non_empty(xs, "示例")\n'
+                          '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'assert truthy': ('def b(self, xs):\n'
+                              '    assert xs\n'
+                              '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'if not + raise': ('def c(self, xs):\n'
+                               '    if not xs:\n'
+                               '        raise AssertionError("空")\n'
+                               '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'comment within window': ('def d(self, xs):\n'
+                                      '    # empty-allowed: 空集合合法\n'
+                                      '    self.assertTrue(all(x > 0 for x in xs))\n'),
+        }
+        for label, source in protected.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.offenders_of(source), [], f'{label} 被误报')
+
+    def test_rule_scanner_rejects_fake_protection(self):
+        # 长得像保护、实际不挡空集合的两种写法
+        fake = {
+            'assert is not None': ('def a(self, xs):\n'
+                                   '    assert xs is not None\n'
+                                   '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'if not + pass': ('def b(self, xs):\n'
+                              '    if not xs:\n'
+                              '        pass\n'
+                              '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'comment too far away': ('def c(self, xs):\n'
+                                     '    # empty-allowed: 太远了\n' + '\n' * 8 +
+                                     '    self.assertTrue(all(x > 0 for x in xs))\n'),
+        }
+        for label, source in fake.items():
+            with self.subTest(form=label):
+                self.assertEqual(len(self.offenders_of(source)), 1, f'{label} 被误判成保护')
+
+    def test_rule_scanner_fails_loud_on_syntax_error(self):
+        # 语法错误必须炸，不能跳过——跳过等于这个文件不在扫描范围内，却看不出来
+        with self.assertRaises(SyntaxError):
+            self.offenders_of('def broken(:\n    pass\n')
+
+    # ---- 真实文件扫描 ----
 
     def test_rule_universal_assertions_declare_empty_policy(self):
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1568,40 +1652,18 @@ class AssertionHygieneTests(unittest.TestCase):
                          f'这些函数有全称断言却没说空集合怎么办：{bad}。'
                          '加 non_empty()，或写 # empty-allowed 说明。')
 
-    def test_rule_scanner_flags_unprotected(self):
-        # 扫描器自己的元测试：无保护必须报，三种保护形态必须不报
-        unprotected = (
-            'def f(self, xs):\n'
-            '    self.assertTrue(all(x > 0 for x in xs))\n')
-        self.assertEqual(self.offenders_of(unprotected), ['f'])
-
-        negated = (
-            'def g(self, xs):\n'
-            '    return not [x for x in xs if x < 0]\n')
-        self.assertEqual(self.offenders_of(negated), ['g'])
-
-        looped = (
-            'def h(self, xs):\n'
-            '    for x in xs:\n'
-            '        self.assertTrue(x > 0)\n')
-        self.assertEqual(self.offenders_of(looped), ['h'])
-
-        for protected in (
-            'def a(self, xs):\n'
-            '    self.non_empty(xs, "示例")\n'
-            '    self.assertTrue(all(x > 0 for x in xs))\n',
-            'def b(self, xs):\n'
-            '    # empty-allowed: 空集合合法\n'
-            '    self.assertTrue(all(x > 0 for x in xs))\n',
-            'def c(self, xs):\n'
-            '    assert xs, "空"\n'
-            '    self.assertTrue(all(x > 0 for x in xs))\n',
-            'def d(self, xs):\n'
-            '    if not xs:\n'
-            '        raise AssertionError("空")\n'
-            '    self.assertTrue(all(x > 0 for x in xs))\n',
-        ):
-            self.assertEqual(self.offenders_of(protected), [], protected.splitlines()[0])
+    def test_rule_scan_uses_real_files(self):
+        # 文件发现/编码/路径这一层也要有证据：临时目录里放一个真有问题的文件
+        folder = tempfile.mkdtemp()
+        try:
+            path = os.path.join(folder, 'sample.py')
+            with open(path, 'w', encoding='utf-8') as fh:
+                fh.write('def f(self, xs):\n'
+                         '    self.assertTrue(all(x > 0 for x in xs))\n')
+            with open(path, encoding='utf-8') as fh:
+                self.assertEqual(self.offenders_of(fh.read()), ['f'])
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 class AsarAuditTests(unittest.TestCase):
