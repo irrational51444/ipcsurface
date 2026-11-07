@@ -308,9 +308,17 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 备份用 copy/link，不用 rename。把旧文件挪走会让 target 出现「不存在」的窗口，进程在这个窗口里被杀，旧内容就真丢了——那就不叫「只丢这一次」。替换那一步始终是 `os.replace`，任何时刻从约定路径读到的，都是一份完整报告。
 
-写完还有一道**读回来核**：算文件指纹跟写进去的比，对不上就报 `readback_mismatch`；声明是 JSON/SARIF 的，得真能 `json.load` 一遍，解析不了就报 `invalid_json_output`。只写不验，等于把「我以为我写了」当成「我写对了」。
+顺序是：临时文件 → `fsync` → 核字节数 →（声明 JSON/SARIF 就在 tmp 上解析一遍）→ 复制一份旧版副本 → `os.replace` → 刷目录 → 删副本。
 
-核不过的时候，把新写的撤掉、把上一份放回去——替换前旧文件先挪成 `.bak`，核过了才删。这样写坏一次，丢的只是这一次，不是上一份。
+**能核的一律在替换前核完。** 替换之后不再核内容：`os.replace` 成功就说明 target 的内容等于 tmp，再比一遍是恒真，那条「核验不过就还原」的分支永远不会被真实触发，留着只会让人误以为 replace 会悄悄写坏。
+
+几个明确的取舍：
+
+- **备份用 `shutil.copy2`，不用硬链接。** 硬链接和 target 共享 inode，替换前若有人原地改 target，副本会跟着变；多一次拷贝，报告文件这个体量不值当冒那个险。
+- **符号链接跟着走。** target 是链接时写到它指向的真实文件，链接本身保留。Windows 建符号链接要特权，这条用例在那边跳过。
+- **孤儿副本会按年龄清。** 每次写之前，清掉同目录下同名前缀、超过 24 小时的 `.bak`。太新的不动——那可能是刚崩的，判断错了比留着更糟。
+- **不自动恢复。** 崩在「替换完成、还没删副本」之间，磁盘上会留一份 `.bak`；下次运行不猜 target 是新版还是待还原版。要人工判断，或者等到它过期被清掉。
+- **目录 fsync 在 Windows 上跳过。** 那边不支持刷目录，所以「崩溃后状态可判定」在那套文件系统上只能靠它自己。这是已知取舍。
 
 **三种输出，各有各的用途**
 
@@ -417,7 +425,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 143 个用例，只用标准库
+python -m unittest discover -s tests -v   # 144 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -444,12 +452,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.36.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.37.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.36.0
+git checkout v0.37.0
 python ipcsurface.py --version
 ```
 
@@ -457,7 +465,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.36.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.37.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

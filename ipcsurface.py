@@ -21,10 +21,11 @@ import shutil
 import struct
 import sys
 import tempfile
+import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.36.0'
+__version__ = '0.37.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -820,9 +821,9 @@ RULES = [
     {'id': 'output_is_all_or_nothing',
      'text': '写报告要么完整写出来，要么一个字节都不留；写到一半失败要按类别拒绝，'
              '不许留下看起来正常的半成品，也不许拿它盖掉上一份完整的报告'},
-    {'id': 'written_output_is_read_back',
-     'text': '写完要读回来核：指纹要对得上，声明是 JSON 就得真能解析；'
-             '核不过就删掉并报 readback_mismatch / invalid_json_output'},
+    {'id': 'output_verified_before_replace',
+     'text': '能核的一律在替换前核完（字节数、JSON 可解析）；替身成功后不再核内容——'
+             'replace 成功就说明 target 等于 tmp，再比一遍是恒真，那条还原分支永远不会被真实触发'},
     {'id': 'silent_wrong_count_is_caught',
      'text': '最高优先级：报一个格式合法但数值错的通道数，比崩掉危险。'
              '形状不对一律拒绝，不许返回任何能被当成有数据的东西'},
@@ -1593,13 +1594,15 @@ def json_depth(text):
     return deepest
 
 
+WRITE_TMP_PREFIX = '.ipcsurface-'
+STALE_BACKUP_SECONDS = 24 * 3600
+
 # 写出去的坏法也得有类别。磁盘满、没权限、写了一半，都要说清是哪一种。
 OUTPUT_ERROR_KINDS = {
     'disk_full': '磁盘满了',
     'permission_denied': '没有写权限',
     'path_missing': '目标目录不存在',
     'short_write': '写完的字节数和该写的对不上',
-    'readback_mismatch': '写完读回来，内容对不上',
     'invalid_json_output': '声明是 JSON，但写出来的东西解析不了',
     'write_failed': '写入失败',
     'replace_failed': '替换不上去，目标可能被占用',
@@ -1633,28 +1636,86 @@ def _output_kind(exc):
     return 'write_failed'
 
 
+def _fsync_dir(directory):
+    """替换之后把目录也刷一次，让 rename 落到盘上。
+
+    Windows 不支持对目录 fsync，这里直接跳过——这是已知取舍，不是遗漏：
+    在那套文件系统上，「崩溃后状态可判定」只能靠文件系统自己。
+    """
+    if os.name == 'nt':
+        return False
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        os.fsync(fd)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
+    """清掉以前崩在中间留下的孤儿副本。
+
+    不做自动恢复（那需要判断 target 是新版还是待还原版，判断错了更糟），
+    但也不能任由 .bak 攒着——攒多了「诚实」就变成「脏」。
+    """
+    removed = []
+    now = time.time()
+    prefix = f'.{basename}.'
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return removed
+    for name in names:
+        if not (name.startswith(prefix) and name.endswith('.bak')):
+            continue
+        full = os.path.join(directory, name)
+        try:
+            if now - os.path.getmtime(full) > max_age:
+                os.unlink(full)
+                removed.append(full)
+        except OSError:
+            pass
+    return removed
+
+
 def write_output(path, text, expect_json=False):
     """要么完整写出来，要么一个字节都不留。
 
-    两条不能破的：target 全程有效（任何时刻读到的都是完整版本，不是缺失、不是半份），
-    替换是原子的（os.replace 一步到位）。所以：
+    three 条不能破：
+    - target 任何时刻都是完整版本（不会缺失，也不会是半份）；
+    - 替换是原子的（os.replace 一步到位）；
+    - 能在替换前核的，一律在替换前核完。
 
-    1. 写临时文件、fsync、核字节数——这些都在 replacements 之前做完；
-    2. 旧文件用硬链接留一份副本（不支持就复制），target 本身不动；
-    3. os.replace(tmp, target) 原子替换；
-    4. 读回来核指纹（声明 JSON 的再解析一遍）；核不过就从副本还原回去。
+    所以顺序是：写临时文件 → fsync → 核字节数 → （声明 JSON 就解析一遍 tmp）
+    → 复制一份旧版副本 → os.replace → 刷目录 → 删副本。
 
-    备份用 copy/link 而不是 rename：把旧文件挪走会让 target 出现「不存在」的窗口期，
-    进程在窗口期里被杀，旧内容就真丢了——那就不是「只丢这一次」。
+    替换之后不再核内容：replace 成功就说明 target 的内容等于 tmp，再比一遍是恒真，
+    那条还原路径永远不会被真实触发，留在那儿只会让人误以为 replace 会悄悄写坏。
+    真正需要核验的东西，都已经在 tmp 上核过了。
+
+    备份用复制而不是硬链接：硬链接和 target 共享 inode，替换前若有人原地改 target，
+    副本会跟着变；复制只多一次拷贝，报告文件这个体量不值得冒那个风险。
     """
+    if os.path.islink(path):
+        # 符号链接就跟着走，写到它指向的真实文件；链接本身保留
+        path = os.path.realpath(path)
+
     directory = os.path.dirname(os.path.abspath(path)) or '.'
+    basename = os.path.basename(path)
     try:
         os.makedirs(directory, exist_ok=True)
     except OSError as exc:
         raise OutputError(_output_kind(exc), f'目标目录建不出来：{directory}\n{exc}')
 
-    handle, temp_path = tempfile.mkstemp(dir=directory, prefix='.ipcsurface-', suffix='.part')
-    backup = os.path.join(directory, f'.{os.path.basename(path)}.{uuid.uuid4().hex[:8]}.bak')
+    clean_stale_backups(directory, basename)
+
+    handle, temp_path = tempfile.mkstemp(dir=directory, prefix=WRITE_TMP_PREFIX, suffix='.part')
+    backup = os.path.join(directory, f'.{basename}.{uuid.uuid4().hex[:8]}.bak')
     had_old = os.path.exists(path)
     try:
         with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
@@ -1662,7 +1723,6 @@ def write_output(path, text, expect_json=False):
             fh.flush()
             os.fsync(fh.fileno())
 
-        # 能在替换前核的都在替换前核，别把可核的东西拖到替换之后
         expected = len(text.encode('utf-8'))
         actual = os.path.getsize(temp_path)
         if actual != expected:
@@ -1670,45 +1730,30 @@ def write_output(path, text, expect_json=False):
                               f'写到一半：{path}\n应写 {expected} 字节，实际 {actual} 字节。'
                               '半份报告比没有更坏，已经删掉了。')
 
+        if expect_json:
+            try:
+                with open(temp_path, encoding='utf-8') as fh:
+                    json.load(fh)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                raise OutputError('invalid_json_output',
+                                  f'声明是 JSON，但生成出来的东西解析不了：{path}\n{exc}\n'
+                                  '临时文件已经删掉，原来的报告没动。')
+
         if had_old:
-            _snapshot(path, backup)
+            try:
+                shutil.copy2(path, backup)
+            except OSError as exc:
+                raise OutputError(_output_kind(exc),
+                                  f'备份旧报告失败，所以没有替换：{path}\n{exc.strerror or exc}')
 
         try:
             os.replace(temp_path, path)
         except OSError as exc:
-            # target 这时还是旧版，tmp 和副本都在，清掉再报
             raise OutputError('replace_failed',
                               f'替换不上去：{path}\n{exc.strerror or exc}\n'
-                              '目标可能被别的程序占用，关掉它再试一次。')
+                              '目标可能被别的程序占用，关掉它再试一次。原报告没动。')
 
-        wanted = hashlib.sha256(text.encode('utf-8')).hexdigest()
-        try:
-            if _digest(path) != wanted:
-                raise OutputError('readback_mismatch',
-                                  f'写完读回来对不上：{path}\n'
-                                  '已经退回上一份（如果有）。')
-            if expect_json:
-                try:
-                    with open(path, encoding='utf-8') as fh:
-                        json.load(fh)
-                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    raise OutputError('invalid_json_output',
-                                      f'声明是 JSON，但写出来的东西解析不了：{path}\n{exc}\n'
-                                      '已经退回上一份（如果有）。')
-        except OutputError:
-            if had_old:
-                try:
-                    os.replace(backup, path)   # 还原也是原子的
-                except OSError:
-                    raise OutputError('replace_failed',
-                                      f'还原上一份失败：{path}\n'
-                                      f'副本还留在 {backup}')
-            else:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
-            raise
+        _fsync_dir(directory)
     except OutputError:
         raise
     except OSError as exc:
@@ -1723,16 +1768,6 @@ def write_output(path, text, expect_json=False):
                 except OSError:
                     pass
     return path
-
-
-def _snapshot(path, backup):
-    """把旧文件留一份副本。硬链接不占空间也不改 target；不支持就退回复制。"""
-    try:
-        os.link(path, backup)
-        return
-    except (OSError, AttributeError, NotImplementedError):
-        pass
-    shutil.copy2(path, backup)
 
 
 def read_json_input(path, what, next_step, expect=None):
