@@ -2492,7 +2492,9 @@ class LeftoverTests(unittest.TestCase):
         self.assertEqual(ipc._age_text(-7200),
                          '时间异常（文件时间比现在还晚，可能时钟回拨）')
         # 时钟前跳也要被识别，不只回拨
-        self.assertIn('时钟前跳', ipc._age_text(400 * 86400))
+        self.assertIn('时间过久', ipc._age_text(400 * 86400))
+        self.assertNotIn('异常', ipc._age_text(400 * 86400),
+                         '正常的老文件不该被打成异常，措辞不能下结论')
         self.assertEqual(ipc._age_text(-10), '刚刚')
         self.assertNotIn('-', ipc._age_text(-7200))
 

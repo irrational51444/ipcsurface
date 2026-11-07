@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.63.0'
+__version__ = '0.63.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1890,7 +1890,7 @@ def _age_text(seconds):
         return f'{seconds / 3600:.1f} 小时前'
     if seconds < 365 * 86400:
         return f'{seconds / 86400:.1f} 天前'
-    return '时间异常（文件时间过早，可能时钟前跳）'
+    return '时间过久（可能时钟前跳，也可能文件确实很久）'
 
 
 def inspect_leftovers(path):
@@ -1944,7 +1944,7 @@ def inspect_leftovers(path):
                                  else '副本不晚于 target')
             entry['relation_basis'] = '不同源比较（副本：文件名时间戳；target：mtime），仅作线索'
         elif info:
-            entry['relation'] = 'target 缺失，这是唯一现存的一份'
+            entry['relation'] = 'target 缺失，无从比较'
             entry['relation_basis'] = None
         else:
             entry['relation'] = None
