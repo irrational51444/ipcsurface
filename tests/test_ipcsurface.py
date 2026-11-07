@@ -1253,6 +1253,40 @@ class OutputSideTests(unittest.TestCase):
                          '副本要清掉；.failed 是有意留下的诊断件')
 
 
+class ReportContractTests(unittest.TestCase):
+    """报告 JSON 的顶层键是契约。多一个键就红，不靠人记得。"""
+
+    def build(self):
+        blob = make_asar({'src/app.js': b"ipcMain.handle('a:b', f)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        try:
+            facts, count, total = ipc.analyse_asar(path)
+            names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
+            evidence = ipc.channel_sources(facts)
+            report = ipc.build_asar_report(path, facts, count, total, names,
+                                           evidence, ipc.runtime_crosscheck(None, names),
+                                           None, None)
+            text = json.dumps(report, ensure_ascii=False)
+        finally:
+            os.unlink(path)
+        return json.loads(text)
+
+    def test_rule_report_keys_are_whitelisted(self):
+        report = self.build()
+        extra, missing = ipc.check_report_keys(report)
+        self.assertEqual(extra, [], f'报告里多出没登记的顶层键：{extra}')
+        self.assertEqual(missing, [], f'白名单里登记了但报告里没有：{missing}')
+
+    def test_rule_report_keys_are_whitelisted_catches_durable(self):
+        # 有人以后顺手把 durable 写进报告，这条会当场红
+        report = self.build()
+        report['durable'] = 'yes'
+        extra, _missing = ipc.check_report_keys(report)
+        self.assertEqual(extra, ['durable'])
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

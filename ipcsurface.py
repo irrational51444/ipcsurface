@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.40.1'
+__version__ = '0.41.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -825,6 +825,9 @@ RULES = [
     {'id': 'backup_age_from_filename',
      'text': '备份年龄只认文件名里的时间戳：ctime 在 Linux 是 inode 变更时间、'
              'Windows 是创建时间、网络盘各说各话，靠它判年龄是「碰巧对」而不是「可靠」'},
+    {'id': 'report_keys_are_whitelisted',
+     'text': '报告 JSON 的顶层键必须在 REPORT_TOP_LEVEL_KEYS 白名单里；'
+             '多一个键就红——「别把 durable 之类写进报告」从文档承诺变成回归约束'},
     {'id': 'cleanup_checks_target_before_age',
      'text': '清副本先判 target 在不在，再判年龄：反过来的话时钟大幅前跳会让一批副本'
              '同时变成过期候选，只能逐个救回来'},
@@ -1342,6 +1345,39 @@ def render_baseline(delta):
     return out
 
 
+def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
+                      checks, poke_buckets, baseline_obj):
+    """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
+    return {
+        'schema': 'ipcsurface/asar/10',
+        'mode': 'asar',
+        'subject': target,
+        'files': file_count,
+        'bytes': total_bytes,
+        'unique_names': len(evidence),
+        'channels': sorted(names),
+        'dynamic': [what for what, _ in facts['dynamic']],
+        'exposes': [n for n, _ in facts['exposes']],
+        'web_preferences': {k: v[0] for k, v in facts['prefs'].items()},
+        'native_files': facts['native_files'],
+        'obfuscation': [{'what': n, 'where': w, 'level': l}
+                        for n, w, l in facts['obfuscation']],
+        'confidence': confidence_levels(facts),
+        'confidence_semantics': CONFIDENCE_SEMANTICS,
+        'evidence': evidence,
+        'runtime': checks,
+        'poke': None if poke_buckets is None else {
+            'channels': poke_buckets['channels'],
+            'swallowed': poke_buckets['swallowed'],
+            'gated': poke_buckets['gated'],
+            'unknown': poke_buckets['unknown'],
+        },
+        'limits': blind_spots(facts),
+        'baseline': baseline_obj,
+        'version': __version__,
+    }
+
+
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
                 probe=None, poke=None, baseline=None):
     out = ['# Electron 能力面清单（粗扫）', '']
@@ -1565,6 +1601,22 @@ def loc(evidence):
 
 # 输入的坏法是有类别的，不只是「读不动」。
 # 下游要决定「重试还是放弃」，得看类别，不能去解析中文文案。
+# 报告 JSON 的顶层键白名单。多一个键就红——「别把 durable 写进报告」这条
+# 纪律不能只写在 README 里，得有个东西替我们盯着。
+REPORT_TOP_LEVEL_KEYS = frozenset({
+    'schema', 'version', 'mode', 'subject', 'files', 'bytes',
+    'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
+    'unique_names', 'evidence', 'confidence', 'confidence_semantics',
+    'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
+})
+
+
+def check_report_keys(report):
+    """报告顶层键必须在白名单里。返回 (多出来的, 少了的)。"""
+    keys = set(report)
+    return sorted(keys - REPORT_TOP_LEVEL_KEYS), sorted(REPORT_TOP_LEVEL_KEYS - keys)
+
+
 INPUT_ERROR_KINDS = {
     'file_missing': '文件不存在或者没权限',
     'encoding_invalid': '不是 UTF-8',
@@ -2952,39 +3004,11 @@ def main(argv=None):
             checks = runtime_crosscheck(probe_data, names)
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
-            text = json.dumps({
-                'schema': 'ipcsurface/asar/10',
-                'mode': 'asar',
-                'subject': args.input,
-                'files': count,
-                'bytes': total,
-                # 唯一能当总数的数字：去重后的名字个数。六层标签不能相加。
-                'unique_names': len(evidence),
-                'channels': sorted(names),
-                'dynamic': [what for what, _ in facts['dynamic']],
-                'exposes': [n for n, _ in facts['exposes']],
-                'web_preferences': {k: v[0] for k, v in facts['prefs'].items()},
-                'native_files': facts['native_files'],
-                'obfuscation': [{'what': n, 'where': w, 'level': l}
-                                for n, w, l in facts['obfuscation']],
-                # 机器读的那份强度：未知一律 null，不拿 0 顶替
-                'confidence': confidence_levels(facts, probe=probe_data, poke=poke_data),
-                # strength 是复核成本，不是概率；六层是标签，不可相加
-                'confidence_semantics': CONFIDENCE_SEMANTICS,
-                # 每个名字各自是被谁看见的，别让弱证据借强证据的光
-                'evidence': evidence,
-                # 下面三样是「人看得见、机器以前看不见」的部分
-                'runtime': checks,
-                'poke': None if poke_buckets is None else {
-                    'channels': poke_buckets['channels'],
-                    'swallowed': poke_buckets['swallowed'],
-                    'gated': poke_buckets['gated'],
-                    'unknown': poke_buckets['unknown'],
-                },
-                'limits': blind_spots(facts, probe=probe_data, poke=poke_data),
-                'baseline': baseline_delta(facts, load_baseline(args.baseline)) if args.baseline else None,
-                'version': __version__,
-            }, ensure_ascii=False, indent=2)
+            text = json.dumps(
+                build_asar_report(args.input, facts, count, total, names, evidence,
+                                  checks, poke_buckets, load_baseline(args.baseline)
+                                  if args.baseline else None),
+                ensure_ascii=False, indent=2)
         else:
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,

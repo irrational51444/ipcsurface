@@ -21,6 +21,18 @@ def check(label, ok, detail=''):
     return ok
 
 
+def run_unittest_summary():
+    """跑一遍用例，把「实跑几个、跳几个」拿回来。"""
+    result = subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests'],
+                            cwd=ROOT, capture_output=True, text=True,
+                            encoding='utf-8', errors='replace')
+    text = result.stdout + result.stderr
+    ran = re.search(r'Ran (\d+) test', text)
+    skipped = re.search(r'skipped=(\d+)', text)
+    return (int(ran.group(1)) if ran else -1,
+            int(skipped.group(1)) if skipped else 0)
+
+
 def check_test_classes(ok):
     """同名测试类会互相覆盖，用例静悄悄不跑——这坑踩过一次，得一直盯着。"""
     names = re.findall(r'^class (\w+)\(unittest\.TestCase\):', read('tests', 'test_ipcsurface.py'),
@@ -276,7 +288,14 @@ def main():
     ok &= check('README 写着同一个版本', version in readme)
     changelog = read('CHANGELOG.md')
     ok &= check('CHANGELOG 有这一版', '## ' + version in changelog)
-    tests_count = len(re.findall(r'def test_', read('tests', 'test_ipcsurface.py')))
+    tests_defined = len(re.findall(r'def test_', read('tests', 'test_ipcsurface.py')))
+    # 「定义了多少」和「真跑了多少」不是一回事，两个数都报出来
+    ran, skipped = run_unittest_summary()
+    tests_count = tests_defined
+    # unittest 的 Ran 含跳过项；所以「定义 == Ran」且「跳过 <= Ran」才是自洽的
+    ok &= check('用例三条数都对得上（定义 / 已执行 / 其中跳过）',
+                ran == tests_defined and skipped <= ran,
+                f'定义 {tests_defined} / 已执行 {ran} / 其中跳过 {skipped}')
     ok &= check('README 用例数和实际一致',
                 f'{tests_count} 个用例' in readme, f'实际 {tests_count}')
     ok &= check('badge 用例数和实际一致',
