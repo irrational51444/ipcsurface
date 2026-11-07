@@ -335,6 +335,9 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 - **比率一涨就红**（不是「涨 20 个点才红」）：上一版只锁版本时，同一版本内可以一点点加豁免而无人察觉；现在只要当前比率高于锁定值就失败，必须显式更新 `locked_at_ratio` 并写理由。这才把「确认没恶化」从人工承诺变成机器检查。
 - **版本对不上也红**：防止换版本时静默沿用旧基线。当前版本号取自 `ipcsurface.__version__`（包源码），不是这个 JSON——改 JSON 里的字段改不动比较基准。
 - 更新基线时必须写 `reason` 字段说明为什么涨是合理的。当前 91% 就是这么解释的：本套件的全称断言多是「不该出现某个东西」，空集合本来就该通过。
+- **更新流程本身有用例**：`ExemptionLockTests` 证明三件事——只改比率不改版本仍然红、比率和版本都改但没写理由仍然红、三样都齐才放行。
+
+**README 里的数字按分数比，不按百分比**：`10 / 11` 精确比对，避开四舍五入在 .5 边界制造假红。
 
 **未扫描 ≠ 通过**：一个文件语法错误时，扫描继续，但结果里会分开报「扫描并通过 N 个 / 因语法错误未扫描 M 个」。M 里的断言完全没被看过，不能读成没问题。
 
@@ -346,7 +349,11 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **豁免的定位规则**（比行号严）：注释只豁免它下面那个断言。主判据是 AST——注释与断言之间不许夹任何语句节点；5 行只是辅助上限，防注释漂太远，不是核心规则。中间隔了 `with`/`if`/别的语句，就把注释贴着断言写。
 
-**失败原因分四种**：`no_comment_nearby`（补一条注释）、`comment_too_far`（把注释挪近）、`comment_blocked_by_statement`（删掉中间语句或贴近写）、`other_protection`（已有 non_empty 等）。报错直接告诉你该做哪种动作，不用自己再读一遍代码。
+**失败原因分三种**：`no_comment_nearby`（补一条注释）、`comment_too_far`（把注释挪近）、`comment_blocked_by_statement`（删掉中间语句或贴近写）。报错直接告诉你该做哪种动作。
+
+以前还有第四种 `other_protection`（「已有 non_empty 但还是报」）——删掉了，因为那条路径不该存在：`non_empty()` 会被优先识别为保护，走到报错就说明真的没有保护。留着它只会让人分不清「扫描器漏识别」和「断言真缺保护」。
+
+**for 和 try 的区别是设计出来的**：注释贴 `for` 上方算豁免（循环本身就是那个被检查的位置，空集合时循环不执行）；注释贴 `try` 上方不算（`try` 只是包裹，断言在体内，中间隔着语句节点）。两条都有用例钉着，免得以后当成 bug 改掉。
 
 **豁免率的分母构成也会报**：失败消息里除了比率，还给「分布在多少个函数、平均每函数几处」——因为 10/12 和 10/200 是两种严重程度，只看百分比分不出来。
 
@@ -529,7 +536,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 181 个用例，只用标准库
+python -m unittest discover -s tests -v   # 184 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -556,12 +563,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.52.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.53.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.52.0
+git checkout v0.53.0
 python ipcsurface.py --version
 ```
 
@@ -569,7 +576,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.52.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.53.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

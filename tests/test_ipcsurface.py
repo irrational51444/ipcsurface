@@ -1280,6 +1280,48 @@ class OutputSideTests(unittest.TestCase):
                          '副本要清掉；.failed 是有意留下的诊断件')
 
 
+def exemption_lock_state(base, rate, current_version):
+    """锁的判定抽出来：返回 (ok, 原因)。改哪个字段能放行，用它能测。"""
+    reasons = []
+    locked_ratio = base.get('locked_at_ratio')
+    if locked_ratio is not None and round(rate, 4) > round(locked_ratio, 4):
+        reasons.append('ratio_above_locked')
+    if base.get('locked_at_version') != current_version:
+        reasons.append('version_mismatch')
+    if not base.get('reason'):
+        reasons.append('no_reason')
+    return (not reasons), reasons
+
+
+class ExemptionLockTests(unittest.TestCase):
+    """双锁不是只拦得住，还要能按流程正确放行。"""
+
+    base = {'protected': 10, 'total': 11, 'locked_at_ratio': 10 / 11,
+            'locked_at_version': '0.52.0', 'reason': '空集合本来就合法'}
+
+    def test_rule_lock_update_flow(self):
+        ok, reasons = exemption_lock_state(self.base, 10 / 11, '0.52.0')
+        self.assertTrue(ok, reasons)
+
+        # 只改比率、版本不动：仍然红（否则版本锁形同虚设）
+        bumped = dict(self.base, locked_at_ratio=0.95)
+        ok, reasons = exemption_lock_state(bumped, 10 / 11, '0.53.0')
+        self.assertFalse(ok)
+        self.assertIn('version_mismatch', reasons)
+
+        # 比率涨了、版本也对，但没写理由：红
+        no_reason = dict(self.base, locked_at_ratio=0.5, locked_at_version='0.53.0',
+                         reason='')
+        ok, reasons = exemption_lock_state(no_reason, 10 / 11, '0.53.0')
+        self.assertFalse(ok)
+        self.assertIn('no_reason', reasons)
+
+        # 比率、版本、理由三样都齐：放行
+        full = dict(self.base, locked_at_ratio=10 / 11, locked_at_version='0.53.0')
+        ok, reasons = exemption_lock_state(full, 10 / 11, '0.53.0')
+        self.assertTrue(ok, reasons)
+
+
 class GoldenScriptTests(unittest.TestCase):
     """纪律的执行者自己也得被测。"""
 
@@ -1649,9 +1691,6 @@ class AssertionHygieneTests(unittest.TestCase):
                 if blocked:
                     reasons.append('comment_blocked_by_statement')
                     continue
-                if self.has_non_comment_protection(node):
-                    reasons.append('other_protection')
-                    continue
                 reasons.append('comment_applies')   # 应当被豁免，不该进 offenders
             if reasons and any(r != 'comment_applies' for r in reasons):
                 out[node.name] = reasons
@@ -1840,6 +1879,25 @@ class AssertionHygieneTests(unittest.TestCase):
                   '        self.assertTrue(all(x > 0 for x in xs))\n')
         self.assertEqual(self.offenders_of(source), ['f'])
 
+    def test_rule_comment_does_not_cross_try(self):
+        # try 是语句节点，注释在 try 上方、断言在体内 —— 中间隔着 try，不豁免
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 想盖住 try 体\n'
+                  '    try:\n'
+                  '        self.assertTrue(all(x > 0 for x in xs))\n'
+                  '    except Exception:\n'
+                  '        pass\n')
+        self.assertEqual(self.offenders_of(source), ['f'])
+
+    def test_rule_comment_above_for_loop_does_exempt(self):
+        # 反过来：循环本身是被检查的那个「断言位置」，注释贴在 for 上方就是对的。
+        # 这和 try 的差别是设计出来的，不是漏洞——写在这里免得以后当成 bug 改掉。
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 空集合时循环不执行，断言不成立也不需要成立\n'
+                  '    for x in xs:\n'
+                  '        self.assertTrue(all(y > 0 for y in x))\n')
+        self.assertEqual(self.offenders_of(source), [])
+
     def test_rule_same_line_multi_is_flagged(self):
         source = ('def f(self, xs):\n'
                   '    # empty-allowed: 同行两条\n'
@@ -1870,6 +1928,7 @@ class AssertionHygieneTests(unittest.TestCase):
             readme = fh.read()
         match = _re.search(r'\*\*(\d+) / (\d+)', readme)
         self.assertIsNotNone(match, 'README 里应该有 「N / M」 形式的豁免比率')
+        # 按分数比，不比百分比：四舍五入会在 .5 边界上制造假红
         self.assertEqual((int(match.group(1)), int(match.group(2))), (got, total),
                          f'README 写 {match.group(1)}/{match.group(2)}，实测 {got}/{total}')
 
