@@ -314,15 +314,27 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 几个明确的取舍：
 
-- **目录 fsync 失败不是写失败。** 内容已经替换，只是崩溃后可能回退。所以 `write_output` 返回 `WriteResult`：`durable` 标明持久化没有，`warnings` 里带着要说的话，CLI 打到 stderr。压成一个「成功」就把这个状态藏起来了。Windows 上不支持刷目录，这条必然出现。
-- **备份用 `shutil.copy2`，不用硬链接。** 硬链接和 target 共享 inode，替换前若有人原地改 target，副本会跟着变；多一次拷贝换掉这个风险，值。
-- **孤儿副本按 ctime 判年龄。** 用 mtime 会出错：`copy2` 把原文件的修改时间带过来，一份三天前的报告，副本一诞生就「三天大」，会被立刻清掉——正好清掉最该留着的那份。
-- **删副本前先看 target 在不在。** target 都没了，那份副本可能是唯一的旧版，留着并提醒。
-- **符号链接直接拒绝。** `copy2` 备份的是链接指向的内容，`os.replace` 替换的却是链接本身，两头不一致。报 `symlink_target`，让调用方自己给 realpath，别替人猜。
-- **不自动恢复，但会提醒。** 每次写之前扫同目录，发现未过期的 `.bak` 就在 stderr 说「发现 N 个未处理副本，可能是之前崩在中间留下的」。不自动判断谁对谁错，但不闷着。
-- **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据，删了就没得查。
+- **目录 fsync 失败不是写失败。** 内容已经替换，只是崩溃后可能回退。`write_output` 返回 `WriteResult`：`durable` 说明持久化到位没有，`warnings` 带着要说的话；CLI 把这句打到 stderr，并输出 `kind: not_durable`，退出码 **4**。重试不会让它变好——文件已经是新版，缺的是持久化保证。
+- **Windows 上「不支持刷目录」不算失败。** `_fsync_dir` 返回 `None` 表示这套系统没有这个能力，`durable` 视为真，退出码仍是 0，只在 stderr 说明一次。否则每次写都退 4，真正的问题会被淹掉。
+- **备份年龄只看文件名。** 名字里带毫秒时间戳，跨平台一个语义。用 ctime 是「碰巧在 Linux 上对」：那边它是 inode 变更时间，Windows 是创建时间，网络盘各说各话。用 mtime 更糟——`copy2` 会把原文件的修改时间带过来，一份三天前的报告，副本一诞生就「三天大」，立刻被当过期清掉。
+- **只清自己生成的名字。** 严格匹配 `.{名}.{13位时间戳}.{8位hex}.bak` / `.failed`；你手工放的 `report.md.bak` 不动，也不会被误报成残骸。
+- **删副本前先看 target 在不在。** 但这只是最小防线：它只防「target 缺失」，不防「target 存在但已被别人截断或改坏」。那种情况检查不出来，别把它当安全保证。
+- **符号链接直接拒绝。** `copy2` 备份的是链接指向的内容，`os.replace` 替换的却是链接本身，两头不一致。报 `symlink_target`，错误里直接给出该用的真实路径。
+- **不自动恢复，但会提醒。** 每次写之前扫同目录，发现未过期的 `.bak` 就在 stderr 说「发现 N 个未处理副本」。不替人判断谁对谁错，但不闷着。
+- **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据；同样带时间戳，超过 24 小时按年龄清掉，不无限攒。
 
-**测试矩阵**：`verify.sh` 在本地和 CI（Ubuntu）跑同一套用例。其中「真实文件系统」那类验的是真语义，「控制流」那类只证明调用顺序，代码里分两组标注。Windows 专属分支（不刷目录、建不了符号链接）在 CI 上不跑，只能本地手动验——这一点写在明处，不假装 CI 覆盖了。
+**测试矩阵**：`verify.sh` 在本地和 CI（Ubuntu）跑同一套用例。其中「真实文件系统」那类验的是真语义，「控制流」那类只证明调用顺序（比如 durable=False 只能靠 mock 注入，它证明的是「这个状态被正确传出去了」，不证明真实 ENOSPC 下 stderr 会怎么说）。代码里分两组标注。
+
+**Windows 上明确「未验证」的行为清单**（CI 不跑，只能本地手动看）：
+
+| 行为 | Windows 现状 |
+| --- | --- |
+| 目录 fsync | 不支持，`_fsync_dir` 返回 `None`，`durable` 视为真，退出码 0 |
+| 符号链接目标 | 默认权限建不了链接，拒绝路径没在真实链接上跑过 |
+| `os.replace` 目标被占用 | `replace_failed` 分支没在真实占用下跑过（只有 mock） |
+| 长路径 / 只读目录 | 未测 |
+
+写在这儿的意思是：这些不是「不支持」，是「可能能用但没保证」。主要用户群在 Windows 上，这个差别比一句「CI 不跑」重要。
 
 **三种输出，各有各的用途**
 
@@ -429,7 +441,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 147 个用例，只用标准库
+python -m unittest discover -s tests -v   # 149 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -456,12 +468,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.38.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.39.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.38.0
+git checkout v0.39.0
 python ipcsurface.py --version
 ```
 
@@ -469,7 +481,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.38.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.39.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

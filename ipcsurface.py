@@ -25,7 +25,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.38.0'
+__version__ = '0.39.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -821,6 +821,12 @@ RULES = [
     {'id': 'output_is_all_or_nothing',
      'text': '写报告要么完整写出来，要么一个字节都不留；写到一半失败要按类别拒绝，'
              '不许留下看起来正常的半成品，也不许拿它盖掉上一份完整的报告'},
+    {'id': 'backup_age_from_filename',
+     'text': '备份年龄只认文件名里的时间戳：ctime 在 Linux 是 inode 变更时间、'
+             'Windows 是创建时间、网络盘各说各话，靠它判年龄是「碰巧对」而不是「可靠」'},
+    {'id': 'foreign_backup_is_not_touched',
+     'text': '只清自己生成的名字（.{名}.{13位时间戳}.{8位hex}.bak/.failed），'
+             '用户手工放的 report.md.bak 不动、也不误报'},
     {'id': 'dir_fsync_failure_is_reported',
      'text': '目录 fsync 失败不是写失败：内容已经替换，只是崩溃后可能回退。'
              '这个状态要能被观察到（WriteResult.durable + 警告），不能压成一个「成功」'},
@@ -1661,11 +1667,11 @@ class WriteResult:
 def _fsync_dir(directory):
     """替换之后刷一次目录，让 rename 真正落到盘上。
 
-    失败不等于写失败：内容已经换进去了，只是「崩溃后可能回退」。
-    这个状态必须能被观察，所以返回值给调用方，由它决定怎么报。
+    返回 None 表示这套系统不支持刷目录（Windows），既不是成功也不是失败；
+    返回 False 才是真的刷失败了——那才需要「已写入但可能回退」这个状态。
     """
     if os.name == 'nt':
-        return False
+        return None
     try:
         fd = os.open(directory, os.O_RDONLY)
     except OSError:
@@ -1679,41 +1685,61 @@ def _fsync_dir(directory):
         os.close(fd)
 
 
-def _backup_age(path):
-    """副本有多旧。用 ctime（创建/元数据变更时间），不用 mtime。
+def _backup_stamp(name):
+    """从备份文件名里取出创建时间戳（毫秒）。取不到就返回 None。
 
-    copy2 会把原文件的 mtime 带过来：一份三天前写的报告，它的副本一诞生就「三天大」，
-    按 mtime 算会被立刻清掉——正好清掉最该留着的那份。
+    不用 ctime：Linux 上它是 inode 变更时间，Windows 上是创建时间，
+    网络文件系统上更是各说各话。写进文件名里最稳，跨平台一个语义。
     """
-    st = os.stat(path)
-    return time.time() - getattr(st, 'st_ctime', st.st_mtime)
+    for part in reversed(name.split('.')):
+        if part.isdigit() and len(part) >= 13:
+            return int(part[:13])
+    return None
+
+
+def _backup_age(path):
+    """副本有多旧，只看文件名。取不到时间戳就返回 None（当作未知，不删）。"""
+    stamp = _backup_stamp(os.path.basename(path))
+    if stamp is None:
+        return None
+    return max(0.0, time.time() - stamp / 1000.0)
+
+
+def _ours(name, basename):
+    """是不是我们自己生成的那种名字：.{basename}.{13位时间戳}.{8位hex}.{后缀}"""
+    match = re.fullmatch(r'\.' + re.escape(basename) + r'\.(\d{13})\.([0-9a-f]{8})\.(bak|failed)', name)
+    return match.group(1) if match else None
 
 
 def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
-    """清掉崩在中间留下的孤儿副本，返回 (删掉的, 该提醒的)。
+    """清掉崩在中间留下的孤儿副本和诊断件，返回 (删掉的, 该提醒的)。
 
-    删之前先确认 target 还在：target 都没了，那个副本可能是唯一的旧版，
-    删掉就真没退路了——这种情况留着并提醒，不擅自清。
+    - 只认自己生成的名字，用户手工放的 report.md.bak 不动，也不会被误报；
+    - 删 .bak 之前先确认 target 还在（target 都没了，那份可能是唯一旧版）；
+    - .failed 是诊断件，按同样年龄清，不无限攒。
     """
     removed = []
     kept = []
-    prefix = f'.{basename}.'
     target = os.path.join(directory, basename)
     try:
         names = os.listdir(directory)
     except OSError:
         return removed, kept
-    target_ok = os.path.exists(target) and os.access(target, os.R_OK)
+    target_ok = os.path.exists(target)
+    now = time.time()
     for name in names:
-        if not (name.startswith(prefix) and name.endswith('.bak')):
+        stamp = _ours(name, basename)
+        if stamp is None:
             continue
         full = os.path.join(directory, name)
+        suffix = name.rsplit('.', 1)[-1]
+        age = now - int(stamp) / 1000.0
         try:
-            if _backup_age(full) <= max_age:
+            if age <= max_age:
                 kept.append(full)
                 continue
-            if not target_ok:
-                kept.append(full)
+            if suffix == 'bak' and not target_ok:
+                kept.append(full)      # 唯一的旧版，留着提醒
                 continue
             os.unlink(full)
             removed.append(full)
@@ -1738,7 +1764,7 @@ def write_output(path, text, expect_json=False):
             'symlink_target',
             f'这个路径是符号链接：{path}\n'
             '备份会跟随链接复制目标内容，而替换会把链接本身变成普通文件，两头语义不一样。\n'
-            '请直接给真实路径（realpath），别让工具替你猜。')
+            f'下一步：把真实路径 {os.path.realpath(path)} 传进来，别让工具替你猜。')
 
     directory = os.path.dirname(os.path.abspath(path)) or '.'
     basename = os.path.basename(path)
@@ -1754,9 +1780,10 @@ def write_output(path, text, expect_json=False):
                         f'没自动恢复，请人工确认（第一个：{kept[0]}）')
 
     handle, temp_path = tempfile.mkstemp(dir=directory, prefix=WRITE_TMP_PREFIX, suffix='.part')
-    backup = os.path.join(directory, f'.{basename}.{uuid.uuid4().hex[:8]}.bak')
+    stamp = int(time.time() * 1000)
+    backup = os.path.join(directory, f'.{basename}.{stamp}.{uuid.uuid4().hex[:8]}.bak')
     had_old = os.path.exists(path)
-    failed_keep = os.path.join(directory, f'.{basename}.{uuid.uuid4().hex[:8]}.failed')
+    failed_keep = os.path.join(directory, f'.{basename}.{stamp}.{uuid.uuid4().hex[:8]}.failed')
     try:
         with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
             fh.write(text)
@@ -1799,11 +1826,12 @@ def write_output(path, text, expect_json=False):
                               f'替换不上去：{path}\n{exc.strerror or exc}\n'
                               '目标可能被别的程序占用，关掉它再试一次。原报告没动。' + kept_note)
 
-        durable = _fsync_dir(directory)
-        if not durable:
-            warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。'
-                            + ('（Windows 不支持刷目录，这一条在老版本上必然出现）'
-                               if os.name == 'nt' else ''))
+        fsync_state = _fsync_dir(directory)
+        # Windows 上「不支持」不等于「失败」：文件本身已经 fsync 过了，
+        # 再拿一个必然为假的 durable 去报警，只会把真正的问题淹掉。
+        durable = fsync_state is not False
+        if fsync_state is False:
+            warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。')
     except OutputError:
         raise
     except OSError as exc:
@@ -2726,6 +2754,7 @@ EXIT_CODES = {
     1: '输入有问题（文件不存在、不是 asar、参数不对）',
     2: '--fail-on 被触发',
     3: '内部错误：工具自己崩了，不是目标的问题',
+    4: '报告已写入但未持久化（目录 fsync 失败，崩溃后可能回退）',
 }
 
 
@@ -2969,13 +2998,19 @@ def main(argv=None):
             os.makedirs(parent, exist_ok=True)
         result = write_output(args.out, text,
                              expect_json=args.format in ('json', 'sarif'))
+        undurable = not result.durable
         for note in result.warnings:
             print('注意：' + note, file=sys.stderr)
+        if undurable:
+            # 文件已经是新版，只是持久化没保证；这不是失败，但必须让 CI 看得见
+            print('kind: not_durable', file=sys.stderr)
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:
         print(text)
 
+    if undurable:
+        return 2 if (args.fail_on and findings) else 4
     if args.fail_on and findings:
         order = {'high': 0, 'medium': 1, 'info': 2}
         if any(order.get(level, 9) <= order[args.fail_on] for level, _, _ in findings):

@@ -1092,27 +1092,24 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(len(used), 1, '备份必须走复制；硬链接会和 target 共享 inode')
         self.assertFalse(os.path.exists(used[0]), '写完副本要清掉')
 
-    def test_rule_stale_backup_is_cleaned(self):
-        stale = os.path.join(self.dir, '.report.md.deadbeef.bak')
-        with open(stale, 'w', encoding='utf-8') as fh:
-            fh.write('上次崩在中间留下的')
+    def test_rule_backup_age_from_filename_cleans_stale(self):
         ipc.write_output(self.path, '先有一份完整的\n')   # target 存在，副本才敢删
+        old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
+        stale = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.bak')
         with open(stale, 'w', encoding='utf-8') as fh:
             fh.write('上次崩在中间留下的')
-        # 用 ctime 判断新旧：copy2 会把旧 mtime 带过来，按 mtime 算会把刚生成的副本当过期
-        with mock.patch.object(ipc, '_backup_age', return_value=ipc.STALE_BACKUP_SECONDS + 60):
-            ipc.write_output(self.path, '新的\n')
+        ipc.write_output(self.path, '新的\n')
         self.assertFalse(os.path.exists(stale), '过期的孤儿副本该清掉')
 
     def test_rule_stale_backup_needs_target(self):
-        stale = os.path.join(self.dir, '.report.md.deadbeef.bak')
+        old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
+        stale = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.bak')
         with open(stale, 'w', encoding='utf-8') as fh:
             fh.write('唯一的旧版')
-        with mock.patch.object(ipc, '_backup_age', return_value=ipc.STALE_BACKUP_SECONDS + 60):
-            # target 不存在时，那个副本可能是唯一的旧版，不能删
-            result = ipc.write_output(self.path, '新的\n')
-            self.assertTrue(os.path.exists(stale))
-            self.assertTrue(any('备份副本' in note for note in result.warnings))
+        # target 不存在时，那个副本可能是唯一的旧版，不能删
+        result = ipc.write_output(self.path, '新的\n')
+        self.assertTrue(os.path.exists(stale))
+        self.assertTrue(any('未处理' in note for note in result.warnings))
 
     def test_rule_dir_fsync_failure_is_reported_not_fatal(self):
         ipc.write_output(self.path, '旧的\n')
@@ -1157,11 +1154,27 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(open(real, encoding='utf-8').read(), '旧的\n', '链接指向的文件不能被动')
 
     def test_rule_fresh_backup_is_not_touched(self):
-        fresh = os.path.join(self.dir, '.report.md.cafebabe.bak')
+        fresh = os.path.join(self.dir, f'.report.md.{int(time.time() * 1000)}.cafebabe.bak')
         with open(fresh, 'w', encoding='utf-8') as fh:
             fh.write('可能是刚崩的，先别动')
         ipc.write_output(self.path, '新的\n')
         self.assertTrue(os.path.exists(fresh), '太新的副本不能擅自删')
+
+    def test_rule_foreign_backup_is_not_touched(self):
+        # 用户自己起的名字不能被我们当成自己的残骸
+        foreign = os.path.join(self.dir, 'report.md.bak')
+        with open(foreign, 'w', encoding='utf-8') as fh:
+            fh.write('我自己留的备份')
+        ipc.write_output(self.path, '新的\n')
+        self.assertTrue(os.path.exists(foreign), '不是我们生成的名字，不许动')
+
+    def test_rule_stale_failed_dump_is_cleaned(self):
+        old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
+        dump = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.failed')
+        with open(dump, 'w', encoding='utf-8') as fh:
+            fh.write('上次替换失败的现场')
+        ipc.write_output(self.path, '新的\n')
+        self.assertFalse(os.path.exists(dump), '诊断件也要按年龄清，不能无限攒')
 
     # 【控制流】只证明调用顺序
 
