@@ -2213,6 +2213,40 @@ class ProductExemptionTests(unittest.TestCase):
         self.assertEqual((ok, short), (0, 1), '敷衍理由不算豁免')
 
 
+class LeftoverTests(unittest.TestCase):
+    """崩溃残留：报告出来，但不自动还原。"""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, 'report.md')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_rule_recover_reports_without_restoring(self):
+        ipc.write_output(self.path, '旧版\n')
+        stamp = int(time.time() * 1000)
+        backup = os.path.join(self.dir, f'.report.md.{stamp}.deadbeef.bak')
+        with open(backup, 'w', encoding='utf-8') as fh:
+            fh.write('旧版\n')
+
+        report = ipc.inspect_leftovers(self.path)
+        self.assertEqual(len(report['backups']), 1)
+        self.assertTrue(report['target_exists'])
+        text = ipc.render_leftovers(report, self.path)
+        self.assertIn('不会自动还原', text)
+        self.assertIn('备份副本', text)
+        self.assertTrue(os.path.exists(backup), '检查不该删副本')
+        self.assertEqual(open(self.path, encoding='utf-8').read(), '旧版\n',
+                         '检查不该改 target')
+
+    def test_rule_recover_is_clean_without_leftovers(self):
+        ipc.write_output(self.path, '只有这一份\n')
+        report = ipc.inspect_leftovers(self.path)
+        self.assertEqual(report['backups'], [])
+        self.assertIn('没有发现', ipc.render_leftovers(report, self.path))
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

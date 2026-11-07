@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.56.1'
+__version__ = '0.57.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -841,6 +841,9 @@ RULES = [
     {'id': 'report_keys_are_whitelisted',
      'text': '报告 JSON 的顶层键必须在 REPORT_TOP_LEVEL_KEYS 白名单里；'
              '多一个键就红——「别把 durable 之类写进报告」从文档承诺变成回归约束'},
+    {'id': 'recover_reports_without_restoring',
+     'text': '崩溃残留只报告不自动还原：副本存在只能说明「可能崩在替换与清理之间」，'
+             '判断不了 target 是新版还是旧版，猜错会把新报告换回旧的'},
     {'id': 'cleanup_checks_target_before_age',
      'text': '清副本先判 target 在不在，再判年龄：反过来的话时钟大幅前跳会让一批副本'
              '同时变成过期候选，只能逐个救回来'},
@@ -1867,6 +1870,62 @@ def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
         except OSError:
             kept.append(full)
     return removed, kept
+
+
+def inspect_leftovers(path):
+    """看一眼这个报告旁边有没有崩溃残留。只报告，不自动还原。
+
+    为什么不用自动还原：`.bak` 是新版写完之后才删的，所以存在副本时，
+    target 可能已经是新版、也可能还是旧版——光看文件判断不出来。
+    猜错的代价是把一份完整的新报告换回旧版，比留着副本更糟。
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or '.'
+    basename = os.path.basename(path)
+    target = os.path.join(directory, basename)
+    result = {'target_exists': os.path.exists(target),
+              'target_bytes': os.path.getsize(target) if os.path.exists(target) else None,
+              'backups': [], 'failed': []}
+    try:
+        names = os.listdir(directory)
+    except OSError:
+        return result
+    for name in names:
+        stamp = _ours(name, basename)
+        if stamp is None:
+            continue
+        full = os.path.join(directory, name)
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = None
+        entry = {'path': full, 'bytes': size,
+                 'age_seconds': int(time.time() - int(stamp) / 1000.0)}
+        if name.endswith('.bak'):
+            result['backups'].append(entry)
+        else:
+            result['failed'].append(entry)
+    return result
+
+
+def render_leftovers(report, path):
+    lines = [f'# 崩溃残留检查：{path}', '']
+    if not report['target_exists']:
+        lines.append('- 目标文件不存在——如果有副本，那份可能是唯一的旧版，别急着删。')
+    else:
+        lines.append(f"- 目标存在，{report['target_bytes']} 字节")
+    if not report['backups'] and not report['failed']:
+        lines.append('- 没有发现 `.bak` / `.failed` 残留。')
+        return '\n'.join(lines) + '\n'
+    for item in report['backups']:
+        lines.append(f"- 备份副本：`{item['path']}`（{item['bytes']} 字节，"
+                     f"{item['age_seconds'] // 60} 分钟前）")
+    for item in report['failed']:
+        lines.append(f"- 替换失败现场：`{item['path']}`（{item['bytes']} 字节，"
+                     f"{item['age_seconds'] // 60} 分钟前）")
+    lines += ['', '**不会自动还原。** 副本存在只说明「上次可能崩在替换与清理之间」，'
+              '不能说明 target 是新版还是旧版——猜错会把新报告换回旧的。',
+              '看过内容、确认该留哪一份，再自己动手；确认不需要的可以删掉。']
+    return '\n'.join(lines) + '\n'
 
 
 def write_output(path, text, expect_json=False):
@@ -2963,9 +3022,11 @@ def main(argv=None):
         description='把一个 Electron 应用的能力面压成一页纸。'
                     '输入可以是 .asar、REA 的 Evidence JSON，或者一个 dll/exe。',
         epilog=epilog + '\n\n报告第一节永远是「这份报告能信多少」，然后是证据，最后是下一步。')
-    parser.add_argument('input', help='.asar 包、REA 的 Evidence JSON，或 dll/exe')
+    parser.add_argument('input', nargs='?', help='.asar 包、REA 的 Evidence JSON，或 dll/exe')
     parser.add_argument('--version', action='version', version=f'ipcsurface {__version__}')
     parser.add_argument('-o', '--out', help='写到文件，不给就打到标准输出')
+    parser.add_argument('--recover', metavar='REPORT',
+                        help='检查某个报告旁边的崩溃残留（.bak/.failed），只报告不自动还原')
     parser.add_argument('--format', choices=('md', 'json', 'sarif'), default='md',
                         help='md 给人看，json 给程序读，sarif 直接喂 CI 平台')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
@@ -2984,6 +3045,13 @@ def main(argv=None):
     parser.add_argument('--poke', metavar='POKE_JSON',
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
     args = parser.parse_args(argv)
+
+    if args.recover:
+        report = inspect_leftovers(args.recover)
+        print(render_leftovers(report, args.recover), end='')
+        return 0
+    if not args.input:
+        parser.error('要给一个输入（--recover 模式下不用）')
 
     if not os.path.exists(args.input):
         raise SystemExit(f'没这个文件：{args.input}')
