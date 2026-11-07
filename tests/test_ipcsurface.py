@@ -1596,6 +1596,18 @@ class AssertionHygieneTests(unittest.TestCase):
                         return True
         return False
 
+    def same_line_multi(self, source):
+        """同一行有多条全称断言的位置。只提示，不阻断。"""
+        import ast as _ast
+        from collections import Counter
+        lines = Counter()
+        for node in _ast.walk(_ast.parse(source)):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            for spot in self.universal_spots(node):
+                lines[spot.lineno] += 1
+        return sorted(ln for ln, n in lines.items() if n > 1)
+
     def offender_reasons(self, source):
         """{函数名: [原因]}。原因用来区分「识别了但豁免不成立」和「没识别、默认报」。"""
         import ast as _ast
@@ -1624,9 +1636,13 @@ class AssertionHygieneTests(unittest.TestCase):
                 if any(other.lineno < spot.lineno <= other.end_lineno
                        for other in spots if other is not spot):
                     continue      # 内层断言由外层代表
-                near = [ln for ln in comments if 0 < spot.lineno - ln <= self.PROTECT_WINDOW]
+                above = [ln for ln in comments if 0 < spot.lineno - ln]
+                near = [ln for ln in above if spot.lineno - ln <= self.PROTECT_WINDOW]
+                if not above:
+                    reasons.append('no_comment_nearby')      # 补一条注释
+                    continue
                 if not near:
-                    reasons.append('no_comment_nearby')
+                    reasons.append('comment_too_far')        # 把注释挪近
                     continue
                 blocked = [ln for ln in near
                            if [x for x in statement_lines if ln < x < spot.lineno]]
@@ -1817,6 +1833,46 @@ class AssertionHygieneTests(unittest.TestCase):
         self.assertIn('comment_blocked_by_statement', reasons,
                       '这是「识别了但豁免被语句挡住」，不是「没识别、默认报」')
 
+    def test_rule_comment_does_not_cross_with_statement(self):
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 想盖住 with 体\n'
+                  '    with open("x") as fh:\n'
+                  '        self.assertTrue(all(x > 0 for x in xs))\n')
+        self.assertEqual(self.offenders_of(source), ['f'])
+
+    def test_rule_same_line_multi_is_flagged(self):
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 同行两条\n'
+                  '    assert all(x > 0 for x in xs); assert all(x < 9 for x in xs)\n')
+        self.assertEqual(self.same_line_multi(source), [3],
+                         '同一行两条断言要提示拆行，哪怕豁免成立')
+
+    def test_rule_readme_number_matches_code(self):
+        # README 里写的豁免比率必须和当前实测一致，否则文档会退化成某时刻的快照
+        import re as _re
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        scanned = []
+        for folder in ('tests', 'scripts'):
+            for name in os.listdir(os.path.join(root, folder)):
+                if name.endswith('.py'):
+                    scanned.append(os.path.join(root, folder, name))
+        got = total = 0
+        for path in scanned:
+            with open(path, encoding='utf-8') as fh:
+                text = fh.read()
+            try:
+                g, t = self.exemption_stats(text)
+            except SyntaxError:
+                continue
+            got += g
+            total += t
+        with open(os.path.join(root, 'README.md'), encoding='utf-8') as fh:
+            readme = fh.read()
+        match = _re.search(r'\*\*(\d+) / (\d+)', readme)
+        self.assertIsNotNone(match, 'README 里应该有 「N / M」 形式的豁免比率')
+        self.assertEqual((int(match.group(1)), int(match.group(2))), (got, total),
+                         f'README 写 {match.group(1)}/{match.group(2)}，实测 {got}/{total}')
+
     def test_rule_same_line_assertions_share_line(self):
         # 同一行两条断言：行号相同，注释豁免按行生效，两条一起算
         source = ('def f(self, xs):\n'
@@ -1899,6 +1955,13 @@ class AssertionHygieneTests(unittest.TestCase):
             with open(baseline_path, encoding='utf-8') as fh:
                 base = json.load(fh)
             base_rate = base['protected'] / base['total'] if base['total'] else 0.0
+            locked = base.get('locked_at_ratio')
+            if locked is not None:
+                self.assertLessEqual(
+                    round(rate, 4), round(locked, 4),
+                    f'豁免率 {rate:.2%} 高于锁定值 {locked:.2%}：'
+                    '比率上涨本身就是信号，不是「换个版本号就能过去」的事。'
+                    '要么把能改成 non_empty() 的改掉，要么显式更新 locked_at_ratio 并写理由。')
             # 基线按版本锁定：版本对不上就得复核，不能静默沿用旧基线
             self.assertEqual(
                 base.get('locked_at_version', ipc.__version__), ipc.__version__,
