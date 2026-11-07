@@ -1315,7 +1315,7 @@ class ReportContractTests(unittest.TestCase):
                          f'章节标题重复了：{headings}')
         # 这是一条反向守卫，不是回归断言。它红了不等于功能坏了，
         # 只说明「测试的前提变了」：有人开始给章节编号了。
-        numbering = [h for h in headings if h.split()[1:2] and h.split()[1][0].isdigit()]
+        numbering = ipc.numbered_sections(headings)
         self.assertFalse(
             numbering,
             '【前提变了，不是回归】检测到 md 报告开始给章节编号：'
@@ -1328,6 +1328,15 @@ class ReportContractTests(unittest.TestCase):
         report['durable'] = 'yes'
         extra, _missing = ipc.check_report_keys(report)
         self.assertEqual(extra, ['durable'])
+
+
+class GuardTests(unittest.TestCase):
+    """守卫本身也要有证据：它得真的会响。"""
+
+    def test_rule_guard_detects_numbered_sections(self):
+        self.assertEqual(ipc.numbered_sections(['## 这份报告能信多少', '## 通道']), [])
+        found = ipc.numbered_sections(['## 1. 这份报告能信多少', '## 2 通道'])
+        self.assertEqual(found, ['## 1. 这份报告能信多少', '## 2 通道'])
 
 
 class VacuousAssertionTests(unittest.TestCase):

@@ -159,7 +159,7 @@ def check_output_parity(ok):
     md = t.render_asar(sample, facts, count, total)
     head = re.search(r'其中 (\d+) 个提到 IPC', md)
     from_md = len(facts['channels'])
-    ok &= check('md 与 channels 口径一致',
+    ok &= check('md 抬头说「提到 IPC N 个」和 scanned 一致（与 channels 数不是同一件事）',
                 head is not None and int(head.group(1)) == facts['scanned'],
                 f'提到 IPC {head.group(1) if head else "?"} / scanned {facts["scanned"]}')
     ok &= check('通道数不含 window 暴露',
@@ -296,7 +296,7 @@ def main():
     actually_ran = ran - skipped
     ok &= check('用例三条数都对得上（定义 / 实跑 / 跳过）',
                 ran == tests_defined and actually_ran >= 0,
-                f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}')
+                f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}（不计入实跑）')
     ok &= check('README 用例数和实际一致',
                 f'{tests_count} 个用例' in readme, f'实际 {tests_count}')
     ok &= check('badge 用例数和实际一致',

@@ -8,11 +8,15 @@
 2. **看清差在哪。** 跑一次 `python -m unittest tests.test_ipcsurface.ReportContractTests` ，失败信息里会列出不一致的字段名；再手工看一眼这两个字段的值差在哪。
 3. **改完把原因写进 CHANGELOG。** 只写「更新金标准」不算数，要写清「哪个字段、为什么必须变、下游要不要适配」。
 
-三条都走完，才允许重新生成：
+三条都走完，才允许重新生成——脚本强制要 `--reason`，理由写短了会被拒：
 
 ```bash
-python build/make_golden2.py
+python scripts/make_golden.py --reason "增加 XXX 字段；下游需要按新字段适配"
 ```
+
+理由会追加进同目录的 `CHANGELOG.golden.md`，和快照一起进 git。**纪律不是文档，是参数**：不给理由就重生成不了，和「别把 durable 写进报告」变成白名单断言是同一个做法。
+
+顺带一句：内容没变时脚本直接说「不用重写」，不产生空日志。
 
 这个脚本用**测试里那个 fixture**生成快照，不是拿真包生成——真包的输出会随版本合理漂移，拿它当金标准等于每次发版都要改。
 

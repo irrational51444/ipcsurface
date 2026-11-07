@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.43.0'
+__version__ = '0.44.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1619,6 +1619,20 @@ REPORT_TOP_LEVEL_KEYS = frozenset({
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
 })
+
+
+def numbered_sections(headings):
+    """找出带编号的章节标题（`## 1. xxx` / `## 12 xxx`）。
+
+    md 报告现在不带编号；一旦有人加了，这个函数会返回非空，
+    守卫用例就会红——红的时候它自己说明「不是回归，是前提变了」。
+    """
+    found = []
+    for heading in headings:
+        parts = heading.split()
+        if len(parts) >= 2 and parts[1][0].isdigit():
+            found.append(heading)
+    return found
 
 
 def check_report_keys(report):
