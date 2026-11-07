@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import errno
 import hashlib
 import json
 import mmap
@@ -18,9 +19,10 @@ import os
 import re
 import struct
 import sys
+import tempfile
 from collections import defaultdict
 
-__version__ = '0.33.0'
+__version__ = '0.34.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -813,6 +815,9 @@ RULES = [
     {'id': 'depth_limit_is_explicit',
      'text': 'JSON 嵌套上限是显式常量 MAX_JSON_DEPTH，超了直接按 depth_exceeded 拒，'
              '不靠撞上 RecursionError 再兜底——那样换 Python 版本行为会漂'},
+    {'id': 'output_is_all_or_nothing',
+     'text': '写报告要么完整写出来，要么一个字节都不留；写到一半失败要按类别拒绝，'
+             '不许留下看起来正常的半成品，也不许拿它盖掉上一份完整的报告'},
     {'id': 'silent_wrong_count_is_caught',
      'text': '最高优先级：报一个格式合法但数值错的通道数，比崩掉危险。'
              '形状不对一律拒绝，不许返回任何能被当成有数据的东西'},
@@ -1583,10 +1588,76 @@ def json_depth(text):
     return deepest
 
 
+# 写出去的坏法也得有类别。磁盘满、没权限、写了一半，都要说清是哪一种。
+OUTPUT_ERROR_KINDS = {
+    'disk_full': '磁盘满了',
+    'permission_denied': '没有写权限',
+    'path_missing': '目标目录不存在',
+    'short_write': '写完的字节数和该写的对不上',
+    'write_failed': '写入失败',
+}
+
+
+class OutputError(SystemExit):
+    """带类别的输出错误。写不完就别留半成品。"""
+
+    def __init__(self, kind, message):
+        super().__init__(message + '\nkind: ' + kind)
+        self.kind = kind
+
+
+def _output_kind(exc):
+    if exc.errno == errno.ENOSPC:
+        return 'disk_full'
+    if exc.errno in (errno.EACCES, errno.EPERM):
+        return 'permission_denied'
+    if exc.errno == errno.ENOENT:
+        return 'path_missing'
+    return 'write_failed'
+
+
+def write_output(path, text):
+    """要么完整写出来，要么一个字节都不留。
+
+    直接 open(path,'w') 写到一半失败，会留下半份看起来正常的报告——
+    读的时候不假装，写的时候也不能假装。
+    """
+    directory = os.path.dirname(os.path.abspath(path)) or '.'
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as exc:
+        raise OutputError(_output_kind(exc), f'目标目录建不出来：{directory}\n{exc}')
+
+    handle, temp_path = tempfile.mkstemp(dir=directory, prefix='.ipcsurface-', suffix='.part')
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        expected = len(text.encode('utf-8'))
+        actual = os.path.getsize(temp_path)
+        if actual != expected:
+            raise OutputError('short_write',
+                              f'写到一半：{path}\n应写 {expected} 字节，实际 {actual} 字节。'
+                              '半份报告比没有更坏，已经删掉了。')
+        os.replace(temp_path, path)
+    except OutputError:
+        raise
+    except OSError as exc:
+        raise OutputError(_output_kind(exc),
+                          f'写不出去：{path}\n{exc.strerror or exc}\n'
+                          '没有留下半成品。')
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
+    return path
+
+
 def read_json_input(path, what, next_step, expect=None):
     """读一份 JSON 输入。坏在哪、下一步做什么、属于哪一类，一次说清。
-
-    畸形输入不是只有「空文件」一种：截断、编码错、嵌套太深、类型不对，
     每一样以前都会甩一段堆栈或者被当成正常数据吃掉。这里统一挡在门口。
     """
     try:
@@ -2732,8 +2803,7 @@ def main(argv=None):
         parent = os.path.dirname(os.path.abspath(args.out))
         if parent and not os.path.isdir(parent):
             os.makedirs(parent, exist_ok=True)
-        with open(args.out, 'w', encoding='utf-8') as fh:
-            fh.write(text)
+        write_output(args.out, text)
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:

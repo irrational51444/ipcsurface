@@ -292,6 +292,20 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **最该记住的一条**：`handlers` 写成字符串时，`len('a:b')` 会被当成三条通道。崩掉至少不会让人误信，静默报一个格式合法、数值错的数才是真危险。现在这类一律拒绝。
 
+**写出去那一侧也是同样的规矩**（`OUTPUT_ERROR_KINDS`）
+
+报告不是「写到哪算哪」。要么完整写出来，要么一个字节都不留：
+
+| kind | 什么时候 |
+| --- | --- |
+| `disk_full` | 磁盘满 |
+| `permission_denied` | 没有写权限 |
+| `path_missing` | 目标目录不存在 |
+| `short_write` | 写完了，但字节数对不上 |
+| `write_failed` | 其他写入失败 |
+
+做法是先写同目录的临时文件，`fsync` 之后核字节数，再 `os.replace` 换上去。中途失败，临时文件删掉，旧报告原样不动——不会出现「半份看起来正常的新报告」，也不会把上一份完整的盖成半份。
+
 **三种输出，各有各的用途**
 
 | `--format` | 给谁 | 说明 |
@@ -391,7 +405,7 @@ python scripts/selfcheck.py
 ## 开发
 
 ```bash
-python -m unittest discover -s tests -v   # 132 个用例，只用标准库
+python -m unittest discover -s tests -v   # 137 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py                 # 三十多项自查，含真包实测
 ```
@@ -416,12 +430,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.33.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.34.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.33.0
+git checkout v0.34.0
 python ipcsurface.py --version
 ```
 
@@ -429,7 +443,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.33.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.34.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

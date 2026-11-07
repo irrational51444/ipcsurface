@@ -240,6 +240,24 @@ def check_input_error_kinds(ok):
     return ok
 
 
+def check_output_side(ok):
+    """写出去那一侧：要么完整，要么什么都不留。"""
+    import tempfile as _tempfile
+    folder = _tempfile.mkdtemp()
+    target = os.path.join(folder, 'r.md')
+    try:
+        t.write_output(target, '完整的一份\n')
+        ok &= check('正常写得出完整报告', os.path.getsize(target) > 0)
+        ok &= check('写完不留临时文件',
+                    [n for n in os.listdir(folder) if n != 'r.md'] == [])
+        for kind in ('disk_full', 'permission_denied', 'short_write', 'write_failed'):
+            ok &= check(f'输出错误类别 {kind} 登记了', kind in t.OUTPUT_ERROR_KINDS)
+    finally:
+        import shutil as _shutil
+        _shutil.rmtree(folder, ignore_errors=True)
+    return ok
+
+
 def main():
     ok = True
     print('== 一、版本与文档口径 ==')
@@ -305,6 +323,9 @@ def main():
     print('== 七、坏输入必须报错 ==')
     ok = check_bad_input(ok)
     ok = check_input_error_kinds(ok)
+
+    print('== 八、写出去也要完整 ==')
+    ok = check_output_side(ok)
 
     print('== 八、冒烟项数与文档一致 ==')
     ok = check_smoke_count(ok, readme)

@@ -4,12 +4,15 @@
     python -m unittest discover -s tests -v
 """
 
+import errno
 import json
 import os
+import shutil
 import struct
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -1005,6 +1008,61 @@ class MalformedInputTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, 'shape_invalid')
         # 拒绝要拒得干净：不许返回任何能被当成「有数据」的东西
         self.assertNotIn('3', str(ctx.exception).split('kind:')[0].split('形状不对')[0])
+
+
+class OutputSideTests(unittest.TestCase):
+    """写出去那一侧也得「不假装没事」。
+
+    直接 open(path,'w') 写到一半失败，会留下半份看起来正常的报告；
+    读的时候不假装，写的时候也不能假装。
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.path = os.path.join(self.dir, 'report.md')
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def leftovers(self):
+        return [name for name in os.listdir(self.dir) if name != 'report.md']
+
+    def test_rule_output_is_all_or_nothing(self):
+        ipc.write_output(self.path, '完整的一份\n')
+        self.assertTrue(os.path.exists(self.path))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_rule_disk_full_leaves_nothing(self):
+        with mock.patch('os.fsync', side_effect=OSError(errno.ENOSPC, 'No space left')):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, '写一半就该停\n')
+        self.assertEqual(ctx.exception.kind, 'disk_full')
+        self.assertFalse(os.path.exists(self.path), '不能留下半成品')
+        self.assertEqual(self.leftovers(), [], '临时文件要清掉')
+
+    def test_rule_permission_denied_is_typed(self):
+        with mock.patch('os.replace', side_effect=OSError(errno.EACCES, 'Denied')):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, 'x\n')
+        self.assertEqual(ctx.exception.kind, 'permission_denied')
+        self.assertEqual(self.leftovers(), [])
+
+    def test_rule_short_write_is_caught(self):
+        with mock.patch('os.path.getsize', return_value=1):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, '这一份本该更长\n')
+        self.assertEqual(ctx.exception.kind, 'short_write')
+        self.assertFalse(os.path.exists(self.path))
+        self.assertEqual(self.leftovers(), [])
+
+    def test_rule_partial_write_never_masks_the_old_report(self):
+        # 先有一份旧的完整报告，第二次写到一半失败，旧的那份必须原样还在
+        ipc.write_output(self.path, '旧的完整报告\n')
+        before = open(self.path, encoding='utf-8').read()
+        with mock.patch('os.fsync', side_effect=OSError(errno.ENOSPC, 'No space left')):
+            with self.assertRaises(ipc.OutputError):
+                ipc.write_output(self.path, '新的写了一半\n')
+        self.assertEqual(open(self.path, encoding='utf-8').read(), before)
 
 
 class AsarAuditTests(unittest.TestCase):
