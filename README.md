@@ -328,10 +328,24 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **豁免率怎么算**：分子是「真的靠注释被放行的**真空断言**处数」，分母是「真空断言处总数」。
 
-「真空断言」= 空集合上平凡为真的那种：`assertTrue(all(...))`、`assert not [...]`、循环体内断言、`len(x) == 0` 之类。另外两类**不进分母**：
+**分类判据是「空集合上这条断言会不会放行」，不是「函数名叫什么」。** 判定按表达式在空集合上的真值算，边界如下：
 
-- `assertTrue(any(...))` 是存在性断言，空集合直接失败，不会静默通过；
-- `assertFalse(any(...))` 是「不该有坏东西」，空集合本来就该通过。
+| 写法 | 空集合上 | 类别 |
+| --- | --- | --- |
+| `assertTrue(all(...))` | 放行（平凡真） | 真空，要防护 |
+| `assertTrue([...])` / `assert not [...]` | 放行（空列表为假，取反为真） | 真空 |
+| `assertTrue(any(...))` | **失败** | 存在性，不管 |
+| `assertTrue(not all(...))` | **失败** | 存在性，不管 |
+| `assertTrue(not any(...))` | 放行 | 真空（按行为算；它和 `assertFalse(any(...))` 行为相同，但后者带「不该有坏东西」的语义，只有那一支记 negative） |
+| `assertFalse(any(...))` | 放行 | 负面断言，自动放行 |
+| `assertFalse(all(...))` | **失败** | 存在性，不管 |
+| `for x in 参数: assert ...` | 循环不执行 | 真空 |
+| `len(x) == 0` / `x == []` / `x is not None` | 放行 | 真空 |
+
+两处刻意的取舍：
+
+- **算不出真值的形态按真空处理**（宁可吵，不可漏），比如 `any(...) and check(...)` 这种组合表达式——它的真值取决于 `check`，脚本不猜。
+- **写法不同、行为相同的，归类可能不同**：`assertTrue(not any(...))` 记真空，`assertFalse(any(...))` 记负面。差别在语义（后者是「不该有坏东西」），不在行为。这条写在用例注释里，免得以后被当 bug 改掉。
 
 当前 **2 / 3 ≈ 67%**。上一版报的 91% 是把上面两类也算进分母算出来的——那不是豁免膨胀，是判据误报。
 
@@ -549,7 +563,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 190 个用例，只用标准库
+python -m unittest discover -s tests -v   # 191 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -576,12 +590,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.58.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.59.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.58.0
+git checkout v0.59.0
 python ipcsurface.py --version
 ```
 
@@ -589,7 +603,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.58.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.59.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

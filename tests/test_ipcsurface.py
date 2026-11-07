@@ -1565,6 +1565,51 @@ class AssertionHygieneTests(unittest.TestCase):
             return (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
                     and n.func.id == name)
 
+        def truth_on_empty(node):
+            """这条表达式在空集合上求值为真还是假？判不了就返回 None。"""
+            if isinstance(node, (_ast.GeneratorExp, _ast.ListComp)):
+                return False        # 空集合 → 空列表/空生成器
+            if isinstance(node, _ast.UnaryOp) and isinstance(node.op, _ast.Not):
+                inner = truth_on_empty(node.operand)
+                return None if inner is None else (not inner)
+            if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name):
+                if node.func.id == 'all':
+                    return True     # 空集合 upload：全称断言平凡为真
+                if node.func.id == 'any':
+                    return False
+                if node.func.id == 'len':
+                    return 0
+            if isinstance(node, _ast.List) and not node.elts:
+                return False
+            return None
+
+        def kind_of(method, arg):
+            """按「空集合上这条断言会不会放行」定类。"""
+            if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
+                return 'vacuous'
+            value = truth_on_empty(arg)
+            if method == 'assertTrue':
+                if value is True:
+                    return 'vacuous'
+                if value is False:
+                    return 'existential'
+            if method == 'assertFalse':
+                if value is False:
+                    # 空集合放行。若里面是 any/not-any，那是「不该有坏东西」，算负面断言
+                    inner_any = any(is_all_or_any(n, 'any') for n in _ast.walk(arg))
+                    return 'negative' if inner_any else 'vacuous'
+                if value is True:
+                    return 'existential'
+            # 判不出来就按真空处理：宁可吵，不可漏
+            if any(is_all_or_any(n, 'all') for n in _ast.walk(arg)):
+                return 'vacuous'
+            if any(is_all_or_any(n, 'any') for n in _ast.walk(arg)):
+                return None
+            return None
+
+        def classify_arg(arg):
+            return kind_of('assertTrue', arg)
+
         def is_empty_satisfied(test):
             for n in _ast.walk(test):
                 if isinstance(n, _ast.Compare) and isinstance(n.left, _ast.Call) \
@@ -1587,20 +1632,14 @@ class AssertionHygieneTests(unittest.TestCase):
             if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
                     and child.func.attr in ('assertTrue', 'assertFalse'):
                 for arg in child.args:
-                    vacuous = isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)) or \
-                        any(is_all_or_any(n, 'all') for n in _ast.walk(arg))
-                    existential = any(is_all_or_any(n, 'any') for n in _ast.walk(arg))
-                    if child.func.attr == 'assertTrue' and existential and not vacuous:
-                        found.append((child, 'existential'))
-                    elif vacuous or existential:
-                        found.append((child, 'vacuous' if vacuous else 'negative'))
+                    kind = kind_of(child.func.attr, arg)
+                    if kind:
+                        found.append((child, kind))
                     break
-            if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
-                    and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
-                found.append((child, 'vacuous'))
-            if isinstance(child, _ast.Assert) and \
-                    any(is_all_or_any(n, 'all') for n in _ast.walk(child.test)):
-                found.append((child, 'vacuous'))
+            if isinstance(child, _ast.Assert):
+                kind = classify_arg(child.test)
+                if kind:
+                    found.append((child, kind))
             if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
                 found.append((child, 'vacuous'))
             if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
@@ -1908,6 +1947,30 @@ class AssertionHygieneTests(unittest.TestCase):
         part = self.exemption_breakdown(source)
         self.assertEqual(part['substitutive'], 1)
         self.assertEqual(part['declarative'], 0)
+
+    def test_rule_classifier_handles_negated_forms(self):
+        # 按「空集合上会不会失败」判，不按函数名判
+        cases = {
+            'not all(...)': ('def f(self, xs):\n'
+                             '    self.assertTrue(not all(x > 0 for x in xs))\n',
+                             'existential'),
+            # assertTrue(not any(...)) 空集合上直接通过 → 按行为就是真空。
+            # 和 assertFalse(any(...)) 写法不同、行为相同，但后者带「不该有坏东西」的语义，
+            # 所以只有 assertFalse 那一支记为 negative。这条差异写在这儿，别当 bug 改。
+            'not any(...)': ('def f(self, xs):\n'
+                             '    self.assertTrue(not any(x < 0 for x in xs))\n',
+                             'vacuous'),
+            'assertFalse(any(...))': ('def f(self, xs):\n'
+                                      '    self.assertFalse(any(x < 0 for x in xs))\n',
+                                      'negative'),
+            'assert not all(...)': ('def f(self, xs):\n'
+                                    '    assert not all(x > 0 for x in xs)\n',
+                                    'existential'),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.kinds_of(source), [expected],
+                                 f'{label} 应当被分成 {expected}')
 
     def test_rule_classifier_vacuous_is_not_silently_exempt(self):
         # 真空断言必须是 vacuous：一旦被分到 negative，它就不会再被报告
