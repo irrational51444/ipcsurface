@@ -22,7 +22,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
-__version__ = '0.34.0'
+__version__ = '0.34.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
