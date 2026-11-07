@@ -328,24 +328,27 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **豁免率怎么算**：分子是「真的靠注释被放行的**真空断言**处数」，分母是「真空断言处总数」。
 
-**分类判据是「空集合上这条断言会不会放行」，不是「函数名叫什么」。** 判定按表达式在空集合上的真值算，边界如下：
+**分类其实是两条规则叠起来的，别当成一条。** 表格里「判定依据」那一列就是说明这件事：
 
-| 写法 | 空集合上 | 类别 |
-| --- | --- | --- |
-| `assertTrue(all(...))` | 放行（平凡真） | 真空，要防护 |
-| `assertTrue([...])` / `assert not [...]` | 放行（空列表为假，取反为真） | 真空 |
-| `assertTrue(any(...))` | **失败** | 存在性，不管 |
-| `assertTrue(not all(...))` | **失败** | 存在性，不管 |
-| `assertTrue(not any(...))` | 放行 | 真空（按行为算；它和 `assertFalse(any(...))` 行为相同，但后者带「不该有坏东西」的语义，只有那一支记 negative） |
-| `assertFalse(any(...))` | 放行 | 负面断言，自动放行 |
-| `assertFalse(all(...))` | **失败** | 存在性，不管 |
-| `for x in 参数: assert ...` | 循环不执行 | 真空 |
-| `len(x) == 0` / `x == []` / `x is not None` | 放行 | 真空 |
+| 写法 | 空集合上 | 类别 | 判定依据 |
+| --- | --- | --- | --- |
+| `assertTrue(all(...))` | 放行（平凡真） | 真空，要防护 | 空集合行为 |
+| `assertTrue([...])` / `assert not [...]` | 放行 | 真空 | 空集合行为 |
+| `assertTrue(any(...))` | 失败 | 存在性，不管 | 空集合行为 |
+| `assertTrue(not all(...))` | 失败 | 存在性，不管 | 空集合行为 |
+| `assertTrue(not any(...))` | 放行 | 真空 | 空集合行为 |
+| `assertFalse(any(...))` | 放行 | 负面，自动放行 | **语义豁免**（不按行为算） |
+| `assertFalse(all(...))` | 失败 | 存在性，不管 | 空集合行为 |
+| `for x in 参数: assert ...` | 循环不执行 | 真空 | 空集合行为 |
+| `len(x) == 0` / `x == []` / `x is not None` | 放行 | 真空 | 空集合行为 |
+| `assertTrue(any(...) and check(...))` | 算不出 | 真空 | **保守归真空** |
 
-两处刻意的取舍：
+两条规则的顺序是：先算空集合真值；算得出就按行为归类，`assertFalse(any(...))` 例外（语义豁免）；算不出就保守归真空。`assertTrue(not any(...))` 记真空**不是**保守兜底——它的真值算得出来（`any` 为空即假，取反为真），是行为判断的结果。
 
-- **算不出真值的形态按真空处理**（宁可吵，不可漏），比如 `any(...) and check(...)` 这种组合表达式——它的真值取决于 `check`，脚本不猜。
-- **写法不同、行为相同的，归类可能不同**：`assertTrue(not any(...))` 记真空，`assertFalse(any(...))` 记负面。差别在语义（后者是「不该有坏东西」），不在行为。这条写在用例注释里，免得以后被当 bug 改掉。
+两处刻意的取舍，都在上表里标了依据：
+
+- **语义豁免**：`assertFalse(any(...))` 空集合上放行，按行为该归真空，但它表达的是「不该有坏东西」——空集合本来就该通过，所以归负面、自动放行。这是唯一一处「行为相同、归类不同」，不是漏洞。
+- **保守归真空**：算不出真值的形态（组合表达式）归真空，宁可吵不可漏。不含任何量词（`all`/`any`）的普通布尔断言不在此列——`assertTrue(flag)` 不是全称断言，不管。
 
 当前 **2 / 3 ≈ 67%**。上一版报的 91% 是把上面两类也算进分母算出来的——那不是豁免膨胀，是判据误报。
 
@@ -563,7 +566,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 191 个用例，只用标准库
+python -m unittest discover -s tests -v   # 193 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -590,12 +593,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.59.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.60.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.59.0
+git checkout v0.60.0
 python ipcsurface.py --version
 ```
 
@@ -603,7 +606,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.59.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.60.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

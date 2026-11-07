@@ -1600,12 +1600,11 @@ class AssertionHygieneTests(unittest.TestCase):
                     return 'negative' if inner_any else 'vacuous'
                 if value is True:
                     return 'existential'
-            # 判不出来就按真空处理：宁可吵，不可漏
-            if any(is_all_or_any(n, 'all') for n in _ast.walk(arg)):
-                return 'vacuous'
-            if any(is_all_or_any(n, 'any') for n in _ast.walk(arg)):
-                return None
-            return None
+            # 判不出真值：只要里面含 all/any 这类量化，就保守归真空（宁可吵，不可漏）。
+            # 不含量化的普通布尔断言（assert 某个标志位）不在此列，返回 None 表示不管。
+            has_quantifier = any(is_all_or_any(n, name)
+                                 for n in _ast.walk(arg) for name in ('all', 'any'))
+            return 'vacuous' if has_quantifier else None
 
         def classify_arg(arg):
             return kind_of('assertTrue', arg)
@@ -1947,6 +1946,19 @@ class AssertionHygieneTests(unittest.TestCase):
         part = self.exemption_breakdown(source)
         self.assertEqual(part['substitutive'], 1)
         self.assertEqual(part['declarative'], 0)
+
+    def test_rule_classifier_is_conservative_on_compound(self):
+        # any(...) and check(...) 的真值取决于 check，算不出来 → 保守归真空
+        source = ('def f(self, xs):\n'
+                  '    self.assertTrue(any(x > 0 for x in xs) and check())\n')
+        self.assertEqual(self.kinds_of(source), ['vacuous'],
+                         '组合表达式算不出真值时应保守归真空')
+
+    def test_rule_classifier_ignores_plain_boolean(self):
+        # 不含量化的普通断言不该被当成真空断言
+        source = ('def f(self):\n'
+                  '    self.assertTrue(flag)\n')
+        self.assertEqual(self.kinds_of(source), [])
 
     def test_rule_classifier_handles_negated_forms(self):
         # 按「空集合上会不会失败」判，不按函数名判
