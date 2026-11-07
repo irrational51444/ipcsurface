@@ -132,7 +132,13 @@ def check_targets(ok):
         print('  SKIP 靶场还没 build，跳过（跑 examples/build.sh 再自查）')
         return ok
     present = {name for name in os.listdir(built) if name.endswith('.asar')}
-    missing = sorted(set(TARGET_EXPECT) - present)
+    # adv-asar 是手工造的对抗样本，仓库里没有它的生成脚本，别的机器上造不出来。
+    # 缺它就跳过并写清原因——不装成通过，也不当成回归。
+    local_only = {'adv-asar.asar'}
+    absent_local = sorted(local_only - present)
+    if absent_local:
+        print(f"  SKIP {', '.join(absent_local)} 没造出来（仓库无生成脚本，只在本地有）")
+    missing = sorted(set(TARGET_EXPECT) - present - local_only)
     extra = sorted(present - set(TARGET_EXPECT))
     ok &= check('每个靶子都有期望值', not missing, '、'.join(missing))
     ok &= check('没有靶子没登记期望值', not extra, '、'.join(extra))
@@ -226,10 +232,14 @@ def check_smoke_count(ok, readme):
     # 有些段会整段跳过，项数自然变少——那时只要求「跑过、且没有 [FAIL]」。
     examples_built = os.path.isdir(os.path.join(ROOT, 'examples', 'build'))
     failed_items = out.count('[FAIL]')
+    skipped_items = out.count('[SKIP]') + out.count('（没有')
     if examples_built:
-        return ok & check('冒烟项数和 README 说的一致',
-                          passed > 0 and said == passed and failed_items == 0,
-                          f'实际 {passed} 项 / README {said}，失败 {failed_items}')
+        # 有的项在别的平台上做不了（没有 rea、没有 node），算「通过 + 跳过 = 应有」
+        return ok & check('冒烟项数与文档一致（跳过计入应有项）',
+                          passed > 0 and said == passed + skipped_items
+                          and failed_items == 0,
+                          f'通过 {passed} + 跳过 {skipped_items} = {passed + skipped_items}，'
+                          f'README {said}，失败 {failed_items}')
     return ok & check('没有示例包时冒烟仍跑过且无失败项',
                       passed > 0 and failed_items == 0,
                       f'实际 {passed} 项，失败 {failed_items}（示例包缺失，项数不对齐 README 是预期）')
