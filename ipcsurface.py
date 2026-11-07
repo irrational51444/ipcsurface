@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.63.4'
+__version__ = '0.63.5'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 

@@ -230,19 +230,17 @@ def check_smoke_count(ok, readme):
     said = parse_count(readme)
     # 两种环境分开判：有示例包时项数必须和 README 对齐；没有示例包时
     # 有些段会整段跳过，项数自然变少——那时只要求「跑过、且没有 [FAIL]」。
-    examples_built = os.path.isdir(os.path.join(ROOT, 'examples', 'build'))
-    failed_items = out.count('[FAIL]')
-    skipped_items = out.count('[SKIP]') + out.count('（没有')
-    if examples_built:
-        # 有的项在别的平台上做不了（没有 rea、没有 node），算「通过 + 跳过 = 应有」
-        return ok & check('冒烟项数与文档一致（跳过计入应有项）',
-                          passed > 0 and said == passed + skipped_items
-                          and failed_items == 0,
-                          f'通过 {passed} + 跳过 {skipped_items} = {passed + skipped_items}，'
-                          f'README {said}，失败 {failed_items}')
-    return ok & check('没有示例包时冒烟仍跑过且无失败项',
-                      passed > 0 and failed_items == 0,
-                      f'实际 {passed} 项，失败 {failed_items}（示例包缺失，项数不对齐 README 是预期）')
+    # 冒烟自己会打一行「N 应有 / N 通过 / N 跳过 / N 失败」，直接读它，
+    # 不靠外部猜「跳过算不算」——脚本说清楚，自查只对数字。
+    import re as _re
+    m = _re.search(r'---- (\d+) 应有 / (\d+) 通过 / (\d+) 跳过 / (\d+) 失败 ----', out)
+    if not m:
+        return ok & check('冒烟打出了汇总行', False, '没找到「N 应有 / N 通过 / N 跳过 / N 失败」')
+    total, okk, skipped, failed = (int(x) for x in m.groups())
+    return ok & check('冒烟项数与文档一致（应有 = 通过 + 跳过）',
+                      total == okk + skipped and failed == 0 and said == total,
+                      f'应有 {total} = 通过 {okk} + 跳过 {skipped}，失败 {failed}；'
+                      f'README 写 {said}')
 
 
 def check_input_error_kinds(ok):

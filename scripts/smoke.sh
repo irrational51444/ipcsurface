@@ -11,6 +11,7 @@ set -uo pipefail
 
 cmd=${1:-python ipcsurface.py}
 pass=0
+skipped=0
 fail=0
 
 run() {
@@ -55,7 +56,8 @@ if [ -n "$asm" ]; then
   run "asar 比版本" $cmd "$asm" --diff "$asm" -o /tmp/smoke-3.md
   run "深目录自动建" $cmd "$asm" -o /tmp/smoke/deep/out.md
 else
-  printf '[SKIP] asar 那几项（没有 examples/build/*.asar，先跑 examples/build.sh）\n'
+  skipped=$((skipped + 4))
+  printf '[SKIP] 4 项：asar 那几项（没有 examples/build/*.asar，先跑 examples/build.sh）\n'
 fi
 
 if [ -n "$dyn" ]; then
@@ -75,12 +77,13 @@ if [ -n "$ev" ]; then
   run "写基线" $cmd "$ev" --write-baseline /tmp/smoke-base.json -o /tmp/smoke-5.md
   run "读基线" $cmd "$ev" --baseline /tmp/smoke-base.json -o /tmp/smoke-6.md
 else
-  printf '[SKIP] 语法级那几项（没找到 Evidence，需要 rea）\n'
+  skipped=$((skipped + 3))
+  printf '[SKIP] 3 项：语法级那几项（没找到 Evidence，需要 rea）\n'
 fi
 
 run_code "不存在的文件" 1 $cmd nope.asar
 run_code "给一个目录" 1 $cmd examples
 run_code "不认识的文本" 1 $cmd README.md
 
-printf -- '---- %d 通过 / %d 失败 ----\n' "$pass" "$fail"
+printf -- '---- %d 应有 / %d 通过 / %d 跳过 / %d 失败 ----\n' "$((pass + skipped))" "$pass" "$skipped" "$fail"
 [ "$fail" -eq 0 ]
