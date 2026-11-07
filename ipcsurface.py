@@ -22,7 +22,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
-__version__ = '0.35.0'
+__version__ = '0.35.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1646,6 +1646,8 @@ def write_output(path, text, expect_json=False):
         raise OutputError(_output_kind(exc), f'目标目录建不出来：{directory}\n{exc}')
 
     handle, temp_path = tempfile.mkstemp(dir=directory, prefix='.ipcsurface-', suffix='.part')
+    backup = path + '.bak'
+    had_old = os.path.exists(path)
     try:
         with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
             fh.write(text)
@@ -1657,24 +1659,43 @@ def write_output(path, text, expect_json=False):
             raise OutputError('short_write',
                               f'写到一半：{path}\n应写 {expected} 字节，实际 {actual} 字节。'
                               '半份报告比没有更坏，已经删掉了。')
+        if had_old:
+            os.replace(path, backup)
         os.replace(temp_path, path)
 
-        # 读回来核一遍：落盘的必须就是我们写的那份
-        wanted = hashlib.sha256(text.encode('utf-8')).hexdigest()
-        if _digest(path) != wanted:
-            os.unlink(path)
-            raise OutputError('readback_mismatch',
-                              f'写完读回来对不上：{path}\n'
-                              '文件已经不完整，所以删掉了，免得被当成完整报告用。')
-        if expect_json:
+        # 换上去之后读回来核：落盘的必须就是我们写的那份。
+        # 核不过要能退回上一份——所以替换前先把旧的挪成 .bak，核过了再删。
+        backup = path + '.bak'
+        try:
+            wanted = hashlib.sha256(text.encode('utf-8')).hexdigest()
+            if _digest(path) != wanted:
+                raise OutputError('readback_mismatch',
+                                  f'写完读回来对不上：{path}\n'
+                                  '这份已经撤掉，上一份（如果有）原样放回去了。')
+            if expect_json:
+                try:
+                    with open(path, encoding='utf-8') as fh:
+                        json.load(fh)
+                except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                    raise OutputError('invalid_json_output',
+                                      f'声明是 JSON，但写出来的东西解析不了：{path}\n{exc}\n'
+                                      '这份已经撤掉，上一份（如果有）原样放回去了。')
+        except OutputError:
             try:
-                with open(path, encoding='utf-8') as fh:
-                    json.load(fh)
-            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 os.unlink(path)
-                raise OutputError('invalid_json_output',
-                                  f'声明是 JSON，但写出来的东西解析不了：{path}\n{exc}\n'
-                                  '已经删掉了。')
+            except OSError:
+                pass
+            if had_old:
+                try:
+                    os.replace(backup, path)
+                except OSError:
+                    pass
+            raise
+        if had_old:
+            try:
+                os.unlink(backup)
+            except OSError:
+                pass
     except OutputError:
         raise
     except OSError as exc:

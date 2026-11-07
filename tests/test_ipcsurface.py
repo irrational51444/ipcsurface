@@ -1073,6 +1073,17 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, 'readback_mismatch')
         self.assertFalse(os.path.exists(self.path), '验不过的文件不能留着')
 
+    def test_rule_written_output_is_read_back_restores_old(self):
+        # 回读核不过时，上一份完整报告必须被放回去——不能因为这次写坏了就丢
+        ipc.write_output(self.path, '旧的完整报告\n')
+        before = open(self.path, encoding='utf-8').read()
+        with mock.patch.object(ipc, '_digest', return_value='0' * 64):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, '新的写坏了\n')
+        self.assertEqual(ctx.exception.kind, 'readback_mismatch')
+        self.assertEqual(open(self.path, encoding='utf-8').read(), before)
+        self.assertFalse(os.path.exists(self.path + '.bak'), '备份不能留在磁盘上')
+
     def test_rule_written_output_is_read_back_json(self):
         with self.assertRaises(ipc.OutputError) as ctx:
             ipc.write_output(self.path, '{"a": 1', expect_json=True)
