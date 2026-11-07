@@ -311,10 +311,17 @@ def main():
     # 真要放一条合法的全称断言，就在它上面写 # universal-assert-ok: 理由，
     # 否则这条会红——是门禁，不是纯观测。
     product_source = read('ipcsurface.py')
-    exempt = product_source.count('# universal-assert-ok')
+    exempt_lines = [l.strip() for l in product_source.splitlines()
+                    if l.strip().startswith('# universal-assert-ok')]
+    exempt = sum(1 for l in exempt_lines
+                 if len(l.split(':', 1)[1].strip()) >= 10 if ':' in l)
+    short_reasons = [l for l in exempt_lines
+                     if ':' not in l or len(l.split(':', 1)[1].strip()) < 10]
+    ok &= check('产品代码豁免都写了理由（≥10 字）', not short_reasons,
+                f'理由不足或不带冒号的豁免：{short_reasons[:2]}')
     ok &= check('产品代码里没有未豁免的全称断言（仅限扫描器认得的形态）',
                 not risky or exempt >= len(risky),
-                f'发现 {risky[:3]}；豁免行 {exempt} 条（写 # universal-assert-ok: 理由）')
+                f'发现 {risky[:3]}；合规豁免 {exempt} 条（每次自查都报这个数，涨了就是信号）')
     ok &= check('用例三条数都对得上（定义 / 实跑 / 跳过）',
                 ran == tests_defined and actually_ran >= 0,
                 f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}（不计入实跑）')

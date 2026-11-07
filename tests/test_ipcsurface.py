@@ -1506,6 +1506,28 @@ class AssertionHygieneTests(unittest.TestCase):
                     and isinstance(node.func, _ast.Name)
                     and node.func.id in ('all', 'any'))
 
+        def is_empty_satisfied(test):
+            """这条断言在空集合上会不会通过？会，就属于「危险形态」。"""
+            for n in _ast.walk(test):
+                # len(x) == 0 / len(x) <= 0
+                if isinstance(n, _ast.Compare) and isinstance(n.left, _ast.Call) \
+                        and getattr(n.left.func, 'id', '') == 'len':
+                    if any(isinstance(c, _ast.Constant) and c.value == 0
+                           for c in n.comparators):
+                        return True
+                # x == [] / x != []
+                if isinstance(n, _ast.Compare):
+                    if any(isinstance(c, _ast.List) and not c.elts for c in n.comparators):
+                        return True
+                    if isinstance(n.left, _ast.List) and not n.left.elts:
+                        return True
+                # is not None：空列表照样通过
+                if isinstance(n, _ast.Compare) and any(
+                        isinstance(c, _ast.Constant) and c.value is None
+                        for c in n.comparators):
+                    return True
+            return False
+
         def universal_nodes(node):
             found = []
             for child in _ast.walk(node):
@@ -1522,6 +1544,10 @@ class AssertionHygieneTests(unittest.TestCase):
                 # 裸 assert：assert all(...) / assert not xs or all(...) 同样平凡为真
                 if isinstance(child, _ast.Assert) and \
                         any(is_all_or_any(n) for n in _ast.walk(child.test)):
+                    found.append(child)
+                # 「看起来是在检查空集合」的断言：默认按危险报，需要显式豁免。
+                # 判据是「空集合上会不会通过」；这类写法在空集合上恰好通过。
+                if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
                     found.append(child)
             for child in _ast.walk(node):
                 # 只算「for x in 参数」这种；for label, case in CASES.items() 是表格驱动，不算
@@ -1556,9 +1582,15 @@ class AssertionHygieneTests(unittest.TestCase):
                     if exiting_body(child.body):
                         return True
             # 注释豁免：断言前 5 行内出现过 # empty-allowed
-            return any(line in comment_lines
-                       for line in range(max(1, assertion_line - self.PROTECT_WINDOW),
-                                         assertion_line + 1))
+            # 注释只豁免「它下面」的断言（向上找、向下生效），
+            # 且中间不许夹着别的断言——否则一条注释放行一片
+            for line in range(max(1, assertion_line - self.PROTECT_WINDOW),
+                              assertion_line):
+                if line in comment_lines:
+                    between = range(line + 1, assertion_line)
+                    if not any(other.lineno in between for other in spots):
+                        return True
+            return False
 
         tree = _ast.parse(source)
         offenders = []
@@ -1670,16 +1702,20 @@ class AssertionHygieneTests(unittest.TestCase):
         self.non_empty(scanned, '扫描范围')
 
         bad = {}
+        errors = []
         for path in scanned:
             with open(path, encoding='utf-8') as fh:
                 source = fh.read()
             try:
                 found = self.offenders_of(source)
             except SyntaxError as exc:
-                self.fail(f'{os.path.basename(path)}:{exc.lineno}: {exc.msg}'
-                          '——语法错误必须定位到文件和行，不能只说「解析失败」')
+                # 不中止：一个坏文件不该让「其他文件是否通过」看不见
+                errors.append(f'{os.path.basename(path)}:{exc.lineno}: {exc.msg}')
+                continue
             if found:
                 bad[os.path.basename(path)] = found
+        self.assertEqual(errors, [], '这些文件解析不了（已跳过，其余文件照常扫）：'
+                         + '; '.join(errors))
         self.assertEqual(bad, {},
                          f'这些函数有全称断言却没说空集合怎么办：{bad}。'
                          '加 non_empty()，或写 # empty-allowed 说明。')
@@ -1710,6 +1746,41 @@ class AssertionHygieneTests(unittest.TestCase):
                                  '多行断言上方的注释应当能豁免')
         finally:
             shutil.rmtree(folder, ignore_errors=True)
+
+
+class ProductExemptionTests(unittest.TestCase):
+    """产品代码的豁免口要是没约束，门禁就会退化成装饰。"""
+
+    def check_exemption(self, source):
+        """返回 (豁免条数, 理由太短的条数)。判据：注释后必须有 ≥10 字理由。"""
+        import re as _re
+        good = 0
+        short = 0
+        for line in source.splitlines():
+            stripped = line.strip()
+            if not stripped.startswith('# universal-assert-ok'):
+                continue
+            reason = stripped.split(':', 1)[1].strip() if ':' in stripped else ''
+            if len(reason) >= 10:
+                good += 1
+            else:
+                short += 1
+        return good, short
+
+    def test_rule_product_exemption_needs_reason(self):
+        ok, short = self.check_exemption(
+            'x = 1\n'
+            '# universal-assert-ok: 常量列表本身非空，空集合不可能出现\n'
+            'assert all(v > 0 for v in CONSTANTS)\n')
+        self.assertEqual((ok, short), (1, 0))
+
+        ok, short = self.check_exemption(
+            '# universal-assert-ok:\nassert all(v > 0 for v in CONSTANTS)\n')
+        self.assertEqual((ok, short), (0, 1), '空理由不算豁免')
+
+        ok, short = self.check_exemption(
+            '# universal-assert-ok: 就这样\nassert all(...)\n')
+        self.assertEqual((ok, short), (0, 1), '敷衍理由不算豁免')
 
 
 class AsarAuditTests(unittest.TestCase):
