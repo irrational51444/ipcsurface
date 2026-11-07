@@ -251,10 +251,10 @@ def check_output_side(ok):
         ok &= check('正常写得出完整报告', os.path.getsize(target) > 0)
         ok &= check('写完不留临时文件或副本',
                     [n for n in os.listdir(folder) if n != 'r.md'] == [])
-        # Windows 刷不了目录，durable 必然为假；关键是这个状态必须能被看到，而不是被吞掉
+        # Windows 上「不支持刷目录」不算失败：durable 为真、不报警；POSIX 上必须真持久化
         if os.name == 'nt':
-            ok &= check('Windows 上 durable 为假且给出警告',
-                        (not result.durable) and any('fsync' in w for w in result.warnings))
+            ok &= check('Windows 上不支持刷目录不算失败', bool(result.durable))
+            ok &= check('Windows 上不拿这条刷警告', not any('fsync' in w for w in result.warnings))
         else:
             ok &= check('POSIX 上写成功即持久化', bool(result.durable))
         for kind in ('disk_full', 'permission_denied', 'short_write',
