@@ -549,7 +549,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 187 个用例，只用标准库
+python -m unittest discover -s tests -v   # 190 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -576,12 +576,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.57.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.58.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.57.0
+git checkout v0.58.0
 python ipcsurface.py --version
 ```
 
@@ -589,7 +589,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.57.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.58.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

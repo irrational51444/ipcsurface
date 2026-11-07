@@ -1860,6 +1860,61 @@ class AssertionHygieneTests(unittest.TestCase):
 
     # ---- 扫描器元测试：每种形态都要有「无保护会报」的证据 ----
 
+    def kinds_of(self, source):
+        """直接测分类函数本身，不经过 offenders_of。"""
+        import ast as _ast
+        fn = next(n for n in _ast.walk(_ast.parse(source))
+                  if isinstance(n, _ast.FunctionDef))
+        return [kind for _node, kind in self.universal_spots(fn)]
+
+    def test_rule_classifier_labels_each_kind(self):
+        # 分类规则本身要有测试：被误分类的那一条，扫描器会静默不报，
+        # 只测扫描器输出抓不到这种情况
+        cases = {
+            'assertTrue(all(...))':
+                ('def f(self, xs):\n'
+                 '    self.assertTrue(all(x > 0 for x in xs))\n', 'vacuous'),
+            'assert not [...]':
+                ('def f(self, xs):\n'
+                 '    assert not [x for x in xs if x < 0]\n', 'vacuous'),
+            'for + assert':
+                ('def f(self, xs):\n'
+                 '    for x in xs:\n'
+                 '        self.assertTrue(x > 0)\n', 'vacuous'),
+            'len(...) == 0':
+                ('def f(self, xs):\n'
+                 '    assert len(xs) == 0\n', 'vacuous'),
+            'assertTrue(any(...))':
+                ('def f(self, xs):\n'
+                 '    self.assertTrue(any(x > 0 for x in xs))\n', 'existential'),
+            'assertFalse(any(...))':
+                ('def f(self, xs):\n'
+                 '    self.assertFalse(any(x < 0 for x in xs))\n', 'negative'),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.kinds_of(source), [expected],
+                                 f'{label} 应当被分成 {expected}')
+
+    def test_rule_consumers_share_one_classifier(self):
+        # 分类规则只该有一份：offenders_of / exemption_stats / breakdown 必须一致，
+        # 否则改了一处、另一处还按旧口径算。
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 空集合合法\n'
+                  '    self.assertTrue(all(x > 0 for x in xs))\n')
+        protected, total = self.exemption_stats(source)
+        self.assertEqual((protected, total), (1, 1))
+        self.assertEqual(self.offenders_of(source), [])
+        part = self.exemption_breakdown(source)
+        self.assertEqual(part['substitutive'], 1)
+        self.assertEqual(part['declarative'], 0)
+
+    def test_rule_classifier_vacuous_is_not_silently_exempt(self):
+        # 真空断言必须是 vacuous：一旦被分到 negative，它就不会再被报告
+        source = ('def f(self, xs):\n'
+                  '    self.assertTrue(all(x > 0 for x in xs))\n')
+        self.assertIn('vacuous', self.kinds_of(source))
+
     def test_rule_scanner_flags_unprotected(self):
         # 只有「空集合上平凡为真」的形态才该报
         cases = {
