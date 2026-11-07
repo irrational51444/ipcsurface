@@ -529,7 +529,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 178 个用例，只用标准库
+python -m unittest discover -s tests -v   # 181 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
