@@ -314,11 +314,15 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 几个明确的取舍：
 
-- **备份用 `shutil.copy2`，不用硬链接。** 硬链接和 target 共享 inode，替换前若有人原地改 target，副本会跟着变；多一次拷贝，报告文件这个体量不值当冒那个险。
-- **符号链接跟着走。** target 是链接时写到它指向的真实文件，链接本身保留。Windows 建符号链接要特权，这条用例在那边跳过。
-- **孤儿副本会按年龄清。** 每次写之前，清掉同目录下同名前缀、超过 24 小时的 `.bak`。太新的不动——那可能是刚崩的，判断错了比留着更糟。
-- **不自动恢复。** 崩在「替换完成、还没删副本」之间，磁盘上会留一份 `.bak`；下次运行不猜 target 是新版还是待还原版。要人工判断，或者等到它过期被清掉。
-- **目录 fsync 在 Windows 上跳过。** 那边不支持刷目录，所以「崩溃后状态可判定」在那套文件系统上只能靠它自己。这是已知取舍。
+- **目录 fsync 失败不是写失败。** 内容已经替换，只是崩溃后可能回退。所以 `write_output` 返回 `WriteResult`：`durable` 标明持久化没有，`warnings` 里带着要说的话，CLI 打到 stderr。压成一个「成功」就把这个状态藏起来了。Windows 上不支持刷目录，这条必然出现。
+- **备份用 `shutil.copy2`，不用硬链接。** 硬链接和 target 共享 inode，替换前若有人原地改 target，副本会跟着变；多一次拷贝换掉这个风险，值。
+- **孤儿副本按 ctime 判年龄。** 用 mtime 会出错：`copy2` 把原文件的修改时间带过来，一份三天前的报告，副本一诞生就「三天大」，会被立刻清掉——正好清掉最该留着的那份。
+- **删副本前先看 target 在不在。** target 都没了，那份副本可能是唯一的旧版，留着并提醒。
+- **符号链接直接拒绝。** `copy2` 备份的是链接指向的内容，`os.replace` 替换的却是链接本身，两头不一致。报 `symlink_target`，让调用方自己给 realpath，别替人猜。
+- **不自动恢复，但会提醒。** 每次写之前扫同目录，发现未过期的 `.bak` 就在 stderr 说「发现 N 个未处理副本，可能是之前崩在中间留下的」。不自动判断谁对谁错，但不闷着。
+- **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据，删了就没得查。
+
+**测试矩阵**：`verify.sh` 在本地和 CI（Ubuntu）跑同一套用例。其中「真实文件系统」那类验的是真语义，「控制流」那类只证明调用顺序，代码里分两组标注。Windows 专属分支（不刷目录、建不了符号链接）在 CI 上不跑，只能本地手动验——这一点写在明处，不假装 CI 覆盖了。
 
 **三种输出，各有各的用途**
 
@@ -425,7 +429,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 144 个用例，只用标准库
+python -m unittest discover -s tests -v   # 147 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -452,12 +456,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.37.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.38.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.37.0
+git checkout v0.38.0
 python ipcsurface.py --version
 ```
 
@@ -465,7 +469,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.37.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.38.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

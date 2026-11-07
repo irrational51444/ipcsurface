@@ -1027,6 +1027,10 @@ class OutputSideTests(unittest.TestCase):
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
 
+    def read(self):
+        with open(self.path, encoding='utf-8') as fh:
+            return fh.read()
+
     def leftovers(self):
         return [name for name in os.listdir(self.dir) if name != 'report.md']
 
@@ -1034,7 +1038,7 @@ class OutputSideTests(unittest.TestCase):
 
     def test_rule_output_is_all_or_nothing(self):
         ipc.write_output(self.path, '完整的一份\n')
-        self.assertEqual(open(self.path, encoding='utf-8').read(), '完整的一份\n')
+        self.assertEqual(self.read(), '完整的一份\n')
         self.assertEqual(self.leftovers(), [], '写完不能留下任何临时文件或副本')
 
     def test_rule_disk_full_leaves_nothing(self):
@@ -1055,24 +1059,24 @@ class OutputSideTests(unittest.TestCase):
 
     def test_rule_partial_write_never_masks_the_old_report(self):
         ipc.write_output(self.path, '旧的完整报告\n')
-        before = open(self.path, encoding='utf-8').read()
+        before = self.read()
         with mock.patch('os.fsync', side_effect=OSError(errno.ENOSPC, 'No space left')):
             with self.assertRaises(ipc.OutputError):
                 ipc.write_output(self.path, '新的写了一半\n')
-        self.assertEqual(open(self.path, encoding='utf-8').read(), before)
+        self.assertEqual(self.read(), before)
 
     def test_rule_output_verified_before_replace_json(self):
         ipc.write_output(self.path, '旧的\n')
         with self.assertRaises(ipc.OutputError) as ctx:
             ipc.write_output(self.path, '{"a": 1', expect_json=True)
         self.assertEqual(ctx.exception.kind, 'invalid_json_output')
-        self.assertEqual(open(self.path, encoding='utf-8').read(), '旧的\n',
+        self.assertEqual(self.read(), '旧的\n',
                          '核验没过，旧报告必须原样还在')
         self.assertEqual(self.leftovers(), [], '半成品和副本都不能留')
 
     def test_rule_output_verified_before_replace_json_ok(self):
         ipc.write_output(self.path, '{"a": 1}', expect_json=True)
-        self.assertEqual(json.load(open(self.path, encoding='utf-8')), {'a': 1})
+        self.assertEqual(json.loads(self.read()), {'a': 1})
 
     def test_rule_backup_is_a_copy_not_a_hardlink(self):
         ipc.write_output(self.path, '旧的\n')
@@ -1092,10 +1096,65 @@ class OutputSideTests(unittest.TestCase):
         stale = os.path.join(self.dir, '.report.md.deadbeef.bak')
         with open(stale, 'w', encoding='utf-8') as fh:
             fh.write('上次崩在中间留下的')
-        old = time.time() - ipc.STALE_BACKUP_SECONDS - 60
-        os.utime(stale, (old, old))
-        ipc.write_output(self.path, '新的\n')
+        ipc.write_output(self.path, '先有一份完整的\n')   # target 存在，副本才敢删
+        with open(stale, 'w', encoding='utf-8') as fh:
+            fh.write('上次崩在中间留下的')
+        # 用 ctime 判断新旧：copy2 会把旧 mtime 带过来，按 mtime 算会把刚生成的副本当过期
+        with mock.patch.object(ipc, '_backup_age', return_value=ipc.STALE_BACKUP_SECONDS + 60):
+            ipc.write_output(self.path, '新的\n')
         self.assertFalse(os.path.exists(stale), '过期的孤儿副本该清掉')
+
+    def test_rule_stale_backup_needs_target(self):
+        stale = os.path.join(self.dir, '.report.md.deadbeef.bak')
+        with open(stale, 'w', encoding='utf-8') as fh:
+            fh.write('唯一的旧版')
+        with mock.patch.object(ipc, '_backup_age', return_value=ipc.STALE_BACKUP_SECONDS + 60):
+            # target 不存在时，那个副本可能是唯一的旧版，不能删
+            result = ipc.write_output(self.path, '新的\n')
+            self.assertTrue(os.path.exists(stale))
+            self.assertTrue(any('备份副本' in note for note in result.warnings))
+
+    def test_rule_dir_fsync_failure_is_reported_not_fatal(self):
+        ipc.write_output(self.path, '旧的\n')
+        with mock.patch.object(ipc, '_fsync_dir', return_value=False):
+            result = ipc.write_output(self.path, '新的\n')
+        self.assertFalse(result.durable, '目录没刷成功，就不能说持久化了')
+        self.assertEqual(self.read(), '新的\n')
+        self.assertTrue(any('fsync' in note for note in result.warnings), '这个状态必须能被观察到')
+
+    def test_rule_replace_failure_keeps_the_intended_content(self):
+        ipc.write_output(self.path, '旧的\n')
+        target = os.path.abspath(self.path)
+        real_replace = os.replace
+
+        def only_target_fails(src, dst, *args, **kwargs):
+            if os.path.abspath(dst) == target:
+                raise OSError(errno.EACCES, 'Denied')
+            return real_replace(src, dst, *args, **kwargs)
+
+        with mock.patch('os.replace', side_effect=only_target_fails):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, '这次想写的内容\n')
+        self.assertEqual(ctx.exception.kind, 'replace_failed')
+        kept = [n for n in os.listdir(self.dir) if n.endswith('.failed')]
+        self.assertEqual(len(kept), 1, '现场要留下来当诊断')
+        with open(os.path.join(self.dir, kept[0]), encoding='utf-8') as fh:
+            self.assertIn('这次想写的内容', fh.read())
+        self.assertEqual(self.read(), '旧的\n')
+
+    def test_rule_symlink_target_is_refused(self):
+        real = os.path.join(self.dir, 'real.md')
+        link = os.path.join(self.dir, 'link.md')
+        with open(real, 'w', encoding='utf-8') as fh:
+            fh.write('旧的\n')
+        try:
+            os.symlink(real, link)
+        except (OSError, NotImplementedError):
+            self.skipTest('这台机器建不了符号链接')
+        with self.assertRaises(ipc.OutputError) as ctx:
+            ipc.write_output(link, '新的\n')
+        self.assertEqual(ctx.exception.kind, 'symlink_target')
+        self.assertEqual(open(real, encoding='utf-8').read(), '旧的\n', '链接指向的文件不能被动')
 
     def test_rule_fresh_backup_is_not_touched(self):
         fresh = os.path.join(self.dir, '.report.md.cafebabe.bak')
@@ -1103,17 +1162,6 @@ class OutputSideTests(unittest.TestCase):
             fh.write('可能是刚崩的，先别动')
         ipc.write_output(self.path, '新的\n')
         self.assertTrue(os.path.exists(fresh), '太新的副本不能擅自删')
-
-    @unittest.skipIf(os.name == 'nt', 'Windows 建符号链接要特权，这台机器上没有')
-    def test_rule_symlink_target_is_followed(self):
-        real = os.path.join(self.dir, 'real.md')
-        link = os.path.join(self.dir, 'link.md')
-        with open(real, 'w', encoding='utf-8') as fh:
-            fh.write('旧的\n')
-        os.symlink(real, link)
-        ipc.write_output(link, '新的\n')
-        self.assertTrue(os.path.islink(link), '符号链接本身要保留')
-        self.assertEqual(open(real, encoding='utf-8').read(), '新的\n')
 
     # 【控制流】只证明调用顺序
 
@@ -1140,8 +1188,9 @@ class OutputSideTests(unittest.TestCase):
             with self.assertRaises(ipc.OutputError) as ctx:
                 ipc.write_output(self.path, '新的\n')
         self.assertEqual(ctx.exception.kind, 'replace_failed')
-        self.assertEqual(open(self.path, encoding='utf-8').read(), '旧的\n')
-        self.assertEqual(self.leftovers(), [], '替换失败的路径也要清干净')
+        self.assertEqual(self.read(), '旧的\n')
+        self.assertEqual([n for n in os.listdir(self.dir) if n.endswith('.bak')], [],
+                         '副本要清掉；.failed 是有意留下的诊断件')
 
 
 class AsarAuditTests(unittest.TestCase):

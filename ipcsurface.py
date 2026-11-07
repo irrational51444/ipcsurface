@@ -25,7 +25,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.37.0'
+__version__ = '0.38.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -821,6 +821,15 @@ RULES = [
     {'id': 'output_is_all_or_nothing',
      'text': '写报告要么完整写出来，要么一个字节都不留；写到一半失败要按类别拒绝，'
              '不许留下看起来正常的半成品，也不许拿它盖掉上一份完整的报告'},
+    {'id': 'dir_fsync_failure_is_reported',
+     'text': '目录 fsync 失败不是写失败：内容已经替换，只是崩溃后可能回退。'
+             '这个状态要能被观察到（WriteResult.durable + 警告），不能压成一个「成功」'},
+    {'id': 'stale_backup_needs_target',
+     'text': '清孤儿副本前先看 target 在不在：target 都没了，那份副本可能是唯一的旧版，'
+             '留着并提醒，不擅自删'},
+    {'id': 'symlink_target_is_refused',
+     'text': '目标路径是符号链接就拒绝：备份跟随链接复制内容，替换却把链接变成普通文件，'
+             '两头语义不一致，让调用方自己给 realpath'},
     {'id': 'output_verified_before_replace',
      'text': '能核的一律在替换前核完（字节数、JSON 可解析）；替身成功后不再核内容——'
              'replace 成功就说明 target 等于 tmp，再比一遍是恒真，那条还原分支永远不会被真实触发'},
@@ -1606,6 +1615,7 @@ OUTPUT_ERROR_KINDS = {
     'invalid_json_output': '声明是 JSON，但写出来的东西解析不了',
     'write_failed': '写入失败',
     'replace_failed': '替换不上去，目标可能被占用',
+    'symlink_target': '目标路径是符号链接，备份与替换语义不一致',
 }
 
 
@@ -1636,11 +1646,23 @@ def _output_kind(exc):
     return 'write_failed'
 
 
-def _fsync_dir(directory):
-    """替换之后把目录也刷一次，让 rename 落到盘上。
+class WriteResult:
+    """写完之后的事实，不是二元的成与败。"""
 
-    Windows 不支持对目录 fsync，这里直接跳过——这是已知取舍，不是遗漏：
-    在那套文件系统上，「崩溃后状态可判定」只能靠文件系统自己。
+    def __init__(self, path, durable, warnings):
+        self.path = path
+        self.durable = durable
+        self.warnings = list(warnings)
+
+    def __repr__(self):
+        return f'WriteResult(path={self.path!r}, durable={self.durable}, warnings={self.warnings})'
+
+
+def _fsync_dir(directory):
+    """替换之后刷一次目录，让 rename 真正落到盘上。
+
+    失败不等于写失败：内容已经换进去了，只是「崩溃后可能回退」。
+    这个状态必须能被观察，所以返回值给调用方，由它决定怎么报。
     """
     if os.name == 'nt':
         return False
@@ -1657,53 +1679,66 @@ def _fsync_dir(directory):
         os.close(fd)
 
 
-def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
-    """清掉以前崩在中间留下的孤儿副本。
+def _backup_age(path):
+    """副本有多旧。用 ctime（创建/元数据变更时间），不用 mtime。
 
-    不做自动恢复（那需要判断 target 是新版还是待还原版，判断错了更糟），
-    但也不能任由 .bak 攒着——攒多了「诚实」就变成「脏」。
+    copy2 会把原文件的 mtime 带过来：一份三天前写的报告，它的副本一诞生就「三天大」，
+    按 mtime 算会被立刻清掉——正好清掉最该留着的那份。
+    """
+    st = os.stat(path)
+    return time.time() - getattr(st, 'st_ctime', st.st_mtime)
+
+
+def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
+    """清掉崩在中间留下的孤儿副本，返回 (删掉的, 该提醒的)。
+
+    删之前先确认 target 还在：target 都没了，那个副本可能是唯一的旧版，
+    删掉就真没退路了——这种情况留着并提醒，不擅自清。
     """
     removed = []
-    now = time.time()
+    kept = []
     prefix = f'.{basename}.'
+    target = os.path.join(directory, basename)
     try:
         names = os.listdir(directory)
     except OSError:
-        return removed
+        return removed, kept
+    target_ok = os.path.exists(target) and os.access(target, os.R_OK)
     for name in names:
         if not (name.startswith(prefix) and name.endswith('.bak')):
             continue
         full = os.path.join(directory, name)
         try:
-            if now - os.path.getmtime(full) > max_age:
-                os.unlink(full)
-                removed.append(full)
+            if _backup_age(full) <= max_age:
+                kept.append(full)
+                continue
+            if not target_ok:
+                kept.append(full)
+                continue
+            os.unlink(full)
+            removed.append(full)
         except OSError:
-            pass
-    return removed
+            kept.append(full)
+    return removed, kept
 
 
 def write_output(path, text, expect_json=False):
     """要么完整写出来，要么一个字节都不留。
 
-    three 条不能破：
-    - target 任何时刻都是完整版本（不会缺失，也不会是半份）；
-    - 替换是原子的（os.replace 一步到位）；
-    - 能在替换前核的，一律在替换前核完。
+    顺序：临时文件 → fsync → 核字节数 →（声明 JSON 就在 tmp 上解析一遍）
+    → 复制旧版副本 → os.replace → 刷目录 → 删副本。
 
-    所以顺序是：写临时文件 → fsync → 核字节数 → （声明 JSON 就解析一遍 tmp）
-    → 复制一份旧版副本 → os.replace → 刷目录 → 删副本。
+    替换之后不再核内容：os.replace 成功就说明 target 等于 tmp，再比一遍是恒真。
 
-    替换之后不再核内容：replace 成功就说明 target 的内容等于 tmp，再比一遍是恒真，
-    那条还原路径永远不会被真实触发，留在那儿只会让人误以为 replace 会悄悄写坏。
-    真正需要核验的东西，都已经在 tmp 上核过了。
-
-    备份用复制而不是硬链接：硬链接和 target 共享 inode，替换前若有人原地改 target，
-    副本会跟着变；复制只多一次拷贝，报告文件这个体量不值得冒那个风险。
+    返回 WriteResult，不是光返回路径：目录 fsync 失败时内容已经写进去了，
+    只是崩溃后可能回退——这是个需要被看见的状态，不能压成一个「成功」。
     """
     if os.path.islink(path):
-        # 符号链接就跟着走，写到它指向的真实文件；链接本身保留
-        path = os.path.realpath(path)
+        raise OutputError(
+            'symlink_target',
+            f'这个路径是符号链接：{path}\n'
+            '备份会跟随链接复制目标内容，而替换会把链接本身变成普通文件，两头语义不一样。\n'
+            '请直接给真实路径（realpath），别让工具替你猜。')
 
     directory = os.path.dirname(os.path.abspath(path)) or '.'
     basename = os.path.basename(path)
@@ -1712,11 +1747,16 @@ def write_output(path, text, expect_json=False):
     except OSError as exc:
         raise OutputError(_output_kind(exc), f'目标目录建不出来：{directory}\n{exc}')
 
-    clean_stale_backups(directory, basename)
+    warnings = []
+    _removed, kept = clean_stale_backups(directory, basename)
+    if kept:
+        warnings.append(f'发现 {len(kept)} 个未处理的备份副本，可能是之前崩在中间留下的；'
+                        f'没自动恢复，请人工确认（第一个：{kept[0]}）')
 
     handle, temp_path = tempfile.mkstemp(dir=directory, prefix=WRITE_TMP_PREFIX, suffix='.part')
     backup = os.path.join(directory, f'.{basename}.{uuid.uuid4().hex[:8]}.bak')
     had_old = os.path.exists(path)
+    failed_keep = os.path.join(directory, f'.{basename}.{uuid.uuid4().hex[:8]}.failed')
     try:
         with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
             fh.write(text)
@@ -1749,11 +1789,21 @@ def write_output(path, text, expect_json=False):
         try:
             os.replace(temp_path, path)
         except OSError as exc:
+            # 这份 tmp 是「我们确实想写什么」的唯一现场，留着当诊断，改名 .failed
+            try:
+                os.replace(temp_path, failed_keep)
+                kept_note = f'\n这次要写的内容留在 {failed_keep}，确认完可以删。'
+            except OSError:
+                kept_note = ''
             raise OutputError('replace_failed',
                               f'替换不上去：{path}\n{exc.strerror or exc}\n'
-                              '目标可能被别的程序占用，关掉它再试一次。原报告没动。')
+                              '目标可能被别的程序占用，关掉它再试一次。原报告没动。' + kept_note)
 
-        _fsync_dir(directory)
+        durable = _fsync_dir(directory)
+        if not durable:
+            warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。'
+                            + ('（Windows 不支持刷目录，这一条在老版本上必然出现）'
+                               if os.name == 'nt' else ''))
     except OutputError:
         raise
     except OSError as exc:
@@ -1767,7 +1817,7 @@ def write_output(path, text, expect_json=False):
                     os.unlink(leftover)
                 except OSError:
                     pass
-    return path
+    return WriteResult(path, durable, warnings)
 
 
 def read_json_input(path, what, next_step, expect=None):
@@ -2917,7 +2967,10 @@ def main(argv=None):
         parent = os.path.dirname(os.path.abspath(args.out))
         if parent and not os.path.isdir(parent):
             os.makedirs(parent, exist_ok=True)
-        write_output(args.out, text, expect_json=args.format in ('json', 'sarif'))
+        result = write_output(args.out, text,
+                             expect_json=args.format in ('json', 'sarif'))
+        for note in result.warnings:
+            print('注意：' + note, file=sys.stderr)
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:

@@ -241,19 +241,28 @@ def check_input_error_kinds(ok):
 
 
 def check_output_side(ok):
-    """写出去那一侧：要么完整，要么什么都不留。"""
+    """写出去那一侧：要么完整，要么什么都不留；失败状态要能被看见。"""
     import tempfile as _tempfile
+    import shutil as _shutil
     folder = _tempfile.mkdtemp()
     target = os.path.join(folder, 'r.md')
     try:
-        t.write_output(target, '完整的一份\n')
+        result = t.write_output(target, '完整的一份\n')
         ok &= check('正常写得出完整报告', os.path.getsize(target) > 0)
-        ok &= check('写完不留临时文件',
+        ok &= check('写完不留临时文件或副本',
                     [n for n in os.listdir(folder) if n != 'r.md'] == [])
-        for kind in ('disk_full', 'permission_denied', 'short_write', 'write_failed'):
+        # Windows 刷不了目录，durable 必然为假；关键是这个状态必须能被看到，而不是被吞掉
+        if os.name == 'nt':
+            ok &= check('Windows 上 durable 为假且给出警告',
+                        (not result.durable) and any('fsync' in w for w in result.warnings))
+        else:
+            ok &= check('POSIX 上写成功即持久化', bool(result.durable))
+        for kind in ('disk_full', 'permission_denied', 'short_write',
+                     'replace_failed', 'symlink_target', 'write_failed'):
             ok &= check(f'输出错误类别 {kind} 登记了', kind in t.OUTPUT_ERROR_KINDS)
+        # 备份是按 ctime 判年龄的，用 mtime 会把刚生成的副本当过期
+        ok &= check('备份年龄用 ctime 判断', hasattr(t, '_backup_age'))
     finally:
-        import shutil as _shutil
         _shutil.rmtree(folder, ignore_errors=True)
     return ok
 
