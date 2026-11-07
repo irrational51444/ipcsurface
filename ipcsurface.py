@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.60.0'
+__version__ = '0.61.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1872,34 +1872,74 @@ def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
     return removed, kept
 
 
-def inspect_leftovers(path):
-    """看一眼这个报告旁边有没有崩溃残留。只报告，不自动还原。
+def stamp_of(ts):
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(ts))
 
-    为什么不用自动还原：`.bak` 是新版写完之后才删的，所以存在副本时，
-    target 可能已经是新版、也可能还是旧版——光看文件判断不出来。
-    猜错的代价是把一份完整的新报告换回旧版，比留着副本更糟。
+
+def _age_text(seconds):
+    """把年龄写成话。负值/离谱值不直接打印数字——时钟回拨时读者只会困惑。"""
+    if seconds is None:
+        return '时间未知'
+    if seconds < -60:
+        return '时间异常（文件时间比现在还晚）'
+    if seconds < 0:
+        return '刚刚'
+    if seconds < 3600:
+        return f'{int(seconds // 60)} 分钟前'
+    if seconds < 86400:
+        return f'{seconds / 3600:.1f} 小时前'
+    return f'{seconds / 86400:.1f} 天前'
+
+
+def inspect_leftovers(path):
+    """看一眼这个报告旁边有没有崩溃残留。只摆事实，不下结论。
+
+    不下结论的原因：`.bak` 是新版写完之后才删的，存在副本时 target 可能已经是新版、
+    也可能还是旧版——光看文件判断不出来，猜错会把完整的新报告换回旧版。
+    但「判断不了」不等于「什么也不给」：把 target 的大小、修改时间、以及它和副本
+    谁新谁旧摆出来，人一眼就能判。
     """
     directory = os.path.dirname(os.path.abspath(path)) or '.'
     basename = os.path.basename(path)
     target = os.path.join(directory, basename)
-    result = {'target_exists': os.path.exists(target),
-              'target_bytes': os.path.getsize(target) if os.path.exists(target) else None,
+
+    def stat_of(p):
+        try:
+            st = os.stat(p)
+            return {'bytes': st.st_size, 'mtime': st.st_mtime}
+        except OSError:
+            return None
+
+    target_stat = stat_of(target)
+    result = {'target_exists': target_stat is not None,
+              'target_bytes': target_stat['bytes'] if target_stat else None,
+              'target_mtime_text': (stamp_of(target_stat['mtime'])
+                                    if target_stat else None),
               'backups': [], 'failed': []}
     try:
         names = os.listdir(directory)
     except OSError:
         return result
+
     for name in names:
         stamp = _ours(name, basename)
         if stamp is None:
             continue
         full = os.path.join(directory, name)
-        try:
-            size = os.path.getsize(full)
-        except OSError:
-            size = None
-        entry = {'path': full, 'bytes': size,
-                 'age_seconds': int(time.time() - int(stamp) / 1000.0)}
+        info = stat_of(full)
+        created = int(stamp) / 1000.0
+        entry = {
+            'path': full,
+            'bytes': info['bytes'] if info else None,
+            'age_text': _age_text(time.time() - created),
+            'created_from': '文件名里的时间戳',
+            'mtime_text': stamp_of(info['mtime']) if info else None,
+        }
+        if target_stat and info:
+            # 只报先后，不解释成「谁更可靠」
+            entry['newer_than_target'] = info['mtime'] > target_stat['mtime']
+        else:
+            entry['newer_than_target'] = None
         if name.endswith('.bak'):
             result['backups'].append(entry)
         else:
@@ -1912,18 +1952,25 @@ def render_leftovers(report, path):
     if not report['target_exists']:
         lines.append('- 目标文件不存在——如果有副本，那份可能是唯一的旧版，别急着删。')
     else:
-        lines.append(f"- 目标存在，{report['target_bytes']} 字节")
+        lines.append(f"- 目标：{report['target_bytes']} 字节，改动时间 "
+                     f"{report['target_mtime_text']}")
     if not report['backups'] and not report['failed']:
         lines.append('- 没有发现 `.bak` / `.failed` 残留。')
         return '\n'.join(lines) + '\n'
-    for item in report['backups']:
-        lines.append(f"- 备份副本：`{item['path']}`（{item['bytes']} 字节，"
-                     f"{item['age_seconds'] // 60} 分钟前）")
-    for item in report['failed']:
-        lines.append(f"- 替换失败现场：`{item['path']}`（{item['bytes']} 字节，"
-                     f"{item['age_seconds'] // 60} 分钟前）")
-    lines += ['', '**不会自动还原。** 副本存在只说明「上次可能崩在替换与清理之间」，'
-              '不能说明 target 是新版还是旧版——猜错会把新报告换回旧的。',
+
+    for label, items in (('备份副本', report['backups']),
+                         ('替换失败现场', report['failed'])):
+        for item in items:
+            line = f"- {label}：`{item['path']}`（{item['bytes']} 字节，{item['age_text']}"
+            if item.get('newer_than_target') is True:
+                line += '；修改时间比 target 新'
+            elif item.get('newer_than_target') is False:
+                line += '；修改时间不比 target 新'
+            line += '）'
+            lines.append(line)
+
+    lines += ['', '**不会自动还原，也不替你判断。** 上面只给事实：两份文件的大小和修改时间。'
+              '谁新谁旧是个线索，不是结论——`.bak` 是复制出来的，修改时间可能被 copy2 带成旧值。',
               '看过内容、确认该留哪一份，再自己动手；确认不需要的可以删掉。']
     return '\n'.join(lines) + '\n'
 

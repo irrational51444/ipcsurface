@@ -439,7 +439,8 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 - **删副本前先看 target 在不在。** 但这只是最小防线：它只防「target 缺失」，不防「target 存在但已被别人截断或改坏」。那种情况检查不出来，别把它当安全保证。
 - **符号链接直接拒绝。** `copy2` 备份的是链接指向的内容，`os.replace` 替换的却是链接本身，两头不一致。报 `symlink_target`，错误里直接给出该用的真实路径。
 - **不自动恢复，但会提醒。** 每次写之前扫同目录，发现未过期的 `.bak` 就在 stderr 说「发现 N 个未处理副本」。不替人判断谁对谁错，但不闷着。
-- **可以手动查**：`py ipcsurface.py --recover out.md` 打印这个报告旁边的 `.bak` / `.failed`，含大小和多久之前。**只报告，不动文件**——副本存在只说明「上次可能崩在替换与清理之间」，判断不了 target 是新版还是旧版，猜错会把新报告换回旧的。
+- **可以手动查**：`py ipcsurface.py --recover out.md` 打印 target 与 `.bak` / `.failed` 的事实——各自大小、修改时间、以及副本是否比 target 更新。**只给事实，不给结论，不动文件**：副本存在只说明「上次可能崩在替换与清理之间」，谁新谁旧只是线索（`copy2` 会把旧 mtime 带到副本上），判断留给人。
+- **`--recover` 的年龄显示不会打负数**：年龄取自**文件名里的时间戳**（不是 mtime），时钟回拨时显示「时间异常（文件时间比现在还晚）」而不是「-3 小时」。
 - **replace 失败的现场留一份 `.failed`。** 那是「我们确实想写什么」的唯一证据；同样带时间戳，**6 小时**后按年龄清（副本是 24 小时，诊断件更短）。注意它里面是报告正文，可能带应用路径和通道名——留得越久，敏感内容留得越久。这是权衡，不是白拿的方便。清理按时间、不设数量上限：如果一个进程能反复制造 replace 失败，留存量就是「失败次数 × 6 小时」。
 
 **跳过用例怎么算**：Windows 上会跳一条符号链接用例，`unittest` 报 `OK (skipped=1)`。自查的用例计数按「定义了多少个 test_」算，不按「跑了多少个」，所以跳过不会让计数红——代价是这个数字证明的是覆盖数量，不是每次都真跑过。这句话写在这儿，免得把它当更强的证据。
@@ -566,7 +567,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 193 个用例，只用标准库
+python -m unittest discover -s tests -v   # 195 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -593,12 +594,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.60.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.61.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.60.0
+git checkout v0.61.0
 python ipcsurface.py --version
 ```
 
@@ -606,7 +607,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.60.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.61.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

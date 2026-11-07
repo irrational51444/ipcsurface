@@ -2370,6 +2370,29 @@ class LeftoverTests(unittest.TestCase):
         self.assertEqual(open(self.path, encoding='utf-8').read(), '旧版\n',
                          '检查不该改 target')
 
+    def test_rule_recover_reports_target_facts(self):
+        # 不给结论，但要给判断所需的事实：target 的大小和修改时间、谁更新
+        ipc.write_output(self.path, '旧版\n')
+        stamp = int(time.time() * 1000)
+        backup = os.path.join(self.dir, f'.report.md.{stamp}.deadbeef.bak')
+        with open(backup, 'w', encoding='utf-8') as fh:
+            fh.write('旧版\n')
+
+        report = ipc.inspect_leftovers(self.path)
+        self.assertIsNotNone(report['target_mtime_text'])
+        entry = report['backups'][0]
+        self.assertIn('newer_than_target', entry)
+        text = ipc.render_leftovers(report, self.path)
+        self.assertIn('改动时间', text)
+        self.assertIn('修改时间', text)
+
+    def test_rule_recover_age_never_prints_negative(self):
+        # 时钟回拨：文件名时间戳在未来时，不打印负数
+        future = int((time.time() + 7200) * 1000)
+        self.assertEqual(ipc._age_text(-7200), '时间异常（文件时间比现在还晚）')
+        self.assertEqual(ipc._age_text(-10), '刚刚')
+        self.assertNotIn('-', ipc._age_text(-7200))
+
     def test_rule_recover_is_clean_without_leftovers(self):
         ipc.write_output(self.path, '只有这一份\n')
         report = ipc.inspect_leftovers(self.path)
