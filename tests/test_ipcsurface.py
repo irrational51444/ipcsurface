@@ -1735,6 +1735,15 @@ class AssertionHygieneTests(unittest.TestCase):
             with self.subTest(form=label):
                 self.assertEqual(len(self.offenders_of(source)), 1, f'{label} 被误判成保护')
 
+    def test_rule_comment_does_not_cross_statements(self):
+        # 注释在断言上方，但中间夹了别的语句 —— 不豁免
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 写着，但没用\n'
+                  '    logging.info("开始检查")\n'
+                  '    self.assertTrue(all(x > 0 for x in xs))\n')
+        self.assertEqual(self.offenders_of(source), ['f'],
+                         '注释与断言之间夹了语句，就不该算豁免')
+
     def test_rule_comment_covers_only_nearby_assertion(self):
         # 一条注释只管它上面 5 行内的那个断言；第二个断言在 12 行后，不能被它豁免
         source = ('def f(self, xs, ys):\n'
@@ -1786,6 +1795,7 @@ class AssertionHygieneTests(unittest.TestCase):
         # 注释存在但没豁免任何断言的，不进分子（旧版本按条数算，单位对不上）。
         exempted_spots = 0
         spots_total = 0
+        functions_total = 0
         for path in scanned:
             with open(path, encoding='utf-8') as fh:
                 text = fh.read()
@@ -1795,6 +1805,10 @@ class AssertionHygieneTests(unittest.TestCase):
                 continue
             exempted_spots += got
             spots_total += total
+            import ast as _a
+            for node in _a.walk(_a.parse(text)):
+                if isinstance(node, _a.FunctionDef) and self.universal_spots(node):
+                    functions_total += 1
 
         # 警报线，不是安全线：和基线比涨太多就提醒人去看一眼
         baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -1806,7 +1820,9 @@ class AssertionHygieneTests(unittest.TestCase):
             base_rate = base['protected'] / base['total'] if base['total'] else 0.0
             self.assertLessEqual(
                 rate, base_rate + 0.2,
-                f'注释豁免率 {rate:.0%}（{exempted_spots}/{spots_total} 处）比基线 '
+                f'注释豁免率 {rate:.0%}（{exempted_spots}/{spots_total} 处，'
+                f'分布在 {functions_total} 个函数里，平均每函数 '
+                f'{spots_total / functions_total:.1f} 处）比基线 '
                 f'{base_rate:.0%} 高出 20 个点以上：豁免正在变成常态。'
                 '能改成 non_empty() 的改掉；确认空集合本来就合法的，'
                 '更新 tests/golden/exemptions.json 并写理由。')
