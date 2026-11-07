@@ -1612,6 +1612,29 @@ class AssertionHygieneTests(unittest.TestCase):
                     return left is right
             return None
 
+        def has_collection_semantics(node):
+            """断言里有没有集合语义：量化、len/sum/count、推导式、空容器、下标……
+
+            只要有，就算真值没建模也必须报。只有完全不含集合语义的普通布尔断言
+            （assertTrue(flag) 这种）才归「不管」。
+            """
+            for n in _ast.walk(node):
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) \
+                        and n.func.id in ('all', 'any', 'len', 'sum', 'count', 'sorted',
+                                          'set', 'frozenset', 'tuple', 'list'):
+                    return True
+                if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute) \
+                        and n.func.attr in ('count', 'index', 'issubset', 'issuperset'):
+                    return True
+                if isinstance(n, (_ast.GeneratorExp, _ast.ListComp, _ast.SetComp,
+                                  _ast.DictComp)):
+                    return True
+                if isinstance(n, (_ast.List, _ast.Set, _ast.Dict)) and not getattr(n, 'elts', None):
+                    return True
+            # `not xs`：对集合取真值
+            return bool(isinstance(node, _ast.UnaryOp) and isinstance(node.op, _ast.Not)
+                        and isinstance(node.operand, _ast.Name))
+
         def kind_of(method, arg):
             """按「空集合上这条断言会不会放行」定类。"""
             if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
@@ -1629,11 +1652,10 @@ class AssertionHygieneTests(unittest.TestCase):
                     return 'negative' if inner_any else 'vacuous'
                 if value is True:
                     return 'existential'
-            # 判不出真值：只要里面含 all/any 这类量化，就保守归真空（宁可吵，不可漏）。
-            # 不含量化的普通布尔断言（assert 某个标志位）不在此列，返回 None 表示不管。
-            has_quantifier = any(is_all_or_any(n, name)
-                                 for n in _ast.walk(arg) for name in ('all', 'any'))
-            return 'vacuous' if has_quantifier else None
+            # 真值算不出来时的默认方向：只要断言里带集合语义，就归真空报出来。
+            # 枚举不可能完备（0.49.0 就承认过），所以这里判的是「像不像在说集合」，
+            # 不是「我认不认识这个写法」——认不出更要报，这就是「宁可吵不可漏」。
+            return 'vacuous' if has_collection_semantics(arg) else None
 
         def classify_arg(arg):
             return kind_of('assertTrue', arg)
@@ -1983,6 +2005,26 @@ class AssertionHygieneTests(unittest.TestCase):
         part = self.exemption_breakdown(source)
         self.assertEqual(part['substitutive'], 1)
         self.assertEqual(part['declarative'], 0)
+
+    def test_rule_classifier_reports_unmodeled_collection_forms(self):
+        # 这条证明的是「默认方向」：真值没建模、但带集合语义，照样报。
+        # 补形态补不完，所以必须有一条钉住方向本身。
+        cases = {
+            'len(xs) <= 0': 'def f(self, xs):\n    self.assertTrue(len(xs) <= 0)\n',
+            'len(xs) < 1': 'def f(self, xs):\n    self.assertTrue(len(xs) < 1)\n',
+            'xs.count(x) == 0':
+                'def f(self, xs, x):\n    self.assertTrue(xs.count(x) == 0)\n',
+            'not xs': 'def f(self, xs):\n    self.assertTrue(not xs)\n',
+        }
+        for label, source in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.kinds_of(source), ['vacuous'],
+                                 f'{label} 带集合语义但真值没建模，默认方向应当报')
+
+    def test_rule_classifier_still_ignores_plain_boolean(self):
+        # 反面：完全不含集合语义的普通断言，不该被卷进来
+        source = 'def f(self):\n    self.assertTrue(flag)\n'
+        self.assertEqual(self.kinds_of(source), [])
 
     def test_rule_classifier_keeps_vacuous_without_quantifier(self):
         # 这些都不含 all/any，但空集合上照样通过——0.49.0 定的「默认当危险报」不能退
