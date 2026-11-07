@@ -1579,6 +1579,68 @@ class AssertionHygieneTests(unittest.TestCase):
                     break
         return protected, total
 
+    @staticmethod
+    def has_non_comment_protection(node):
+        import ast as _ast
+        for child in _ast.walk(node):
+            if isinstance(child, _ast.Call):
+                name = getattr(child.func, 'attr', getattr(child.func, 'id', ''))
+                if name == 'non_empty':
+                    return True
+            if isinstance(child, _ast.Assert) and isinstance(child.test, _ast.Name):
+                return True
+            if isinstance(child, _ast.If) and isinstance(child.test, _ast.UnaryOp) \
+                    and isinstance(child.test.op, _ast.Not):
+                for stmt in child.body:
+                    if isinstance(stmt, (_ast.Raise, _ast.Return)):
+                        return True
+        return False
+
+    def offender_reasons(self, source):
+        """{函数名: [原因]}。原因用来区分「识别了但豁免不成立」和「没识别、默认报」。"""
+        import ast as _ast
+        import io as _io
+        import tokenize as _tokenize
+
+        comments = set()
+        try:
+            for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
+                if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
+                    comments.add(token.start[0])
+        except _tokenize.TokenError:
+            pass
+
+        out = {}
+        for node in _ast.walk(_ast.parse(source)):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            spots = self.universal_spots(node)
+            if not spots:
+                continue
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            reasons = []
+            for spot in spots:
+                if any(other.lineno < spot.lineno <= other.end_lineno
+                       for other in spots if other is not spot):
+                    continue      # 内层断言由外层代表
+                near = [ln for ln in comments if 0 < spot.lineno - ln <= self.PROTECT_WINDOW]
+                if not near:
+                    reasons.append('no_comment_nearby')
+                    continue
+                blocked = [ln for ln in near
+                           if [x for x in statement_lines if ln < x < spot.lineno]]
+                if blocked:
+                    reasons.append('comment_blocked_by_statement')
+                    continue
+                if self.has_non_comment_protection(node):
+                    reasons.append('other_protection')
+                    continue
+                reasons.append('comment_applies')   # 应当被豁免，不该进 offenders
+            if reasons and any(r != 'comment_applies' for r in reasons):
+                out[node.name] = reasons
+        return out
+
     def offenders_of(self, source):
         import ast as _ast
         import io as _io
@@ -1744,6 +1806,25 @@ class AssertionHygieneTests(unittest.TestCase):
         self.assertEqual(self.offenders_of(source), ['f'],
                          '注释与断言之间夹了语句，就不该算豁免')
 
+    def test_rule_comment_does_not_cross_compound_statement(self):
+        # 复合语句：注释在 if 上方，断言在 if 体里 —— 中间隔着 if，不豁免
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 想盖住整段\n'
+                  '    if xs:\n'
+                  '        self.assertTrue(all(x > 0 for x in xs))\n')
+        self.assertEqual(self.offenders_of(source), ['f'])
+        reasons = self.offender_reasons(source)['f']
+        self.assertIn('comment_blocked_by_statement', reasons,
+                      '这是「识别了但豁免被语句挡住」，不是「没识别、默认报」')
+
+    def test_rule_same_line_assertions_share_line(self):
+        # 同一行两条断言：行号相同，注释豁免按行生效，两条一起算
+        source = ('def f(self, xs):\n'
+                  '    # empty-allowed: 同行两条都算\n'
+                  '    assert all(x > 0 for x in xs); assert all(x < 9 for x in xs)\n')
+        self.assertEqual(self.offenders_of(source), [],
+                         '同一行的断言共享行号，注释按行生效')
+
     def test_rule_comment_covers_only_nearby_assertion(self):
         # 一条注释只管它上面 5 行内的那个断言；第二个断言在 12 行后，不能被它豁免
         source = ('def f(self, xs, ys):\n'
@@ -1818,6 +1899,12 @@ class AssertionHygieneTests(unittest.TestCase):
             with open(baseline_path, encoding='utf-8') as fh:
                 base = json.load(fh)
             base_rate = base['protected'] / base['total'] if base['total'] else 0.0
+            # 基线按版本锁定：版本对不上就得复核，不能静默沿用旧基线
+            self.assertEqual(
+                base.get('locked_at_version', ipc.__version__), ipc.__version__,
+                f"豁免基线锁在 {base.get('locked_at_version')}，当前 {ipc.__version__}："
+                '换版本前先确认比率没恶化（更新 locked_at_version 并写理由），'
+                '或者把新增的豁免处理掉')
             self.assertLessEqual(
                 rate, base_rate + 0.2,
                 f'注释豁免率 {rate:.0%}（{exempted_spots}/{spots_total} 处，'
