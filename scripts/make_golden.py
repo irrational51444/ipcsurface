@@ -16,8 +16,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 import ipcsurface as t  # noqa: E402
 
-GOLDEN = os.path.join(ROOT, 'tests', 'golden', 'asar_report.json')
-LOGFILE = os.path.join(ROOT, 'tests', 'golden', 'CHANGELOG.golden.md')
+GOLDEN_DIR = os.environ.get('IPCSURFACE_GOLDEN_DIR',
+                           os.path.join(ROOT, 'tests', 'golden'))
+GOLDEN = os.path.join(GOLDEN_DIR, 'asar_report.json')
+LOGFILE = os.path.join(GOLDEN_DIR, 'CHANGELOG.golden.md')
 
 
 def make_asar(files):
