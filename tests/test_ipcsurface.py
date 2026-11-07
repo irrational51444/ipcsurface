@@ -1065,6 +1065,25 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(open(self.path, encoding='utf-8').read(), before)
 
 
+    def test_rule_written_output_is_read_back_mismatch(self):
+        # 落盘的内容跟写进去的不是同一份，就必须报错并把它删掉
+        with mock.patch.object(ipc, '_digest', return_value='0' * 64):
+            with self.assertRaises(ipc.OutputError) as ctx:
+                ipc.write_output(self.path, '内容\n')
+        self.assertEqual(ctx.exception.kind, 'readback_mismatch')
+        self.assertFalse(os.path.exists(self.path), '验不过的文件不能留着')
+
+    def test_rule_written_output_is_read_back_json(self):
+        with self.assertRaises(ipc.OutputError) as ctx:
+            ipc.write_output(self.path, '{"a": 1', expect_json=True)
+        self.assertEqual(ctx.exception.kind, 'invalid_json_output')
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_rule_written_output_is_read_back_ok(self):
+        ipc.write_output(self.path, '{"a": 1}', expect_json=True)
+        self.assertEqual(json.load(open(self.path, encoding='utf-8')), {'a': 1})
+
+
 class AsarAuditTests(unittest.TestCase):
     def test_strong_obfuscation_counts_as_high(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})

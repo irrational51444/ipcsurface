@@ -22,7 +22,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
-__version__ = '0.34.1'
+__version__ = '0.35.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -818,6 +818,9 @@ RULES = [
     {'id': 'output_is_all_or_nothing',
      'text': '写报告要么完整写出来，要么一个字节都不留；写到一半失败要按类别拒绝，'
              '不许留下看起来正常的半成品，也不许拿它盖掉上一份完整的报告'},
+    {'id': 'written_output_is_read_back',
+     'text': '写完要读回来核：指纹要对得上，声明是 JSON 就得真能解析；'
+             '核不过就删掉并报 readback_mismatch / invalid_json_output'},
     {'id': 'silent_wrong_count_is_caught',
      'text': '最高优先级：报一个格式合法但数值错的通道数，比崩掉危险。'
              '形状不对一律拒绝，不许返回任何能被当成有数据的东西'},
@@ -1594,8 +1597,19 @@ OUTPUT_ERROR_KINDS = {
     'permission_denied': '没有写权限',
     'path_missing': '目标目录不存在',
     'short_write': '写完的字节数和该写的对不上',
+    'readback_mismatch': '写完读回来，内容对不上',
+    'invalid_json_output': '声明是 JSON，但写出来的东西解析不了',
     'write_failed': '写入失败',
 }
+
+
+def _digest(path):
+    """算一遍文件的指纹。写完读回来比对，才知道落盘的是不是我们写的那份。"""
+    sha = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for chunk in iter(lambda: fh.read(65536), b''):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 class OutputError(SystemExit):
@@ -1616,11 +1630,14 @@ def _output_kind(exc):
     return 'write_failed'
 
 
-def write_output(path, text):
+def write_output(path, text, expect_json=False):
     """要么完整写出来，要么一个字节都不留。
 
     直接 open(path,'w') 写到一半失败，会留下半份看起来正常的报告——
     读的时候不假装，写的时候也不能假装。
+
+    写完还要读回来核一遍：指纹要对得上；如果这是 JSON/SARIF，得真能解析。
+    只写不验，等于把「我以为我写了」当成「我写对了」。
     """
     directory = os.path.dirname(os.path.abspath(path)) or '.'
     try:
@@ -1641,6 +1658,23 @@ def write_output(path, text):
                               f'写到一半：{path}\n应写 {expected} 字节，实际 {actual} 字节。'
                               '半份报告比没有更坏，已经删掉了。')
         os.replace(temp_path, path)
+
+        # 读回来核一遍：落盘的必须就是我们写的那份
+        wanted = hashlib.sha256(text.encode('utf-8')).hexdigest()
+        if _digest(path) != wanted:
+            os.unlink(path)
+            raise OutputError('readback_mismatch',
+                              f'写完读回来对不上：{path}\n'
+                              '文件已经不完整，所以删掉了，免得被当成完整报告用。')
+        if expect_json:
+            try:
+                with open(path, encoding='utf-8') as fh:
+                    json.load(fh)
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                os.unlink(path)
+                raise OutputError('invalid_json_output',
+                                  f'声明是 JSON，但写出来的东西解析不了：{path}\n{exc}\n'
+                                  '已经删掉了。')
     except OutputError:
         raise
     except OSError as exc:
@@ -2803,7 +2837,7 @@ def main(argv=None):
         parent = os.path.dirname(os.path.abspath(args.out))
         if parent and not os.path.isdir(parent):
             os.makedirs(parent, exist_ok=True)
-        write_output(args.out, text)
+        write_output(args.out, text, expect_json=args.format in ('json', 'sarif'))
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)
     else:
