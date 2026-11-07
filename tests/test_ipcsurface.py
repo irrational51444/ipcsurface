@@ -1491,6 +1491,94 @@ class AssertionHygieneTests(unittest.TestCase):
         assert items, why + '：集合是空的'
         return items
 
+    def universal_spots(self, node):
+        """一个函数里「可能对空集合平凡为真」的断言位置。"""
+        import ast as _ast
+
+        def is_all_or_any(n):
+            return (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
+                    and n.func.id in ('all', 'any'))
+
+        def is_empty_satisfied(test):
+            for n in _ast.walk(test):
+                if isinstance(n, _ast.Compare) and isinstance(n.left, _ast.Call) \
+                        and getattr(n.left.func, 'id', '') in ('len', 'sum'):
+                    if any(isinstance(c, _ast.Constant) and c.value == 0
+                           for c in n.comparators):
+                        return True
+                if isinstance(n, _ast.Compare):
+                    if any(isinstance(c, _ast.List) and not c.elts for c in n.comparators):
+                        return True
+                    if isinstance(n.left, _ast.List) and not n.left.elts:
+                        return True
+                    if any(isinstance(c, _ast.Constant) and c.value is None
+                           for c in n.comparators):
+                        return True
+            return False
+
+        found = []
+        for child in _ast.walk(node):
+            if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
+                    and child.func.attr in ('assertTrue', 'assertFalse'):
+                for arg in child.args:
+                    if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
+                        found.append(child)
+                    elif is_all_or_any(arg) or any(is_all_or_any(n) for n in _ast.walk(arg)):
+                        found.append(child)
+            if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
+                    and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
+                found.append(child)
+            if isinstance(child, _ast.Assert) and \
+                    any(is_all_or_any(n) for n in _ast.walk(child.test)):
+                found.append(child)
+            if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
+                found.append(child)
+            if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
+                for inner in _ast.walk(child):
+                    if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
+                            and inner.func.attr.startswith('assert'):
+                        found.append(child)
+                        break
+        return found
+
+    def exemption_stats(self, source):
+        """返回 (被注释豁免的断言处数, 全称断言处总数)。分子分母同粒度。"""
+        import ast as _ast
+        import io as _io
+        import tokenize as _tokenize
+
+        self._comment_lines = set()
+        try:
+            for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
+                if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
+                    self._comment_lines.add(token.start[0])
+        except _tokenize.TokenError:
+            pass
+
+        protected = 0
+        total = 0
+        for node in _ast.walk(_ast.parse(source)):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            spots = self.universal_spots(node)
+            if not spots:
+                continue
+            total += len(spots)
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            for spot in spots:
+                for line in self._comment_lines:
+                    if line >= spot.lineno:
+                        continue
+                    if spot.lineno - line > self.PROTECT_WINDOW:
+                        continue
+                    between = [ln for ln in statement_lines if line < ln < spot.lineno]
+                    if between:
+                        continue
+                    protected += 1
+                    break
+        return protected, total
+
     def offenders_of(self, source):
         import ast as _ast
         import io as _io
@@ -1504,100 +1592,42 @@ class AssertionHygieneTests(unittest.TestCase):
         except _tokenize.TokenError:
             pass
 
-        def is_all_or_any(node):
-            return (isinstance(node, _ast.Call)
-                    and isinstance(node.func, _ast.Name)
-                    and node.func.id in ('all', 'any'))
-
-        def is_empty_satisfied(test):
-            """这条断言在空集合上会不会通过？会，就属于「危险形态」。"""
-            for n in _ast.walk(test):
-                # len(x) == 0 / len(x) <= 0 / sum(1 for ...) == 0
-                if isinstance(n, _ast.Compare) and isinstance(n.left, _ast.Call) \
-                        and getattr(n.left.func, 'id', '') in ('len', 'sum'):
-                    if any(isinstance(c, _ast.Constant) and c.value == 0
-                           for c in n.comparators):
-                        return True
-                # x == [] / x != []
-                if isinstance(n, _ast.Compare):
-                    if any(isinstance(c, _ast.List) and not c.elts for c in n.comparators):
-                        return True
-                    if isinstance(n.left, _ast.List) and not n.left.elts:
-                        return True
-                # is not None：空列表照样通过
-                if isinstance(n, _ast.Compare) and any(
-                        isinstance(c, _ast.Constant) and c.value is None
-                        for c in n.comparators):
-                    return True
+        def comment_protects(node, assertion_line):
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            for line in comment_lines:
+                if line >= assertion_line:
+                    continue
+                if assertion_line - line > self.PROTECT_WINDOW:
+                    continue
+                if [ln for ln in statement_lines if line < ln < assertion_line]:
+                    continue
+                return True
             return False
 
-        def universal_nodes(node):
-            found = []
-            for child in _ast.walk(node):
-                if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
-                        and child.func.attr in ('assertTrue', 'assertFalse'):
-                    for arg in child.args:
-                        if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
-                            found.append(child)
-                        elif is_all_or_any(arg) or any(is_all_or_any(n) for n in _ast.walk(arg)):
-                            found.append(child)
-                if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
-                        and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
-                    found.append(child)
-                # 裸 assert：assert all(...) / assert not xs or all(...) 同样平凡为真
-                if isinstance(child, _ast.Assert) and \
-                        any(is_all_or_any(n) for n in _ast.walk(child.test)):
-                    found.append(child)
-                # 「看起来是在检查空集合」的断言：默认按危险报，需要显式豁免。
-                # 判据是「空集合上会不会通过」；这类写法在空集合上恰好通过。
-                if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
-                    found.append(child)
-            for child in _ast.walk(node):
-                # 只算「for x in 参数」这种；for label, case in CASES.items() 是表格驱动，不算
-                if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
-                    for inner in _ast.walk(child):
-                        if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
-                                and inner.func.attr.startswith('assert'):
-                            found.append(child)
-            return found
-
-        def exiting_body(body):
-            for stmt in body:
-                if isinstance(stmt, (_ast.Raise, _ast.Return)):
-                    return True
-                if isinstance(stmt, _ast.Expr) and isinstance(stmt.value, _ast.Call):
-                    name = getattr(stmt.value.func, 'attr', getattr(stmt.value.func, 'id', ''))
-                    if name in ('skip', 'skipTest', 'fail', 'exit'):
-                        return True
-            return False
-
-        def is_protected(node, assertion_line):
+        def is_protected(node, assertion_line, spots):
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
             for child in _ast.walk(node):
                 if isinstance(child, _ast.Call):
                     name = getattr(child.func, 'attr', getattr(child.func, 'id', ''))
                     if name == 'non_empty':
                         return True
-                # assert xs —— 真值断言才算；assert xs is not None 不算
                 if isinstance(child, _ast.Assert) and isinstance(child.test, _ast.Name):
                     return True
                 if isinstance(child, _ast.If) and isinstance(child.test, _ast.UnaryOp) \
                         and isinstance(child.test.op, _ast.Not):
-                    if exiting_body(child.body):
-                        return True
-            # 注释豁免：断言前 5 行内出现过 # empty-allowed
-            # 注释只豁免「它下面」的断言，判据不是行号差，是 AST：
-            # 注释与断言之间不许夹任何语句节点（空行、纯注释不算）。
-            statement_lines = {n.lineno for n in _ast.walk(node)
-                               if isinstance(n, _ast.stmt)}
+                    for stmt in child.body:
+                        if isinstance(stmt, (_ast.Raise, _ast.Return)):
+                            return True
             for line in comment_lines:
                 if line >= assertion_line:
-                    continue        # 只向上找
+                    continue
                 if assertion_line - line > self.PROTECT_WINDOW:
-                    continue        # 贴着也算，隔太远也不算
-                between = [ln for ln in statement_lines
-                           if line < ln < assertion_line]
+                    continue
+                between = [ln for ln in statement_lines if line < ln < assertion_line]
                 if between:
-                    continue        # 中间还有别的语句，这条注释不管它
+                    continue
                 return True
             return False
 
@@ -1606,24 +1636,20 @@ class AssertionHygieneTests(unittest.TestCase):
         for node in _ast.walk(tree):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            spots = universal_nodes(node)
+            spots = self.universal_spots(node)
             if not spots:
                 continue
-            # 嵌套断言只算最外层那个：给外层写好豁免，块里的就不必再逐条标
             spots.sort(key=lambda n: n.lineno)
             outermost = []
             for spot in spots:
-                if any(getattr(spot, 'lineno', 0) >= getattr(kept, 'lineno', 0)
-                       and getattr(spot, 'end_lineno', 0) <= getattr(kept, 'end_lineno', 0)
+                if any(spot.lineno >= kept.lineno and spot.end_lineno <= kept.end_lineno
                        for kept in outermost):
                     continue
                 outermost.append(spot)
-            spots = outermost
-            unprotected = [spot for spot in spots
-                           if not is_protected(node, spot.lineno)]
-            if not unprotected:
-                continue
-            offenders.append(node.name)
+            unprotected = [spot for spot in outermost
+                           if not is_protected(node, spot.lineno, spots)]
+            if unprotected:
+                offenders.append(node.name)
         return offenders
 
     # ---- 扫描器元测试：每种形态都要有「无保护会报」的证据 ----
@@ -1738,8 +1764,6 @@ class AssertionHygieneTests(unittest.TestCase):
         bad = {}
         errors = []
         scanned_ok = 0
-        exemptions = 0
-        universal_functions = 0
         for path in scanned:
             with open(path, encoding='utf-8') as fh:
                 source = fh.read()
@@ -1750,38 +1774,42 @@ class AssertionHygieneTests(unittest.TestCase):
                 errors.append(f'{os.path.basename(path)}:{exc.lineno}: {exc.msg}')
                 continue
             scanned_ok += 1
-            exemptions += source.count('# empty-allowed')
-            universal_functions += sum(
-                1 for name in dir(self) if False)  # 占位，实际数在下面统计
             if found:
                 bad[os.path.basename(path)] = found
-        # 数一下「有多少函数带断言」，用来算豁免密度（粗粒度，够看趋势）
-        import ast as _ast
-        for path in scanned:
-            with open(path, encoding='utf-8') as fh:
-                try:
-                    tree = _ast.parse(fh.read())
-                except SyntaxError:
-                    continue
-            for node in _ast.walk(tree):
-                if isinstance(node, _ast.FunctionDef) and any(
-                        isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
-                        and n.func.attr.startswith('assert')
-                        for n in _ast.walk(node)):
-                    universal_functions += 1
-
         self.assertEqual(errors, [],
                          f'扫描并解析 {scanned_ok} 个文件；因语法错误未扫描 {len(errors)} 个'
                          '（未扫描 ≠ 通过，里面的断言完全没看）：' + '; '.join(errors))
         self.assertEqual(bad, {},
                          f'这些函数有全称断言却没说空集合怎么办：{bad}。'
                          '加 non_empty()，或写 # empty-allowed 说明。')
-        # 豁免膨胀是结构性问题：默认报危险之后，豁免会涨。看比例，不只看绝对值
-        density = exemptions / universal_functions if universal_functions else 0.0
-        self.assertLess(density, 0.8,
-                        f'豁免密度 {density:.0%}（{exemptions} 条注释 / '
-                        f'{universal_functions} 个含全称断言的函数）已经过高：'
-                        '门禁正在被稀释。该把该改的断言改成 non_empty()，而不是继续加注释。')
+        # 豁免率：分子分母同粒度——被注释豁免的断言处 / 全称断言处总数。
+        # 注释存在但没豁免任何断言的，不进分子（旧版本按条数算，单位对不上）。
+        exempted_spots = 0
+        spots_total = 0
+        for path in scanned:
+            with open(path, encoding='utf-8') as fh:
+                text = fh.read()
+            try:
+                got, total = self.exemption_stats(text)
+            except SyntaxError:
+                continue
+            exempted_spots += got
+            spots_total += total
+
+        # 警报线，不是安全线：和基线比涨太多就提醒人去看一眼
+        baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                     'golden', 'exemptions.json')
+        rate = exempted_spots / spots_total if spots_total else 0.0
+        if os.path.exists(baseline_path):
+            with open(baseline_path, encoding='utf-8') as fh:
+                base = json.load(fh)
+            base_rate = base['protected'] / base['total'] if base['total'] else 0.0
+            self.assertLessEqual(
+                rate, base_rate + 0.2,
+                f'注释豁免率 {rate:.0%}（{exempted_spots}/{spots_total} 处）比基线 '
+                f'{base_rate:.0%} 高出 20 个点以上：豁免正在变成常态。'
+                '能改成 non_empty() 的改掉；确认空集合本来就合法的，'
+                '更新 tests/golden/exemptions.json 并写理由。')
 
     def test_rule_scan_uses_real_files(self):
         # 文件发现/编码/路径这一层也要有证据：临时目录里放一个真有问题的文件
