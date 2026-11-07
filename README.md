@@ -304,7 +304,9 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 | `short_write` | 写完了，但字节数对不上 |
 | `write_failed` | 其他写入失败 |
 
-做法是先写同目录的临时文件，`fsync` 之后核字节数，再 `os.replace` 换上去。中途失败，临时文件删掉，旧报告原样不动——不会出现「半份看起来正常的新报告」，也不会把上一份完整的盖成半份。
+做法是先写同目录的临时文件，`fsync` 之后核字节数——**能核的都在替换前核完**；旧文件用硬链接留一份副本（不支持就复制），target 本身不动；然后 `os.replace` 原子替换；最后读回来核指纹。
+
+备份用 copy/link，不用 rename。把旧文件挪走会让 target 出现「不存在」的窗口，进程在这个窗口里被杀，旧内容就真丢了——那就不叫「只丢这一次」。替换那一步始终是 `os.replace`，任何时刻从约定路径读到的，都是一份完整报告。
 
 写完还有一道**读回来核**：算文件指纹跟写进去的比，对不上就报 `readback_mismatch`；声明是 JSON/SARIF 的，得真能 `json.load` 一遍，解析不了就报 `invalid_json_output`。只写不验，等于把「我以为我写了」当成「我写对了」。
 
@@ -415,7 +417,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 141 个用例，只用标准库
+python -m unittest discover -s tests -v   # 143 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -442,12 +444,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.35.1**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.36.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.35.1
+git checkout v0.36.0
 python ipcsurface.py --version
 ```
 
@@ -455,7 +457,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.35.1 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.36.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

@@ -1041,10 +1041,11 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(self.leftovers(), [], '临时文件要清掉')
 
     def test_rule_permission_denied_is_typed(self):
+        # 替换阶段被占用算 replace_failed：下一步是关掉占用进程，不是查磁盘
         with mock.patch('os.replace', side_effect=OSError(errno.EACCES, 'Denied')):
             with self.assertRaises(ipc.OutputError) as ctx:
                 ipc.write_output(self.path, 'x\n')
-        self.assertEqual(ctx.exception.kind, 'permission_denied')
+        self.assertEqual(ctx.exception.kind, 'replace_failed')
         self.assertEqual(self.leftovers(), [])
 
     def test_rule_short_write_is_caught(self):
@@ -1083,6 +1084,39 @@ class OutputSideTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, 'readback_mismatch')
         self.assertEqual(open(self.path, encoding='utf-8').read(), before)
         self.assertFalse(os.path.exists(self.path + '.bak'), '备份不能留在磁盘上')
+
+    def test_rule_target_stays_readable_during_write(self):
+        """替换那一刻，target 必须还是完整的旧版本，不能出现「文件不存在」的窗口。"""
+        ipc.write_output(self.path, '旧的完整报告\n')
+        seen = []
+
+        real_replace = os.replace
+
+        def watch(src, dst, *args, **kwargs):
+            if os.path.abspath(dst) == os.path.abspath(self.path):
+                seen.append(os.path.exists(self.path))
+            return real_replace(src, dst, *args, **kwargs)
+
+        with mock.patch('os.replace', side_effect=watch):
+            ipc.write_output(self.path, '新的完整报告\n')
+        self.assertEqual(seen, [True], '替换前 target 必须还在（备份不能用 rename 挪走）')
+        self.assertEqual(open(self.path, encoding='utf-8').read(), '新的完整报告\n')
+
+    def test_rule_backup_is_a_copy_not_a_move(self):
+        ipc.write_output(self.path, '旧的\n')
+        holder = {}
+        real_link = os.link
+
+        def grab(src, dst, *args, **kwargs):
+            result = real_link(src, dst, *args, **kwargs)
+            holder['backup'] = dst
+            return result
+
+        with mock.patch('os.link', side_effect=grab):
+            ipc.write_output(self.path, '新的\n')
+        # 备份是副本：target 全程在，写完备份也清掉了
+        self.assertTrue(os.path.exists(self.path))
+        self.assertFalse(os.path.exists(holder['backup']))
 
     def test_rule_written_output_is_read_back_json(self):
         with self.assertRaises(ipc.OutputError) as ctx:
