@@ -1519,6 +1519,10 @@ class AssertionHygieneTests(unittest.TestCase):
                 if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
                         and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
                     found.append(child)
+                # 裸 assert：assert all(...) / assert not xs or all(...) 同样平凡为真
+                if isinstance(child, _ast.Assert) and \
+                        any(is_all_or_any(n) for n in _ast.walk(child.test)):
+                    found.append(child)
             for child in _ast.walk(node):
                 # 只算「for x in 参数」这种；for label, case in CASES.items() 是表格驱动，不算
                 if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
@@ -1564,7 +1568,9 @@ class AssertionHygieneTests(unittest.TestCase):
             spots = universal_nodes(node)
             if not spots:
                 continue
-            if any(is_protected(node, spot.lineno) for spot in spots):
+            unprotected = [spot for spot in spots
+                           if not is_protected(node, spot.lineno)]
+            if not unprotected:
                 continue
             offenders.append(node.name)
         return offenders
@@ -1620,10 +1626,32 @@ class AssertionHygieneTests(unittest.TestCase):
             'comment too far away': ('def c(self, xs):\n'
                                      '    # empty-allowed: 太远了\n' + '\n' * 8 +
                                      '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            # 恒真断言：任何集合都过，包括空集合——比 is not None 更隐蔽
+            'assert len(xs) >= 0': ('def d(self, xs):\n'
+                                    '    assert len(xs) >= 0\n'
+                                    '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'assert xs == []': ('def e(self, xs):\n'
+                                '    assert xs == []\n'
+                                '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'assert len(xs) == 0': ('def f(self, xs):\n'
+                                    '    assert len(xs) == 0\n'
+                                    '    self.assertTrue(all(x > 0 for x in xs))\n'),
+            'assert not xs or all(...)': ('def g(self, xs):\n'
+                                          '    assert not xs or all(x > 0 for x in xs)\n'),
         }
         for label, source in fake.items():
             with self.subTest(form=label):
                 self.assertEqual(len(self.offenders_of(source)), 1, f'{label} 被误判成保护')
+
+    def test_rule_comment_covers_only_nearby_assertion(self):
+        # 一条注释只管它上面 5 行内的那个断言；第二个断言在 12 行后，不能被它豁免
+        source = ('def f(self, xs, ys):\n'
+                  '    # empty-allowed: 只管 xs\n'
+                  '    self.assertTrue(all(x > 0 for x in xs))\n' +
+                  '\n' * 10 +
+                  '    self.assertTrue(all(y > 0 for y in ys))\n')
+        self.assertEqual(self.offenders_of(source), ['f'],
+                         '共用注释不该豁免远处的断言')
 
     def test_rule_scanner_fails_loud_on_syntax_error(self):
         # 语法错误必须炸，不能跳过——跳过等于这个文件不在扫描范围内，却看不出来
@@ -1645,7 +1673,11 @@ class AssertionHygieneTests(unittest.TestCase):
         for path in scanned:
             with open(path, encoding='utf-8') as fh:
                 source = fh.read()
-            found = self.offenders_of(source)
+            try:
+                found = self.offenders_of(source)
+            except SyntaxError as exc:
+                self.fail(f'{os.path.basename(path)}:{exc.lineno}: {exc.msg}'
+                          '——语法错误必须定位到文件和行，不能只说「解析失败」')
             if found:
                 bad[os.path.basename(path)] = found
         self.assertEqual(bad, {},
@@ -1662,6 +1694,20 @@ class AssertionHygieneTests(unittest.TestCase):
                          '    self.assertTrue(all(x > 0 for x in xs))\n')
             with open(path, encoding='utf-8') as fh:
                 self.assertEqual(self.offenders_of(fh.read()), ['f'])
+
+            # 注释关联在真实源码行结构下也要成立：缩进 + 多行表达式
+            annotated = os.path.join(folder, 'annotated.py')
+            with open(annotated, 'w', encoding='utf-8') as fh:
+                fh.write('def f(self, xs):\n'
+                         '    values = [x for x in xs\n'
+                         '              if x > 0]\n'
+                         '    # empty-allowed: 空集合时跳过，不算失败\n'
+                         '    self.assertTrue(\n'
+                         '        all(x > 0 for x in values)\n'
+                         '    )\n')
+            with open(annotated, encoding='utf-8') as fh:
+                self.assertEqual(self.offenders_of(fh.read()), [],
+                                 '多行断言上方的注释应当能豁免')
         finally:
             shutil.rmtree(folder, ignore_errors=True)
 

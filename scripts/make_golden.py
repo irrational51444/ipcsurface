@@ -74,7 +74,7 @@ def main():
         changed = sorted(k for k in set(before) | set(report)
                          if before.get(k) != report.get(k))
     if before and not changed:
-        print('快照没有变化，不用重写。', file=sys.stderr)
+        print(f'SKIPPED: {GOLDEN} unchanged, not rewritten', file=sys.stderr)
         print('（这次的 reason 没有写进 CHANGELOG.golden.md：内容没变。'
               '如果你本来以为会变，那说明改的不是这里。）', file=sys.stderr)
         return 0
@@ -95,7 +95,10 @@ def main():
                      '最新的追加在文件末尾。人工不要改格式，脚本解析靠它。\n')
     with open(LOGFILE, 'a', encoding='utf-8', newline='\n') as fh:
         fh.write('\n'.join(entry))
-    print(f'快照已更新；变了的字段：{", ".join(changed) or "（首次生成）"}')
+    updated = GOLDEN
+    size = os.path.getsize(updated)
+    print(f'DONE: {updated} updated, {size} bytes; '
+          f'fields changed: {", ".join(changed) or "(first generation)"}')
     return 0
 
 

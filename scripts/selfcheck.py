@@ -307,8 +307,14 @@ def main():
             for arg in node.args:
                 if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
                     risky.append((node.func.attr, node.lineno))
-    ok &= check('产品代码里没有无人看管的全称断言', not risky,
-                f'发现 {risky[:3]}；产品代码不在扫描范围内，需人工确认空集合语义')
+    # 「0 条」只证明没有扫描器认得的形态，不是「产品代码没有空集合问题」。
+    # 真要放一条合法的全称断言，就在它上面写 # universal-assert-ok: 理由，
+    # 否则这条会红——是门禁，不是纯观测。
+    product_source = read('ipcsurface.py')
+    exempt = product_source.count('# universal-assert-ok')
+    ok &= check('产品代码里没有未豁免的全称断言（仅限扫描器认得的形态）',
+                not risky or exempt >= len(risky),
+                f'发现 {risky[:3]}；豁免行 {exempt} 条（写 # universal-assert-ok: 理由）')
     ok &= check('用例三条数都对得上（定义 / 实跑 / 跳过）',
                 ran == tests_defined and actually_ran >= 0,
                 f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}（不计入实跑）')

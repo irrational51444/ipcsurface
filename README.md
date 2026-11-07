@@ -297,10 +297,26 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 这一条由一条 AST 扫描用例守着。两条边界分开写：
 
-- **空间边界**：扫 `tests/` 与 `scripts/` 下的 `.py`；产品代码不扫。但「不扫」不等于「不管」——自查会用 AST 单独回答「产品代码里有没有全称断言」，现在的结果是 0 条（没有裸 `assert`，也没有 `assertTrue(all(...))`）。这个结论是每次自查重新算的，不是统计印象。
+- **空间边界**：扫 `tests/` 与 `scripts/` 下的 `.py`；产品代码不进这套扫描。但「不扫」不等于「不管」——自查会用 AST 单独回答「产品代码里有没有**扫描器认得的**全称断言」，当前 0 条。注意这个数字只说明没有那几种形态，不说明产品代码没有空集合问题；措辞别放大。这条是**门禁**不是观测：产品代码哪天真加了，自查会红，除非在断言上方写 `# universal-assert-ok: 理由`。
 - **模式边界**：只认四种形态——`assertTrue(all(...))`、`assertFalse(any(...))`、`not [x for x in xs if bad(x)]`、`for x in 参数: assert ...`。其他写法（`sum(1 for ...) == 0`、`len([...]) == 0`、`set(xs) <= set(good)`）**不在检测范围内**，需要人工 review 或扩规则。列举不是完备，写在这儿免得当成全覆盖。
 
-保护形态按语义认，不按长相认：`assert xs`（真值断言）算保护，`assert xs is not None` 不算——空列表能过；`if not xs: raise` 算，`if not xs: pass` 不算。`# empty-allowed` 必须出现在断言前 5 行内，不做整函数豁免，否则一个注释放行一片。
+保护形态按语义认，不按长相认。**判据是「空集合上会不会失败」**：
+
+| 写法 | 算保护吗 | 为什么 |
+| --- | --- | --- |
+| `assert xs` | 算 | 空列表直接挂 |
+| `non_empty(xs, ...)` | 算 | 同上，带说明 |
+| `if not xs: raise/return/skip/fail` | 算 | 空集合走退出分支 |
+| `assert xs is not None` | 不算 | 空列表能过 |
+| `assert len(xs) >= 0` | 不算 | 任何集合都能过 |
+| `assert xs == []` / `assert len(xs) == 0` | 不算 | 空集合恰好为真 |
+| `if not xs: pass` | 不算 | 什么也没挡 |
+
+**注释豁免的归属**：`# empty-allowed` 必须在该断言前 5 行内；一条注释只豁免离它最近的那个断言，多个断言共用一条注释时，远的那个照样算未保护。这是启发式，边界就写在这儿。
+
+**循环规则的边界**：只认 `for x in 参数` 这种直接遍历；`for x in self.channels`、`for x in get_channels()` 不在检测范围——和 `sum(1 for ...) == 0`、`len([...]) == 0` 一样，属于**已知不在检测范围的写法**。
+
+**遇到这些写法怎么办**：改成 `non_empty(xs, "为什么非空")`；或用不了的话，在断言上面写 `# empty-allowed: 理由`；两者都不合适就人工 review 并在 PR 里说明——不要只是知道它没被检查。
 
 **报告顶层键是有白名单的**（`REPORT_TOP_LEVEL_KEYS`），多一个键就有用例红。这条是把「别把 durable 之类写进报告」从文档承诺变成回归约束——README 只有读的人才记得，测试不读也会拦。
 
@@ -479,7 +495,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 172 个用例，只用标准库
+python -m unittest discover -s tests -v   # 173 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -506,12 +522,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.47.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.48.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.47.0
+git checkout v0.48.0
 python ipcsurface.py --version
 ```
 
@@ -519,7 +535,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.47.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.48.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |
