@@ -20,7 +20,7 @@ import struct
 import sys
 from collections import defaultdict
 
-__version__ = '0.32.0'
+__version__ = '0.33.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -807,6 +807,15 @@ RULES = [
      'text': '独立性按全部两两组合判定，不靠举例；静态来源之间不算独立，运行时与任一静态来源算'},
     {'id': 'primary_action_not_alone',
      'text': 'primary_action 只是先做哪件事，不能替代 actions'},
+    {'id': 'input_errors_are_typed',
+     'text': '输入错误的类别要能被机器读到（kind: xxx），中文文案只是附属；'
+             '下游决定重试还是放弃，不该去解析中文'},
+    {'id': 'depth_limit_is_explicit',
+     'text': 'JSON 嵌套上限是显式常量 MAX_JSON_DEPTH，超了直接按 depth_exceeded 拒，'
+             '不靠撞上 RecursionError 再兜底——那样换 Python 版本行为会漂'},
+    {'id': 'silent_wrong_count_is_caught',
+     'text': '最高优先级：报一个格式合法但数值错的通道数，比崩掉危险。'
+             '形状不对一律拒绝，不许返回任何能被当成有数据的东西'},
     {'id': 'unregistered_aggregate_is_caught',
      'text': 'evidence 里出现既不在白名单也不在登记表里的字段，必须被报出来；'
              '这条判定是正向扫描，不靠字段名字'},
@@ -1521,8 +1530,61 @@ def loc(evidence):
     return '?'
 
 
+# 输入的坏法是有类别的，不只是「读不动」。
+# 下游要决定「重试还是放弃」，得看类别，不能去解析中文文案。
+INPUT_ERROR_KINDS = {
+    'file_missing': '文件不存在或者没权限',
+    'encoding_invalid': '不是 UTF-8',
+    'empty_input': '空文件',
+    'json_malformed': '不是合法 JSON',
+    'json_truncated': 'JSON 被截断（括号/引号没闭合）',
+    'depth_exceeded': '嵌套层数超过上限',
+    'shape_invalid': 'JSON 合法但形状不对',
+}
+
+# 显式上限。靠 RecursionError 兜底是不稳的：不同 Python、不同栈大小行为会漂移，
+# 回归用例在新环境里未必复现得出。所以在解析之前先把层数数一遍，超了直接拒。
+MAX_JSON_DEPTH = 64
+
+
+class InputError(SystemExit):
+    """带类别的输入错误。文案给人看，kind 给程序看。"""
+
+    def __init__(self, kind, message):
+        super().__init__(message + '\nkind: ' + kind)
+        self.kind = kind
+
+
+def json_depth(text):
+    """数一数这份 JSON 最深套了几层。字符串里的括号不算。"""
+    depth = 0
+    deepest = 0
+    in_string = False
+    escaped = False
+    for char in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == '\\':
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in '[{':
+            depth += 1
+            if depth > deepest:
+                deepest = depth
+        elif char in ']}':
+            depth -= 1
+            if depth < 0:
+                return deepest
+    return deepest
+
+
 def read_json_input(path, what, next_step, expect=None):
-    """读一份 JSON 输入。坏在哪、下一步做什么，一次说清。
+    """读一份 JSON 输入。坏在哪、下一步做什么、属于哪一类，一次说清。
 
     畸形输入不是只有「空文件」一种：截断、编码错、嵌套太深、类型不对，
     每一样以前都会甩一段堆栈或者被当成正常数据吃掉。这里统一挡在门口。
@@ -1531,25 +1593,38 @@ def read_json_input(path, what, next_step, expect=None):
         with open(path, 'rb') as fh:
             raw = fh.read()
     except OSError:
-        raise SystemExit(f'{what}打不开：{path}\n{next_step}')
+        raise InputError('file_missing', f'{what}打不开：{path}\n{next_step}')
     try:
         text = raw.decode('utf-8-sig')
     except UnicodeDecodeError:
-        raise SystemExit(f'{what}不是 UTF-8：{path}\n'
+        raise InputError('encoding_invalid',
+                         f'{what}不是 UTF-8：{path}\n'
                          '可能是写的时候编码选错了，重跑一遍把它重新生成出来。\n' + next_step)
     if not text.strip():
-        raise SystemExit(f'{what}是空的：{path}\n{next_step}')
+        raise InputError('empty_input', f'{what}是空的：{path}\n{next_step}')
+
+    deepest = json_depth(text)
+    if deepest > MAX_JSON_DEPTH:
+        raise InputError('depth_exceeded',
+                         f'{what}嵌套 {deepest} 层，超过上限 {MAX_JSON_DEPTH}：{path}\n'
+                         '这不是正常输出，八成是文件损坏或者被塞了别的东西。\n' + next_step)
+
     try:
         data = json.loads(text)
     except RecursionError:
-        raise SystemExit(f'{what}嵌套太深，解不开：{path}\n'
-                         '这不是正常输出，八成是文件损坏。\n' + next_step)
+        # 走到这儿说明层数没超上限但解释器还是崩了，兜底也带类别
+        raise InputError('depth_exceeded',
+                         f'{what}解不开，嵌套太深：{path}\n' + next_step)
     except json.JSONDecodeError as exc:
-        raise SystemExit(f'{what}不是合法的 JSON：{path}\n'
+        kind = 'json_truncated' if exc.pos >= len(text.rstrip()) - 1 else 'json_malformed'
+        raise InputError(kind,
+                         f'{what}不是合法的 JSON：{path}\n'
                          f'  第 {exc.lineno} 行第 {exc.colno} 列：{exc.msg}\n'
-                         '文件可能被截断了。\n' + next_step)
+                         + ('文件看起来被截断了。\n' if kind == 'json_truncated' else '')
+                         + next_step)
     if expect is not None and not expect(data):
-        raise SystemExit(f'{what}的形状不对：{path}\n'
+        raise InputError('shape_invalid',
+                         f'{what}的形状不对：{path}\n'
                          '这不是那个脚本会输出的东西。\n' + next_step)
     return data
 

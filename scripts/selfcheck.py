@@ -215,6 +215,31 @@ def check_smoke_count(ok, readme):
                       f'实际 {passed} 项 / README {said}')
 
 
+def check_input_error_kinds(ok):
+    """错误类别是给机器看的，深度上限是显式常量——这两条都不能只写在文档里。"""
+    import tempfile
+    ok &= check('嵌套上限是显式常量',
+                isinstance(getattr(t, 'MAX_JSON_DEPTH', None), int)
+                and 8 < t.MAX_JSON_DEPTH < 4096, str(getattr(t, 'MAX_JSON_DEPTH', None)))
+    for kind in ('file_missing', 'encoding_invalid', 'empty_input', 'json_malformed',
+                 'json_truncated', 'depth_exceeded', 'shape_invalid'):
+        ok &= check(f'错误类别 {kind} 登记了', kind in t.INPUT_ERROR_KINDS)
+
+    cases = {'empty': '', 'truncated': '{"a": [', 'deep': '[' * 500 + ']' * 500}
+    for name, payload in cases.items():
+        fh = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False, encoding='utf-8')
+        fh.write(payload)
+        fh.close()
+        try:
+            t.load_probe(fh.name)
+            ok &= check(f'{name} 被拒绝', False)
+        except t.InputError as exc:
+            ok &= check(f'{name} 带类别', bool(exc.kind), exc.kind)
+        finally:
+            os.unlink(fh.name)
+    return ok
+
+
 def main():
     ok = True
     print('== 一、版本与文档口径 ==')
@@ -279,6 +304,7 @@ def main():
 
     print('== 七、坏输入必须报错 ==')
     ok = check_bad_input(ok)
+    ok = check_input_error_kinds(ok)
 
     print('== 八、冒烟项数与文档一致 ==')
     ok = check_smoke_count(ok, readme)

@@ -911,7 +911,7 @@ class MalformedInputTests(unittest.TestCase):
         'not-json': ('这不是 JSON', {}, '不是合法的 JSON'),
         'wrong-type-array': ('[1,2,3]', {}, '形状不对'),
         'wrong-type-string': ('"hello"', {}, '形状不对'),
-        'deep': ('[' * 20000 + ']' * 20000, {}, '嵌套太深'),
+        'deep': ('[' * 20000 + ']' * 20000, {}, '超过上限'),
         'bad-utf8': (b'{"handlers": ["\xff\xfe"]}', {'binary': True}, '不是 UTF-8'),
         'handlers-not-list': (json.dumps({'handlers': 'a:b'}), {}, '形状不对'),
     }
@@ -944,14 +944,67 @@ class MalformedInputTests(unittest.TestCase):
             finally:
                 os.unlink(path)
 
-    def test_probe_shape_checks_the_list_types(self):
-        # 类型对了但字段类型不对，也不能放过去：不然 len('a:b') 会当成三条通道
-        path = self._write(json.dumps({'handlers': 'a:b'}))
+    def test_rule_input_errors_are_typed(self):
+        loaders = (ipc.load_probe, ipc.load_poke, ipc.load_baseline)
+        expected = {
+            'empty': 'empty_input',
+            'truncated': 'json_truncated',
+            'not-json': 'json_malformed',
+            'wrong-type-array': 'shape_invalid',
+            'wrong-type-string': 'shape_invalid',
+            'deep': 'depth_exceeded',
+            'bad-utf8': 'encoding_invalid',
+            'handlers-not-list': 'shape_invalid',
+        }
+        for name, (data, kwargs, _hint) in self.CASES.items():
+            path = self._write(data, **kwargs)
+            try:
+                for loader in loaders:
+                    with self.subTest(case=name, loader=loader.__name__):
+                        try:
+                            loader(path)
+                        except ipc.InputError as exc:
+                            self.assertEqual(exc.kind, expected[name])
+                            self.assertIn(f'kind: {expected[name]}', str(exc))
+                        except SystemExit as exc:
+                            # 基线还有一道 schema 闸，形状问题可能先被它挡下
+                            self.assertIs(loader, ipc.load_baseline)
+                            self.assertIn('schema', str(exc))
+                        else:
+                            self.fail(f'{name} 被当成正常输入放过去了')
+            finally:
+                os.unlink(path)
+
+    def test_rule_depth_limit_is_explicit(self):
+        # 上限是常量，不是「撞上解释器递归极限再兜底」——后者换 Python 版本会漂
+        self.assertIsInstance(ipc.MAX_JSON_DEPTH, int)
+        self.assertGreater(ipc.MAX_JSON_DEPTH, 8)
+        self.assertLess(ipc.MAX_JSON_DEPTH, 4096)
+        self.assertIn('depth_exceeded', ipc.INPUT_ERROR_KINDS)
+        # 刚好的层数能过，多一层就拒
+        ok = '[' * ipc.MAX_JSON_DEPTH + ']' * ipc.MAX_JSON_DEPTH
+        too_deep = '[' * (ipc.MAX_JSON_DEPTH + 1) + ']' * (ipc.MAX_JSON_DEPTH + 1)
+        self.assertEqual(ipc.json_depth(ok), ipc.MAX_JSON_DEPTH)
+        self.assertEqual(ipc.json_depth(too_deep), ipc.MAX_JSON_DEPTH + 1)
+
+    def test_string_brackets_do_not_count_as_depth(self):
+        text = '{"a": "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[["}'
+        self.assertEqual(ipc.json_depth(text), 1)
+
+    def test_rule_silent_wrong_count_is_caught(self):
+        """最高优先级：报一个格式合法但数值错的通道数，比崩掉危险得多。
+
+        以前 handlers 写成字符串时，len('a:b') 会被当成三条通道，报告看起来完全正常。
+        """
+        path = self._write(json.dumps({'handlers': 'a:b', 'listeners': [], 'windows': []}))
         try:
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(ipc.InputError) as ctx:
                 ipc.load_probe(path)
         finally:
             os.unlink(path)
+        self.assertEqual(ctx.exception.kind, 'shape_invalid')
+        # 拒绝要拒得干净：不许返回任何能被当成「有数据」的东西
+        self.assertNotIn('3', str(ctx.exception).split('kind:')[0].split('形状不对')[0])
 
 
 class AsarAuditTests(unittest.TestCase):
