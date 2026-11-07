@@ -1031,6 +1031,12 @@ class OutputSideTests(unittest.TestCase):
         with open(self.path, encoding='utf-8') as fh:
             return fh.read()
 
+    @staticmethod
+    def non_empty(items, why):
+        """全称断言之前先确认集合非空——对空集合说「全都满足」是平凡真。"""
+        assert items, f'{why}：集合是空的，接下来的全称断言会平凡为真'
+        return items
+
     def leftovers(self):
         return [name for name in os.listdir(self.dir) if name != 'report.md']
 
@@ -1307,10 +1313,14 @@ class ReportContractTests(unittest.TestCase):
         self.assertTrue(headings, 'md 报告应该有章节')
         self.assertEqual(len(headings), len(set(headings)),
                          f'章节标题重复了：{headings}')
-        # 报告现在不带章节编号，所以「编号不许重」这条没有对象可查——
-        # 写下来免得下次以为这里验过编号。真要引入编号，得同时加编号断言。
-        self.assertFalse(any(h.split()[1:2] and h.split()[1][0].isdigit() for h in headings),
-                         '如果开始给章节编号，就得同时加「编号唯一」的断言')
+        # 这是一条反向守卫，不是回归断言。它红了不等于功能坏了，
+        # 只说明「测试的前提变了」：有人开始给章节编号了。
+        numbering = [h for h in headings if h.split()[1:2] and h.split()[1][0].isdigit()]
+        self.assertFalse(
+            numbering,
+            '【前提变了，不是回归】检测到 md 报告开始给章节编号：'
+            f'{numbering[:3]}。请补一条「章节编号唯一」的断言，然后删掉本条守卫。'
+            '不是让你删掉整个用例——标题唯一那条还要留着。')
 
     def test_rule_report_keys_are_whitelisted_catches_durable(self):
         # 有人以后顺手把 durable 写进报告，这条会当场红
@@ -1318,6 +1328,55 @@ class ReportContractTests(unittest.TestCase):
         report['durable'] = 'yes'
         extra, _missing = ipc.check_report_keys(report)
         self.assertEqual(extra, ['durable'])
+
+
+class VacuousAssertionTests(unittest.TestCase):
+    """全称断言之前先证明集合非空。对空集合说「全都满足」是平凡真。"""
+
+    def test_rule_assertions_declare_non_empty(self):
+        # 辅助函数本身的行为：空集合必须炸，非空集合原样返回
+        with self.assertRaises(AssertionError):
+            OutputConsistencyTests.non_empty([], '示例')
+        self.assertEqual(OutputConsistencyTests.non_empty(['a'], '示例'), ['a'])
+
+    def test_rule_assertions_declare_non_empty_guards_loop(self):
+        # 真实场景：report 里没通道时，逐通道断言不该「静默通过」
+        with self.assertRaises(AssertionError):
+            OutputConsistencyTests.non_empty({n for n in []}, '逐通道断言')
+
+
+class OutputConsistencyTests(unittest.TestCase):
+    """md 与 JSON 说的是不是同一件事。之前出过「md 41 条、channels 52 条」。"""
+
+    @staticmethod
+    def non_empty(items, why):
+        assert items, f'{why}：集合是空的，接下来的全称断言会平凡为真'
+        return items
+
+    def test_rule_md_and_json_agree_on_counts(self):
+        blob = make_asar({'src/app.js': b"ipcMain.handle('a:b', f)\nipcRenderer.invoke('c:d')"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        try:
+            facts, count, total = ipc.analyse_asar(path)
+            names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
+            evidence = ipc.channel_sources(facts)
+            report = ipc.build_asar_report(path, facts, count, total, names, evidence,
+                                           ipc.runtime_crosscheck(None, names), None, None)
+            md = ipc.render_asar(path, facts, count, total)
+        finally:
+            os.unlink(path)
+
+        self.non_empty(names, 'md/JSON 数字一致')
+        self.assertEqual(len(report['channels']), len(names))
+        # md 正文里必须出现同一个数；这条以前出过 41 vs 52
+        self.assertIn(str(len(names)), md, 'md 正文里该出现同一个通道数')
+        for name in names:
+            self.assertIn(name, md, f'md 里应该列出通道 {name}')
+        json_unique = report['unique_names']
+        self.assertEqual(json_unique, len(evidence),
+                         'unique_names 必须是去重后的名字数，不是标签数')
 
 
 class AsarAuditTests(unittest.TestCase):

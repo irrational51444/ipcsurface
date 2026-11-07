@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.42.1'
+__version__ = '0.43.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -828,6 +828,11 @@ RULES = [
     {'id': 'report_matches_golden_snapshot',
      'text': '固定输入 → 固定输出，逐字段比金标准；把「这次重构没改行为」从一次性对比'
              '变成以后每次都验'},
+    {'id': 'assertions_declare_non_empty',
+     'text': '对集合做全称断言前先断言集合非空：对空集合说「全都满足」平凡为真，'
+             '这种绿比红更危险。反向守卫（前提变了会红）要在消息里自己说明「不是回归」'},
+    {'id': 'md_and_json_agree_on_counts',
+     'text': 'md 报告里的通道数必须等于 JSON 的 channels 长度；这个口径差过一次（41 对 52）'},
     {'id': 'md_sections_are_unique',
      'text': 'md 报告也是输出契约：章节标题与编号都不许重复（这个毛病真出过）'},
     {'id': 'report_keys_are_whitelisted',
