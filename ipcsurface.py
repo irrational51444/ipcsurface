@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.44.0'
+__version__ = '0.45.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -828,6 +828,9 @@ RULES = [
     {'id': 'report_matches_golden_snapshot',
      'text': '固定输入 → 固定输出，逐字段比金标准；把「这次重构没改行为」从一次性对比'
              '变成以后每次都验'},
+    {'id': 'universal_assertions_declare_empty_policy',
+     'text': '测试里出现全称断言（assertTrue(all( 等）时，同一函数内必须有 non_empty(...) '
+             '或 # empty-allowed 注释；由一条 AST 扫描用例每次执行，不靠人工扫'},
     {'id': 'assertions_declare_non_empty',
      'text': '对集合做全称断言前先断言集合非空：对空集合说「全都满足」平凡为真，'
              '这种绿比红更危险。反向守卫（前提变了会红）要在消息里自己说明「不是回归」'},

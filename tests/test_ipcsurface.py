@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import struct
+import subprocess
 import sys
 import tempfile
 import time
@@ -82,6 +83,7 @@ class ScanTests(unittest.TestCase):
         self.assertEqual(facts['dynamic'], [])
 
     def test_computed_channel_is_dynamic(self):
+        # empty-allowed: 断言的是「不该出现某种标签」，没有通道时也应当成立
         facts = self.scan("ipcMain.handle(makeChannel(op), () => {})")
         self.assertEqual(facts['handlers'], [])
         self.assertTrue(any('makeChannel' in what for what, _ in facts['dynamic']))
@@ -171,11 +173,13 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('high', levels)
 
     def test_sender_check_present_clears_it(self):
+        # empty-allowed: 反证类断言，空集合是合法输入
         facts = ipc.collect_evidence(minimal_evidence(['a:1'], sender_checks=2))
         texts = [text for _, text, _ in ipc.audit_evidence(facts)]
         self.assertFalse(any('sender' in t and '校验都没有' in t for t in texts))
 
     def test_no_window_means_no_sender_claim(self):
+        # empty-allowed: 验的是「缺窗口时不乱下结论」，空集合正是被测场景
         # 只分析了一个文件，没看到窗口代码，就不能断言「没人校验」
         result = minimal_evidence(['a:1'], sender_checks=0)
         result['graph']['nodes'] = []
@@ -560,6 +564,7 @@ class ConfidenceTests(unittest.TestCase):
 
 
     def test_json_has_the_same_sections_as_the_markdown(self):
+        # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         blob = make_asar({'src/main.js': b"ipcMain.handle('x:y', () => 1)"})
         with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
             fh.write(blob)
@@ -693,6 +698,7 @@ class RestoreLoopTests(unittest.TestCase):
         self.assertIn('actions', rule['instead'])
 
     def test_schema_declares_compat_and_usage_rules(self):
+        # empty-allowed: 查的是字段内容，不涉及集合大小
         semantics = ipc.CONFIDENCE_SEMANTICS
         self.assertIn('bump_schema_when', semantics['compat_rule'])
         self.assertTrue(any('枚举' in line for line in semantics['compat_rule']['bump_schema_when']))
@@ -1108,6 +1114,7 @@ class OutputSideTests(unittest.TestCase):
         self.assertFalse(os.path.exists(stale), '过期的孤儿副本该清掉')
 
     def test_rule_stale_backup_needs_target(self):
+        # empty-allowed: 这里验的是「不该删」，空集合不构成问题
         old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
         stale = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.bak')
         with open(stale, 'w', encoding='utf-8') as fh:
@@ -1118,6 +1125,7 @@ class OutputSideTests(unittest.TestCase):
         self.assertTrue(any('未处理' in note for note in result.warnings))
 
     def test_rule_unsupported_fsync_is_unknown_not_yes(self):
+        # empty-allowed: 验的是枚举分派，不涉及集合
         # Windows 上「没法确认」必须报 unknown，不能报 yes
         with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.UNSUPPORTED):
             result = ipc.write_output(self.path, '新的\n')
@@ -1164,6 +1172,7 @@ class OutputSideTests(unittest.TestCase):
         self.assertTrue(os.path.exists(near))
 
     def test_rule_dir_fsync_failure_is_reported_not_fatal(self):
+        # empty-allowed: 验的是状态与警告，不涉及集合
         ipc.write_output(self.path, '旧的\n')
         with mock.patch.object(ipc, '_fsync_dir', return_value=ipc.FsyncResult.FAILED):
             result = ipc.write_output(self.path, '新的\n')
@@ -1259,6 +1268,36 @@ class OutputSideTests(unittest.TestCase):
                          '副本要清掉；.failed 是有意留下的诊断件')
 
 
+class GoldenScriptTests(unittest.TestCase):
+    """纪律的执行者自己也得被测。"""
+
+    script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          'scripts', 'make_golden.py')
+
+    def run_script(self, *args):
+        env = dict(os.environ, PYTHONIOENCODING='utf-8')
+        return subprocess.run([sys.executable, self.script, *args],
+                              capture_output=True, text=True, encoding='utf-8',
+                              errors='replace', env=env)
+
+    def test_rule_golden_script_requires_reason(self):
+        result = self.run_script()
+        self.assertNotEqual(result.returncode, 0, '不给 --reason 必须非零退出')
+        self.assertIn('--reason', result.stderr)
+
+    def test_rule_golden_script_rejects_short_reason(self):
+        result = self.run_script('--reason', '更新')
+        self.assertNotEqual(result.returncode, 0, '敷衍的理由要被拒')
+        self.assertIn('理由太短', result.stderr)
+
+    def test_rule_golden_script_says_reason_not_written_when_unchanged(self):
+        result = self.run_script('--reason', '这次内容其实没有变化，只是验证提示语')
+        if result.returncode != 0:
+            self.skipTest('快照真的变了，这条只在无变化时适用')
+        self.assertIn('reason 没有写进', result.stderr,
+                      '内容没变时必须说明 reason 未记录，否则「想改但没生效」会消失')
+
+
 class ReportContractTests(unittest.TestCase):
     """报告 JSON 的顶层键是契约。多一个键就红，不靠人记得。"""
 
@@ -1334,9 +1373,12 @@ class GuardTests(unittest.TestCase):
     """守卫本身也要有证据：它得真的会响。"""
 
     def test_rule_guard_detects_numbered_sections(self):
-        self.assertEqual(ipc.numbered_sections(['## 这份报告能信多少', '## 通道']), [])
+        # 正向：带编号要能抓到
         found = ipc.numbered_sections(['## 1. 这份报告能信多少', '## 2 通道'])
         self.assertEqual(found, ['## 1. 这份报告能信多少', '## 2 通道'])
+        # 负向：不带编号必须返回空。只证「会响」不证「不该响时不响」，
+        # 一个「永远返回全部章节」的实现照样能过正向用例
+        self.assertEqual(ipc.numbered_sections(['## 这份报告能信多少', '## 通道']), [])
 
 
 class VacuousAssertionTests(unittest.TestCase):
@@ -1386,6 +1428,35 @@ class OutputConsistencyTests(unittest.TestCase):
         json_unique = report['unique_names']
         self.assertEqual(json_unique, len(evidence),
                          'unique_names 必须是去重后的名字数，不是标签数')
+
+
+class AssertionHygieneTests(unittest.TestCase):
+    """全称断言的空集合防护，做成一条扫描规则，不靠人工扫。"""
+
+    source = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'test_ipcsurface.py')
+
+    def test_rule_universal_assertions_declare_empty_policy(self):
+        import ast as _ast
+        with open(self.source, encoding='utf-8') as fh:
+            lines = fh.read().splitlines()
+        tree = _ast.parse('\n'.join(lines))
+
+        offenders = []
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            body_text = '\n'.join(lines[node.lineno - 1:node.end_lineno])
+            uses_universal = ('assertTrue(all(' in body_text
+                              or 'assertFalse(any(' in body_text
+                              or 'assertTrue(any(' in body_text)
+            if not uses_universal:
+                continue
+            declared = ('non_empty(' in body_text or '# empty-allowed' in body_text)
+            if not declared:
+                offenders.append(node.name)
+        self.assertEqual(offenders, [],
+                         '这些函数里有全称断言，却没声明空集合策略：'
+                         f'{offenders}。加 non_empty()，或写 # empty-allowed 说明为什么空集合合法。')
 
 
 class AsarAuditTests(unittest.TestCase):
