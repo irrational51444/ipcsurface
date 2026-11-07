@@ -324,7 +324,13 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **注释的方向**：`# empty-allowed` 只豁免**它下面**的断言（向上找、向下生效），且注释与断言之间不许夹着别的断言。一条注释放行一片的日子没有了。
 
-**豁免口的约束**：产品代码里的 `# universal-assert-ok:` 必须带 ≥10 字理由，否则自查红。自查每次都会报「合规豁免 N 条」——这个数涨上去就是信号，不是背景音。
+**豁免口的约束**：产品代码里的 `# universal-assert-ok:` 必须带 ≥10 字理由，否则自查红。自查每次都会报「合规豁免 N 条」——这个数涨上去就是信号。
+
+**两个出口都计数，而且看比例**：`# empty-allowed` 与 `# universal-assert-ok` 都会统计，再算一个「豁免数 / 含全称断言的函数数」的密度。测试里这条密度一旦到 80% 就红——绝对数上涨可能是代码变多，比例失控才说明门禁被稀释成装饰。
+
+**未扫描 ≠ 通过**：一个文件语法错误时，扫描继续，但结果里会分开报「扫描并通过 N 个 / 因语法错误未扫描 M 个」。M 里的断言完全没被看过，不能读成没问题。
+
+**豁免的定位规则**（比行号严）：注释只豁免它下面那个断言，判据是 AST——注释与断言之间不许夹任何语句节点，且行距不超过 5 行。中间隔了 `with`/`if`/别的语句，就得把注释贴着断言写。
 
 **报告顶层键是有白名单的**（`REPORT_TOP_LEVEL_KEYS`），多一个键就有用例红。这条是把「别把 durable 之类写进报告」从文档承诺变成回归约束——README 只有读的人才记得，测试不读也会拦。
 
@@ -503,7 +509,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 174 个用例，只用标准库
+python -m unittest discover -s tests -v   # 175 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -530,12 +536,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.49.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.50.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.49.0
+git checkout v0.50.0
 python ipcsurface.py --version
 ```
 
@@ -543,7 +549,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.49.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.50.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

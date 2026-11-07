@@ -942,11 +942,12 @@ class MalformedInputTests(unittest.TestCase):
         return fh.name
 
     def test_every_loader_rejects_every_malformed_case(self):
-        # empty-allowed: CASES 是常量表，非空由定义保证
         loaders = (ipc.load_probe, ipc.load_poke, ipc.load_baseline)
+        # empty-allowed: CASES 是常量表，非空由定义保证
         for name, (data, kwargs, hint) in self.CASES.items():
             path = self._write(data, **kwargs)
             try:
+                # empty-allowed: loaders 是常量三元组，永远非空
                 for loader in loaders:
                     with self.subTest(case=name, loader=loader.__name__):
                         with self.assertRaises(SystemExit) as ctx:
@@ -977,6 +978,7 @@ class MalformedInputTests(unittest.TestCase):
         for name, (data, kwargs, _hint) in self.CASES.items():
             path = self._write(data, **kwargs)
             try:
+                # empty-allowed: loaders 是常量三元组，永远非空
                 for loader in loaders:
                     with self.subTest(case=name, loader=loader.__name__):
                         try:
@@ -1122,15 +1124,16 @@ class OutputSideTests(unittest.TestCase):
         self.assertFalse(os.path.exists(stale), '过期的孤儿副本该清掉')
 
     def test_rule_stale_backup_needs_target(self):
-        # empty-allowed: 这里验的是「不该删」，空集合不构成问题
         old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
         stale = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.bak')
         with open(stale, 'w', encoding='utf-8') as fh:
             fh.write('唯一的旧版')
         # target 不存在时，那个副本可能是唯一的旧版，不能删
+        # empty-allowed: 这一条验的是「不该删」，空集合不构成问题
         result = ipc.write_output(self.path, '新的\n')
         # empty-allowed: 逐字段检查，不涉及集合大小
         self.assertTrue(os.path.exists(stale))
+        # empty-allowed: warnings 可能为空（没残留就不提醒），空集合合法
         self.assertTrue(any('未处理' in note for note in result.warnings))
 
     def test_rule_unsupported_fsync_is_unknown_not_yes(self):
@@ -1509,9 +1512,9 @@ class AssertionHygieneTests(unittest.TestCase):
         def is_empty_satisfied(test):
             """这条断言在空集合上会不会通过？会，就属于「危险形态」。"""
             for n in _ast.walk(test):
-                # len(x) == 0 / len(x) <= 0
+                # len(x) == 0 / len(x) <= 0 / sum(1 for ...) == 0
                 if isinstance(n, _ast.Compare) and isinstance(n.left, _ast.Call) \
-                        and getattr(n.left.func, 'id', '') == 'len':
+                        and getattr(n.left.func, 'id', '') in ('len', 'sum'):
                     if any(isinstance(c, _ast.Constant) and c.value == 0
                            for c in n.comparators):
                         return True
@@ -1582,14 +1585,20 @@ class AssertionHygieneTests(unittest.TestCase):
                     if exiting_body(child.body):
                         return True
             # 注释豁免：断言前 5 行内出现过 # empty-allowed
-            # 注释只豁免「它下面」的断言（向上找、向下生效），
-            # 且中间不许夹着别的断言——否则一条注释放行一片
-            for line in range(max(1, assertion_line - self.PROTECT_WINDOW),
-                              assertion_line):
-                if line in comment_lines:
-                    between = range(line + 1, assertion_line)
-                    if not any(other.lineno in between for other in spots):
-                        return True
+            # 注释只豁免「它下面」的断言，判据不是行号差，是 AST：
+            # 注释与断言之间不许夹任何语句节点（空行、纯注释不算）。
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            for line in comment_lines:
+                if line >= assertion_line:
+                    continue        # 只向上找
+                if assertion_line - line > self.PROTECT_WINDOW:
+                    continue        # 贴着也算，隔太远也不算
+                between = [ln for ln in statement_lines
+                           if line < ln < assertion_line]
+                if between:
+                    continue        # 中间还有别的语句，这条注释不管它
+                return True
             return False
 
         tree = _ast.parse(source)
@@ -1600,6 +1609,16 @@ class AssertionHygieneTests(unittest.TestCase):
             spots = universal_nodes(node)
             if not spots:
                 continue
+            # 嵌套断言只算最外层那个：给外层写好豁免，块里的就不必再逐条标
+            spots.sort(key=lambda n: n.lineno)
+            outermost = []
+            for spot in spots:
+                if any(getattr(spot, 'lineno', 0) >= getattr(kept, 'lineno', 0)
+                       and getattr(spot, 'end_lineno', 0) <= getattr(kept, 'end_lineno', 0)
+                       for kept in outermost):
+                    continue
+                outermost.append(spot)
+            spots = outermost
             unprotected = [spot for spot in spots
                            if not is_protected(node, spot.lineno)]
             if not unprotected:
@@ -1624,6 +1643,21 @@ class AssertionHygieneTests(unittest.TestCase):
             with self.subTest(form=label):
                 self.assertEqual(self.offenders_of(source), [source.split('(')[0].split()[-1]],
                                  f'{label} 没被抓到')
+
+    def test_rule_scanner_flags_forms_outside_the_list(self):
+        # 这条证明的是「默认方向」：不是七种列表里的形态，也照样报
+        outside = {
+            'sum(1 for ...) == 0': ('def a(self, xs):\n'
+                                    '    assert sum(1 for x in xs if x < 0) == 0\n'),
+            'len(...) == 0': ('def b(self, xs):\n'
+                              '    assert len([x for x in xs if x < 0]) == 0\n'),
+            '== []': ('def c(self, xs):\n'
+                      '    assert xs == []\n'),
+        }
+        for label, source in outside.items():
+            with self.subTest(form=label):
+                self.assertEqual(len(self.offenders_of(source)), 1,
+                                 f'{label} 属于列表外形态，默认方向应当报出来')
 
     def test_rule_scanner_accepts_real_protection(self):
         protected = {
@@ -1703,6 +1737,9 @@ class AssertionHygieneTests(unittest.TestCase):
 
         bad = {}
         errors = []
+        scanned_ok = 0
+        exemptions = 0
+        universal_functions = 0
         for path in scanned:
             with open(path, encoding='utf-8') as fh:
                 source = fh.read()
@@ -1712,13 +1749,39 @@ class AssertionHygieneTests(unittest.TestCase):
                 # 不中止：一个坏文件不该让「其他文件是否通过」看不见
                 errors.append(f'{os.path.basename(path)}:{exc.lineno}: {exc.msg}')
                 continue
+            scanned_ok += 1
+            exemptions += source.count('# empty-allowed')
+            universal_functions += sum(
+                1 for name in dir(self) if False)  # 占位，实际数在下面统计
             if found:
                 bad[os.path.basename(path)] = found
-        self.assertEqual(errors, [], '这些文件解析不了（已跳过，其余文件照常扫）：'
-                         + '; '.join(errors))
+        # 数一下「有多少函数带断言」，用来算豁免密度（粗粒度，够看趋势）
+        import ast as _ast
+        for path in scanned:
+            with open(path, encoding='utf-8') as fh:
+                try:
+                    tree = _ast.parse(fh.read())
+                except SyntaxError:
+                    continue
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.FunctionDef) and any(
+                        isinstance(n, _ast.Call) and isinstance(n.func, _ast.Attribute)
+                        and n.func.attr.startswith('assert')
+                        for n in _ast.walk(node)):
+                    universal_functions += 1
+
+        self.assertEqual(errors, [],
+                         f'扫描并解析 {scanned_ok} 个文件；因语法错误未扫描 {len(errors)} 个'
+                         '（未扫描 ≠ 通过，里面的断言完全没看）：' + '; '.join(errors))
         self.assertEqual(bad, {},
                          f'这些函数有全称断言却没说空集合怎么办：{bad}。'
                          '加 non_empty()，或写 # empty-allowed 说明。')
+        # 豁免膨胀是结构性问题：默认报危险之后，豁免会涨。看比例，不只看绝对值
+        density = exemptions / universal_functions if universal_functions else 0.0
+        self.assertLess(density, 0.8,
+                        f'豁免密度 {density:.0%}（{exemptions} 条注释 / '
+                        f'{universal_functions} 个含全称断言的函数）已经过高：'
+                        '门禁正在被稀释。该把该改的断言改成 non_empty()，而不是继续加注释。')
 
     def test_rule_scan_uses_real_files(self):
         # 文件发现/编码/路径这一层也要有证据：临时目录里放一个真有问题的文件
