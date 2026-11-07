@@ -277,6 +277,10 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **写入的持久性有三态**（`WriteResult.durable`）：`yes` / `no` / `unknown`。`unknown` 出现在本平台没有目录 fsync 能力时（Windows），退出码仍是 0，只在 stderr 说一次「无法确认持久性」。把「没法确认」报成 `yes`，就是拿不知道冒充知道。
 
+**三个计数不重叠**：自查会同时报「定义 158 / 实跑 157 / 跳过 1」。以前写「已执行 156 / 其中跳过 1」是自相矛盾的——跳过的那条没执行，却算进了执行数。这个项目连「3 处命中 vs 1 条通道」都要纠正，自己的计数更不能留这种歧义。
+
+**md 报告也有约束**：章节标题与编号都不许重复。这个毛病真出过（有一次编号重了一个），所以它从「注意一下」变成用例。
+
 **报告顶层键是有白名单的**（`REPORT_TOP_LEVEL_KEYS`），多一个键就有用例红。这条是把「别把 durable 之类写进报告」从文档承诺变成回归约束——README 只有读的人才记得，测试不读也会拦。
 
 **durable 不进 JSON 报告。** 它是 `write_output` 的返回值，属于「这次写盘的行文」，不是「报告的内容」。所以这轮从 bool 改成三态，输出契约没变、schema 号没动——如果哪天把它写进 JSON，那才是破坏性变更，得升 schema 并写迁移说明。`kind: durability_unknown` 每次进程只打一次，免得变成背景噪音。
@@ -342,6 +346,10 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 | 符号链接目标 | 默认权限建不了链接，拒绝路径没在真实链接上跑过 |
 | `os.replace` 目标被占用 | `replace_failed` 分支没在真实占用下跑过（只有 mock） |
 | 长路径 / 只读目录 | 未测 |
+
+**金标准快照**：`tests/golden/asar_report.json` 是一份固定输入对应的完整报告，测试逐字段比。它的作用是把「这次重构没改行为」从一次性人工对比，变成以后每次都验。
+
+**崩了以后磁盘上是什么状态**：`AssertionError` 属于代码 bug，走 fail-fast。它只可能在 `build_asar_report` 或写路径的 `finally` 覆盖范围内抛出：写路径的断言在 `try/finally` 里，残留由 `finally` 清；真发生在 `os.replace` 之后，`finally` 也会把临时文件和副本删掉。万一清理本身失败，下次运行的前置清理会按年龄收掉。
 
 写在这儿的意思是：这些不是「不支持」，是「可能能用但没保证」。主要用户群在 Windows 上，这个差别比一句「CI 不跑」重要。
 
@@ -450,7 +458,7 @@ bash scripts/verify.sh    # 三道闸一条命令：用例、冒烟、自查
 也可以一条一条跑：
 
 ```bash
-python -m unittest discover -s tests -v   # 156 个用例，只用标准库
+python -m unittest discover -s tests -v   # 158 个用例，只用标准库
 bash scripts/smoke.sh                     # 把每条命令真跑一遍，十五项
 python scripts/selfcheck.py               # 三十多项自查，含真包实测
 ```
@@ -477,12 +485,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.41.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.42.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.41.0
+git checkout v0.42.0
 python ipcsurface.py --version
 ```
 
@@ -490,7 +498,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.41.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.42.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |

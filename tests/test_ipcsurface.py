@@ -1279,6 +1279,37 @@ class ReportContractTests(unittest.TestCase):
         self.assertEqual(extra, [], f'报告里多出没登记的顶层键：{extra}')
         self.assertEqual(missing, [], f'白名单里登记了但报告里没有：{missing}')
 
+    def test_rule_report_matches_golden_snapshot(self):
+        """固定输入 → 固定输出。逐字段比，不靠人工看一眼。"""
+        here = os.path.dirname(os.path.abspath(__file__))
+        golden_path = os.path.join(here, 'golden', 'asar_report.json')
+        with open(golden_path, encoding='utf-8') as fh:
+            golden = json.load(fh)
+        report = self.build()
+        for volatile in ('subject', 'version'):
+            report[volatile] = golden[volatile]   # 路径与版本号不进金标准
+        differing = sorted(k for k in set(golden) | set(report)
+                           if golden.get(k) != report.get(k))
+        self.assertEqual(differing, [], f'这些字段跟金标准不一致：{differing}')
+
+    def test_rule_md_sections_are_unique(self):
+        """md 报告的章节也要有约束：编号不许重、标题不许重。"""
+        blob = make_asar({'src/app.js': b"ipcMain.handle('a:b', f)"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        try:
+            facts, count, total = ipc.analyse_asar(path)
+            text = ipc.render_asar(path, facts, count, total)
+        finally:
+            os.unlink(path)
+        headings = [line.strip() for line in text.splitlines() if line.startswith('## ')]
+        self.assertTrue(headings, 'md 报告应该有章节')
+        self.assertEqual(len(headings), len(set(headings)),
+                         f'章节标题重复了：{headings}')
+        numbers = [h.split()[1] for h in headings if h.split()[1:2] and h.split()[1][0].isdigit()]
+        self.assertEqual(len(numbers), len(set(numbers)), f'章节编号重复了：{numbers}')
+
     def test_rule_report_keys_are_whitelisted_catches_durable(self):
         # 有人以后顺手把 durable 写进报告，这条会当场红
         report = self.build()

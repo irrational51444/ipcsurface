@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.41.0'
+__version__ = '0.42.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -825,6 +825,11 @@ RULES = [
     {'id': 'backup_age_from_filename',
      'text': '备份年龄只认文件名里的时间戳：ctime 在 Linux 是 inode 变更时间、'
              'Windows 是创建时间、网络盘各说各话，靠它判年龄是「碰巧对」而不是「可靠」'},
+    {'id': 'report_matches_golden_snapshot',
+     'text': '固定输入 → 固定输出，逐字段比金标准；把「这次重构没改行为」从一次性对比'
+             '变成以后每次都验'},
+    {'id': 'md_sections_are_unique',
+     'text': 'md 报告也是输出契约：章节标题与编号都不许重复（这个毛病真出过）'},
     {'id': 'report_keys_are_whitelisted',
      'text': '报告 JSON 的顶层键必须在 REPORT_TOP_LEVEL_KEYS 白名单里；'
              '多一个键就红——「别把 durable 之类写进报告」从文档承诺变成回归约束'},

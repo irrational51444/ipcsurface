@@ -1,0 +1,234 @@
+{
+  "schema": "ipcsurface/asar/10",
+  "mode": "asar",
+  "subject": "<fixture>",
+  "files": 1,
+  "bytes": 24,
+  "unique_names": 1,
+  "channels": [
+    "a:b"
+  ],
+  "dynamic": [],
+  "exposes": [],
+  "web_preferences": {},
+  "native_files": [],
+  "obfuscation": [],
+  "confidence": [
+    {
+      "id": "literal",
+      "label": "写死的名字",
+      "count": 1,
+      "unit": "条",
+      "strength": 1.0,
+      "can_prove": "源码里逐字写着，file:line 能回到原文复核",
+      "cannot_prove": "只覆盖写死的写法；拼出来的、算出来的它看不见",
+      "next_step": "直接引用，但别当成完整清单",
+      "action": "cite"
+    },
+    {
+      "id": "computed",
+      "label": "名字是算出来的",
+      "count": 0,
+      "unit": "处",
+      "strength": 0.3,
+      "can_prove": "知道这里有调用，名字不是写死的",
+      "cannot_prove": "名字是什么，算不出来",
+      "next_step": "人工看，这是研判的第一入口",
+      "action": "read_code"
+    },
+    {
+      "id": "harvested",
+      "label": "打捞出来的候选",
+      "count": 0,
+      "own_count": 0,
+      "unit": "个",
+      "strength": 0.2,
+      "can_prove": "这些字符串长得像通道名",
+      "cannot_prove": "长得像不等于就是；当线索用，别当结论",
+      "next_step": "拿真名去比对，或者运行时验证",
+      "action": "triage"
+    },
+    {
+      "id": "unseen",
+      "label": "没看见的",
+      "count": null,
+      "unit": "",
+      "strength": 0.0,
+      "can_prove": "无",
+      "cannot_prove": "我这条路看不见，不代表它不在",
+      "next_step": "换 REA 走语法级，或者运行时探针",
+      "action": "escalate"
+    }
+  ],
+  "confidence_semantics": {
+    "what_strength_means": "复核成本和依赖复杂度，不是「这条有多可信」的概率",
+    "why": "查表查出来的名字和逐字写着的名字，确定性上没有差别；差的是复核要看一处还是两处，以及结果依赖全包常量表的作用域规则。",
+    "not_a_probability": true,
+    "labels_not_buckets": "六层是标签，互相重叠；不可以相加或相减当总数。唯一能当总数的是 unique_names，它是去重后的名字数。",
+    "independence": {
+      "table": {
+        "literal|literal-resolved": false,
+        "computed|literal": false,
+        "harvested|literal": false,
+        "literal|runtime": true,
+        "computed|literal-resolved": false,
+        "harvested|literal-resolved": false,
+        "literal-resolved|runtime": true,
+        "computed|harvested": false,
+        "computed|runtime": true,
+        "harvested|runtime": true
+      },
+      "sources": [
+        "literal",
+        "literal-resolved",
+        "computed",
+        "harvested",
+        "runtime"
+      ],
+      "rule": "独立性按两两组合查表判定，不留没点名的缝隙。静态来源之间（literal / literal-resolved / computed / harvested）共享同一份源码，不算独立；运行时与任一静态来源算独立。每个名字的 corroboration 已经按这张表算好，下游不必自己推导。"
+    },
+    "corroborated_rule": "至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，不累加，也不因为对上就跳档。",
+    "action_rule": "每个名字的 actions 列出它所有适用动作，primary_action 取其中最严格的一个（顺序：cite < spot_check_source < trust_after_setup < read_code < triage）。报告给的是最低保证，所以按最费事的那条走，下游不必再自己比。",
+    "corroborated_is_not_uniform": "corroborated 只说明两条路互不依赖，不说明两条路都硬。computed+runtime 和 literal-resolved+runtime 都算对上，但前者静态那一侧本身就是需要人工看的低强度来源。看 strength_by_source 和 weakest_sources，别把「对上」当成均质的强证据集合。",
+    "strength_vs_weakest": "strength 回答「这条记录里最好的证据有多硬」，weakest_sources / weakest_strength 回答「这条记录里最薄的环节有多薄」。两个问题不同，不能互相替代：只看 strength 会漏掉一条 0.9 的记录里还挂着 0.2 的来源。",
+    "weakest_sources_semantics": "weakest_sources 是列表，并列最弱时全部列出，不任取其一；weakest_strength 是那个最弱的分值本身。",
+    "must_not_semantics": "must_not 表示「工具声明了这条禁令，并且它有出处」，不表示「工具能检测消费方有没有遵守」。工具负责声明，消费方负责执行。看到 must_not 请当成一条要自己守的规矩，不是一道会拦住你的闸门。",
+    "aggregate_rule": "聚合字段的判定是正向扫描：evidence 里出现一个既不在 EVIDENCE_FIELDS 白名单、也不在 AGGREGATE_FIELDS 登记表里的字段，就当成疑似聚合字段报出来。不靠字段名，也不靠人记得去登记。",
+    "corroboration_kinds": {
+      "static_runtime": "静态（逐字或查表）与运行时各看见一次，两边互不依赖",
+      "static_static": "两个静态来源对上了，但都在静态侧，只是写法不同，不算独立见证",
+      "none": "只有一条路看见"
+    },
+    "compat_rule": {
+      "bump_schema_when": [
+        "字段改名或删除",
+        "枚举取值增减或含义变化（例如 poke 的档位、sources 的取值）",
+        "strength 的分值或语义变化",
+        "limits / confidence 这类数组的结构变化",
+        "名字的去重口径变化（unique_names 定义变化）"
+      ],
+      "no_bump_when": [
+        "只新增字段且旧字段不动",
+        "只改文案不改含义"
+      ],
+      "note": "换号只保证下游能察觉不兼容，不保证向下兼容；消费方应当按 schema 号选择解析逻辑，别只看字段在不在。"
+    },
+    "usage_constraints": [
+      {
+        "id": "no_single_layer",
+        "text": "任何一层都不该被单独引用；这是地图，不是判决书。",
+        "must_not": [
+          "use_layer_in_isolation"
+        ],
+        "instead": "按 evidence 里每个名字的 sources 全体来看"
+      },
+      {
+        "id": "judge_by_all_sources",
+        "text": "判断一个名字，要看它的全部来源标签，不要只挑最硬的那条。",
+        "must_not": [
+          "cherry_pick_strongest_source"
+        ],
+        "instead": "用 primary_action 决定复核动作，用 sources 决定怎么读"
+      },
+      {
+        "id": "unknown_is_not_absent",
+        "text": "「没看见」是未知，不能当成「没有」。",
+        "must_not": [
+          "treat_absent_as_negative"
+        ],
+        "instead": "在 limits 里找这一路的盲点"
+      },
+      {
+        "id": "strength_is_not_risk",
+        "text": "strength 用来排序复核顺序，不用来当风险分值。",
+        "must_not": [
+          "score_risk_from_strength"
+        ],
+        "instead": "风险判断看 poke 分档和 preload 暴露面"
+      },
+      {
+        "id": "primary_action_is_not_whole",
+        "text": "primary_action 只是「先做哪件事」，不能替代 actions。只看主动作会丢掉「这条还同时有低保证来源」这件事，和拆层单用是同一个错，只是发生在字段级。",
+        "must_not": [
+          "use_primary_action_alone",
+          "drop_lower_guarantee_sources"
+        ],
+        "instead": "用 primary_action 决定先干什么，用 actions 和 sources 决定这条到底有多稳"
+      },
+      {
+        "id": "strength_alone_is_not_enough",
+        "text": "strength 是「最好的那条有多硬」，不是这条记录的整体硬度。一条 0.9 的记录里可能挂着 0.2 的来源。",
+        "must_not": [
+          "use_strength_alone"
+        ],
+        "instead": "同时看 strength_by_source，或直接看 weakest_sources"
+      },
+      {
+        "id": "corroborated_is_not_uniform",
+        "text": "corroborated 说明两条路互不依赖，不说明两条路都硬。",
+        "must_not": [
+          "use_corroborated_as_uniform"
+        ],
+        "instead": "看 strength_by_source 里每一侧各自多少"
+      },
+      {
+        "id": "weakest_needs_the_list",
+        "text": "weakest_strength 只是一个分，并列最弱时是谁得看 weakest_sources。",
+        "must_not": [
+          "use_weakest_without_list"
+        ],
+        "instead": "用 weakest_sources 拿到全部最弱来源"
+      },
+      {
+        "id": "meta_test_green_is_not_verified",
+        "text": "meta-test 绿了只代表「每条规则都有用例」，不代表「用例真的在测那条规则」。一条用例可以挂在规则名下、断言却和规则无关，照样绿。它防的是缺用例，不防用例无效。",
+        "must_not": [
+          "treat_meta_test_green_as_rule_verified"
+        ],
+        "instead": "抽查用例断言的内容，或者让用例里带上规则自己的数据"
+      },
+      {
+        "id": "check_schema_before_parse",
+        "text": "消费方必须先校验 schema 号，不匹配就拒绝解析，别按字段在不在猜。换号只保证你能察觉不兼容，察觉与否取决于你有没有看。",
+        "must_not": [
+          "parse_without_schema_check"
+        ],
+        "instead": "按 schema 号选择解析器，不认识就停下"
+      }
+    ]
+  },
+  "evidence": {
+    "a:b": {
+      "sources": [
+        "literal"
+      ],
+      "strength": 1.0,
+      "where": "src/app.js:1",
+      "actions": [
+        "cite"
+      ],
+      "primary_action": "cite",
+      "corroboration": "none",
+      "corroborated": false,
+      "strength_by_source": {
+        "literal": 1.0
+      },
+      "weakest_sources": [
+        "literal"
+      ],
+      "weakest_strength": 1.0,
+      "independent_pairs": []
+    }
+  },
+  "runtime": null,
+  "poke": null,
+  "limits": [
+    "混淆过、压过、名字算出来的代码，我一条都认不出来；所以「没看见」永远是未知，不是没有",
+    "注册过、能调，不等于调得成；权限和 sender 校验要看运行时那一层",
+    "字面通道 1 条：逐字写着的 1 条，查表得来的 0 条",
+    "没有给 --runtime，运行时那层是空的",
+    "没有给 --poke，门禁状态全部未知"
+  ],
+  "baseline": null,
+  "version": "<version>"
+}

@@ -292,10 +292,11 @@ def main():
     # 「定义了多少」和「真跑了多少」不是一回事，两个数都报出来
     ran, skipped = run_unittest_summary()
     tests_count = tests_defined
-    # unittest 的 Ran 含跳过项；所以「定义 == Ran」且「跳过 <= Ran」才是自洽的
-    ok &= check('用例三条数都对得上（定义 / 已执行 / 其中跳过）',
-                ran == tests_defined and skipped <= ran,
-                f'定义 {tests_defined} / 已执行 {ran} / 其中跳过 {skipped}')
+    # 三个数语义不重叠：定义 = 写好多少个 / 实跑 = 真执行了 / 跳过 = 没执行的
+    actually_ran = ran - skipped
+    ok &= check('用例三条数都对得上（定义 / 实跑 / 跳过）',
+                ran == tests_defined and actually_ran >= 0,
+                f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}')
     ok &= check('README 用例数和实际一致',
                 f'{tests_count} 个用例' in readme, f'实际 {tests_count}')
     ok &= check('badge 用例数和实际一致',
