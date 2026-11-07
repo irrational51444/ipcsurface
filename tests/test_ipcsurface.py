@@ -1599,6 +1599,46 @@ class AssertionHygieneTests(unittest.TestCase):
                         break
         return found
 
+    def exemption_breakdown(self, source):
+        """{declarative: 贴在循环上的声明, substitutive: 贴在断言上、替代了 non_empty}"""
+        import ast as _ast
+        import io as _io
+        import tokenize as _tokenize
+
+        comments = set()
+        try:
+            for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
+                if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
+                    comments.add(token.start[0])
+        except _tokenize.TokenError:
+            pass
+
+        out = {'declarative': 0, 'substitutive': 0}
+        for node in _ast.walk(_ast.parse(source)):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            spots = [(n, k) for n, k in self.universal_spots(node) if k == 'vacuous']
+            if not spots:
+                continue
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            for spot, _kind in spots:
+                covered = False
+                for line in comments:
+                    if line >= spot.lineno or spot.lineno - line > self.PROTECT_WINDOW:
+                        continue
+                    if [ln for ln in statement_lines if line < ln < spot.lineno]:
+                        continue
+                    covered = True
+                    break
+                if not covered:
+                    continue
+                if isinstance(spot, _ast.For):
+                    out['declarative'] += 1
+                else:
+                    out['substitutive'] += 1
+        return out
+
     def exemption_stats(self, source):
         """(被注释豁免的 vacuous 断言处, vacuous 断言处总数)。同粒度。"""
         import ast as _ast
@@ -2017,8 +2057,11 @@ class AssertionHygieneTests(unittest.TestCase):
                          f'扫描并解析 {scanned_ok} 个文件；因语法错误未扫描 {len(errors)} 个'
                          '（未扫描 ≠ 通过，里面的断言完全没看）：' + '; '.join(errors))
         self.assertEqual(bad, {},
-                         f'这些函数有全称断言却没说空集合怎么办：{bad}。'
-                         '加 non_empty()，或写 # empty-allowed 说明。')
+                         f'这些函数有真空断言却没说空集合怎么办：{bad}。'
+                         '能断言非空的场景优先写 non_empty()（断言），'
+                         '确实允许空集合才写 # empty-allowed（声明）。'
+                         '如果你认为这里本来就有保护，那可能是扫描器没认出那种形态：'
+                         '请扩展扫描器的保护规则，不要用豁免吸收。')
         # 豁免率：分子分母同粒度——被注释豁免的断言处 / 全称断言处总数。
         # 注释存在但没豁免任何断言的，不进分子（旧版本按条数算，单位对不上）。
         exempted_spots = 0
@@ -2037,6 +2080,17 @@ class AssertionHygieneTests(unittest.TestCase):
             for node in _a.walk(_a.parse(text)):
                 if isinstance(node, _a.FunctionDef) and self.universal_spots(node):
                     functions_total += 1
+
+        breakdown = {'declarative': 0, 'substitutive': 0}
+        for path in scanned:
+            with open(path, encoding='utf-8') as fh:
+                text = fh.read()
+            try:
+                part = self.exemption_breakdown(text)
+            except SyntaxError:
+                continue
+            for key in breakdown:
+                breakdown[key] += part[key]
 
         # 警报线，不是安全线：和基线比涨太多就提醒人去看一眼
         baseline_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
@@ -2061,6 +2115,8 @@ class AssertionHygieneTests(unittest.TestCase):
                 '或者把新增的豁免处理掉')
             self.assertLessEqual(
                 rate, base_rate + 0.2,
+                f'豁免构成：声明型 {breakdown["declarative"]} 条（贴在循环上方）、'
+                f'替代型 {breakdown["substitutive"]} 条（贴在断言上方）；'
                 f'注释豁免率 {rate:.0%}（{exempted_spots}/{spots_total} 处，'
                 f'分布在 {functions_total} 个函数里，平均每函数 '
                 f'{spots_total / functions_total:.1f} 处）比基线 '
