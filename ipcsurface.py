@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.40.0'
+__version__ = '0.40.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -825,6 +825,12 @@ RULES = [
     {'id': 'backup_age_from_filename',
      'text': '备份年龄只认文件名里的时间戳：ctime 在 Linux 是 inode 变更时间、'
              'Windows 是创建时间、网络盘各说各话，靠它判年龄是「碰巧对」而不是「可靠」'},
+    {'id': 'cleanup_checks_target_before_age',
+     'text': '清副本先判 target 在不在，再判年龄：反过来的话时钟大幅前跳会让一批副本'
+             '同时变成过期候选，只能逐个救回来'},
+    {'id': 'failed_dump_keeps_shorter_window',
+     'text': '.failed 里是报告正文（可能带路径与通道名），保留窗口只有 6 小时，'
+             '比副本的 24 小时短——诊断价值随时间衰减，敏感留存不衰减'},
     {'id': 'foreign_backup_is_not_touched',
      'text': '只清自己生成的名字（.{名}.{13位时间戳}.{8位hex}.bak/.failed），'
              '用户手工放的 report.md.bak 不动、也不误报'},
@@ -1612,7 +1618,9 @@ def json_depth(text):
 
 WRITE_TMP_PREFIX = '.ipcsurface-'
 _windows_hint_shown = False
+_unknown_note_shown = False
 STALE_BACKUP_SECONDS = 24 * 3600
+FAILED_KEEP_SECONDS = 6 * 3600   # 诊断现场比副本短：价值随时间衰减，敏感留存不衰减
 
 # 写出去的坏法也得有类别。磁盘满、没权限、写了一半，都要说清是哪一种。
 OUTPUT_ERROR_KINDS = {
@@ -1765,11 +1773,15 @@ def clean_stale_backups(directory, basename, max_age=STALE_BACKUP_SECONDS):
         suffix = name.rsplit('.', 1)[-1]
         age = now - int(stamp) / 1000.0
         try:
-            if age <= max_age:
-                kept.append(full)
-                continue
+            # 顺序要紧：先看 target 在不在，再看年龄。
+            # 反过来的话，时钟大幅前跳会让一批副本同时变成「过期候选」，
+            # 只能靠逐个救回来——先判存在性就没有这个批量误删的窗口。
             if suffix == 'bak' and not target_ok:
                 kept.append(full)      # 唯一的旧版，留着提醒
+                continue
+            limit = FAILED_KEEP_SECONDS if suffix == 'failed' else max_age
+            if age <= limit:
+                kept.append(full)
                 continue
             os.unlink(full)
             removed.append(full)
@@ -1862,11 +1874,14 @@ def write_output(path, text, expect_json=False):
         elif fsync_state is FsyncResult.FAILED:
             durable = DURABLE_NO
             warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。')
-        else:
+        elif fsync_state is FsyncResult.UNSUPPORTED:
             # 这套系统没法确认是不是落盘了。报 unknown：不阻塞，也不冒充知道。
             durable = DURABLE_UNKNOWN
             warnings.append('本平台不支持刷目录，无法确认持久性：文件已是新版，'
                             '崩溃后是否回退取决于文件系统。')
+
+        else:
+            raise AssertionError('未处理的 FsyncResult：' + repr(fsync_state))
 
         if os.name == 'nt' and not _windows_hint_shown:
             globals()['_windows_hint_shown'] = True
@@ -3056,7 +3071,8 @@ def main(argv=None):
         if undurable:
             # 文件已经是新版，只是持久化没保证；这不是失败，但必须让 CI 看得见
             print('kind: not_durable', file=sys.stderr)
-        elif unknown:
+        elif unknown and not _unknown_note_shown:
+            globals()['_unknown_note_shown'] = True
             print('kind: durability_unknown', file=sys.stderr)
         # 一行就说完，人不用打开文件也知道要不要看
         print(f'wrote {args.out} — {summary_line}', file=sys.stderr)

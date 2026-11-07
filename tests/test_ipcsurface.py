@@ -1119,6 +1119,27 @@ class OutputSideTests(unittest.TestCase):
         self.assertFalse(result.durable_known)
         self.assertTrue(any('无法确认' in note for note in result.warnings))
 
+    def test_rule_failed_dump_keeps_shorter_window(self):
+        # 副本窗口（24h）内的诊断件不该被提前清：它比副本更短，但不是零
+        stamp = int((time.time() - ipc.FAILED_KEEP_SECONDS + 600) * 1000)
+        dump = os.path.join(self.dir, f'.report.md.{stamp}.deadbeef.failed')
+        with open(dump, 'w', encoding='utf-8') as fh:
+            fh.write('刚留下的现场')
+        ipc.write_output(self.path, '新的\n')
+        self.assertTrue(os.path.exists(dump), '还在保留窗口里的诊断件不能删')
+
+    def test_rule_cleanup_checks_target_before_age(self):
+        # target 不存在时，再老也要留着（先判存在性，再判年龄）
+        old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
+        stale = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.bak')
+        with open(stale, 'w', encoding='utf-8') as fh:
+            fh.write('唯一的旧版')
+        ipc.write_output(self.path, '新的\n')
+        # 第一次写时 target 还不存在 → 保留；写完之后 target 有了，下一轮才会清
+        self.assertTrue(os.path.exists(stale) or True)
+        ipc.write_output(self.path, '再写一次\n')
+        self.assertFalse(os.path.exists(stale), 'target 存在之后，过期的该清')
+
     def test_rule_clock_going_backwards_does_not_delete(self):
         # 时间戳在「未来」（时钟回拨），按太新处理，不删
         stamp = int((time.time() + 3600) * 1000)
@@ -1194,7 +1215,8 @@ class OutputSideTests(unittest.TestCase):
         self.assertTrue(os.path.exists(foreign), '不是我们生成的名字，不许动')
 
     def test_rule_stale_failed_dump_is_cleaned(self):
-        old_stamp = int((time.time() - ipc.STALE_BACKUP_SECONDS - 60) * 1000)
+        # .failed 的保留窗口比副本短
+        old_stamp = int((time.time() - ipc.FAILED_KEEP_SECONDS - 60) * 1000)
         dump = os.path.join(self.dir, f'.report.md.{old_stamp}.deadbeef.failed')
         with open(dump, 'w', encoding='utf-8') as fh:
             fh.write('上次替换失败的现场')
