@@ -1574,13 +1574,42 @@ class AssertionHygieneTests(unittest.TestCase):
                 return None if inner is None else (not inner)
             if isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name):
                 if node.func.id == 'all':
-                    return True     # 空集合 upload：全称断言平凡为真
+                    return True     # 空集合：全称断言平凡为真
                 if node.func.id == 'any':
                     return False
                 if node.func.id == 'len':
-                    return 0
+                    return 0        # 空集合长度为 0
             if isinstance(node, _ast.List) and not node.elts:
                 return False
+            if isinstance(node, _ast.Compare) and len(node.ops) == 1:
+                op = node.ops[0]
+                other = node.comparators[0]
+                # x == [] / x is not None：空集合上恒真，左边算不出也照样成立
+                if isinstance(op, _ast.Eq) and isinstance(other, _ast.List) \
+                        and not other.elts:
+                    return True
+                if isinstance(op, _ast.IsNot) and isinstance(other, _ast.Constant) \
+                        and other.value is None:
+                    return True
+                left = truth_on_empty(node.left)
+                right = truth_on_empty(other)
+                if left is None or right is None:
+                    # len([...]) == 0 这类：左边是调用，右边常量，按常量算
+                    if isinstance(node.left, _ast.Call) and \
+                            getattr(node.left.func, 'id', '') == 'len' and \
+                            isinstance(node.comparators[0], _ast.Constant):
+                        left, right = 0, node.comparators[0].value
+                    else:
+                        return None
+                op = node.ops[0]
+                if isinstance(op, _ast.Eq):
+                    return left == right
+                if isinstance(op, _ast.NotEq):
+                    return left != right
+                if isinstance(op, _ast.IsNot):
+                    return left is not right
+                if isinstance(op, _ast.Is):
+                    return left is right
             return None
 
         def kind_of(method, arg):
@@ -1627,25 +1656,33 @@ class AssertionHygieneTests(unittest.TestCase):
             return False
 
         found = []
+        seen = set()
+
+        def add(spot, kind):
+            if id(spot) in seen:
+                return
+            seen.add(id(spot))
+            found.append((spot, kind))
+
         for child in _ast.walk(node):
             if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
                     and child.func.attr in ('assertTrue', 'assertFalse'):
                 for arg in child.args:
                     kind = kind_of(child.func.attr, arg)
                     if kind:
-                        found.append((child, kind))
+                        add(child, kind)
                     break
             if isinstance(child, _ast.Assert):
                 kind = classify_arg(child.test)
                 if kind:
-                    found.append((child, kind))
+                    add(child, kind)
             if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
-                found.append((child, 'vacuous'))
+                add(child, 'vacuous')
             if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
                 for inner in _ast.walk(child):
                     if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
                             and inner.func.attr.startswith('assert'):
-                        found.append((child, 'vacuous'))
+                        add(child, 'vacuous')
                         break
         return found
 
@@ -1946,6 +1983,24 @@ class AssertionHygieneTests(unittest.TestCase):
         part = self.exemption_breakdown(source)
         self.assertEqual(part['substitutive'], 1)
         self.assertEqual(part['declarative'], 0)
+
+    def test_rule_classifier_keeps_vacuous_without_quantifier(self):
+        # 这些都不含 all/any，但空集合上照样通过——0.49.0 定的「默认当危险报」不能退
+        cases = {
+            'assertTrue(len(xs) == 0)':
+                ('def f(self, xs):\n'
+                 '    self.assertTrue(len(xs) == 0)\n', 'vacuous'),
+            'assertTrue(xs == [])':
+                ('def f(self, xs):\n'
+                 '    self.assertTrue(xs == [])\n', 'vacuous'),
+            'assert xs is not None':
+                ('def f(self, xs):\n'
+                 '    assert xs is not None\n', 'vacuous'),
+        }
+        for label, (source, expected) in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(self.kinds_of(source), [expected],
+                                 f'{label} 不含量词，但空集合上恒真，仍要报')
 
     def test_rule_classifier_is_conservative_on_compound(self):
         # any(...) and check(...) 的真值取决于 check，算不出来 → 保守归真空
@@ -2381,15 +2436,21 @@ class LeftoverTests(unittest.TestCase):
         report = ipc.inspect_leftovers(self.path)
         self.assertIsNotNone(report['target_mtime_text'])
         entry = report['backups'][0]
-        self.assertIn('newer_than_target', entry)
+        self.assertIn('relation', entry)
+        self.assertIn('不同源', entry.get('relation_basis') or '',
+                      '不同源比较必须标成线索，不能裸给结论')
         text = ipc.render_leftovers(report, self.path)
         self.assertIn('改动时间', text)
-        self.assertIn('修改时间', text)
+        self.assertIn('按文件名里的时间戳', text)
+        self.assertIn('线索', text)
 
     def test_rule_recover_age_never_prints_negative(self):
         # 时钟回拨：文件名时间戳在未来时，不打印负数
         future = int((time.time() + 7200) * 1000)
-        self.assertEqual(ipc._age_text(-7200), '时间异常（文件时间比现在还晚）')
+        self.assertEqual(ipc._age_text(-7200),
+                         '时间异常（文件时间比现在还晚，可能时钟回拨）')
+        # 时钟前跳也要被识别，不只回拨
+        self.assertIn('时钟前跳', ipc._age_text(400 * 86400))
         self.assertEqual(ipc._age_text(-10), '刚刚')
         self.assertNotIn('-', ipc._age_text(-7200))
 

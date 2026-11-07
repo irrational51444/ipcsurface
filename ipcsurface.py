@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.61.0'
+__version__ = '0.62.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1877,18 +1877,20 @@ def stamp_of(ts):
 
 
 def _age_text(seconds):
-    """把年龄写成话。负值/离谱值不直接打印数字——时钟回拨时读者只会困惑。"""
+    """把年龄写成话。回拨和前跳都不直接打印离谱数字。"""
     if seconds is None:
         return '时间未知'
     if seconds < -60:
-        return '时间异常（文件时间比现在还晚）'
+        return '时间异常（文件时间比现在还晚，可能时钟回拨）'
     if seconds < 0:
         return '刚刚'
     if seconds < 3600:
         return f'{int(seconds // 60)} 分钟前'
     if seconds < 86400:
         return f'{seconds / 3600:.1f} 小时前'
-    return f'{seconds / 86400:.1f} 天前'
+    if seconds < 365 * 86400:
+        return f'{seconds / 86400:.1f} 天前'
+    return '时间异常（文件时间过早，可能时钟前跳）'
 
 
 def inspect_leftovers(path):
@@ -1936,10 +1938,17 @@ def inspect_leftovers(path):
             'mtime_text': stamp_of(info['mtime']) if info else None,
         }
         if target_stat and info:
-            # 只报先后，不解释成「谁更可靠」
-            entry['newer_than_target'] = info['mtime'] > target_stat['mtime']
+            # 两边时间源不同：副本用文件名时间戳，target 只有 mtime。
+            # 所以这只是线索，不是可采信的结论——输出里也要这么写。
+            entry['relation'] = ('副本更晚' if created > target_stat['mtime']
+                                 else '副本不晚于 target')
+            entry['relation_basis'] = '不同源比较（副本：文件名时间戳；target：mtime），仅作线索'
+        elif info:
+            entry['relation'] = 'target 缺失，这是唯一现存的一份'
+            entry['relation_basis'] = None
         else:
-            entry['newer_than_target'] = None
+            entry['relation'] = None
+            entry['relation_basis'] = None
         if name.endswith('.bak'):
             result['backups'].append(entry)
         else:
@@ -1950,10 +1959,11 @@ def inspect_leftovers(path):
 def render_leftovers(report, path):
     lines = [f'# 崩溃残留检查：{path}', '']
     if not report['target_exists']:
-        lines.append('- 目标文件不存在——如果有副本，那份可能是唯一的旧版，别急着删。')
+        lines.append('- **目标文件不存在。** 如果有副本，那就是唯一现存的一份，'
+                     '先别删，先看内容。')
     else:
         lines.append(f"- 目标：{report['target_bytes']} 字节，改动时间 "
-                     f"{report['target_mtime_text']}")
+                     f"{report['target_mtime_text']}（按文件修改时间）")
     if not report['backups'] and not report['failed']:
         lines.append('- 没有发现 `.bak` / `.failed` 残留。')
         return '\n'.join(lines) + '\n'
@@ -1961,16 +1971,18 @@ def render_leftovers(report, path):
     for label, items in (('备份副本', report['backups']),
                          ('替换失败现场', report['failed'])):
         for item in items:
-            line = f"- {label}：`{item['path']}`（{item['bytes']} 字节，{item['age_text']}"
-            if item.get('newer_than_target') is True:
-                line += '；修改时间比 target 新'
-            elif item.get('newer_than_target') is False:
-                line += '；修改时间不比 target 新'
+            line = (f"- {label}：`{item['path']}`（{item['bytes']} 字节，"
+                    f"{item['age_text']}，按文件名里的时间戳）")
+            if item.get('relation'):
+                line += f"；{item['relation']}"
+                if item.get('relation_basis'):
+                    line += f"（{item['relation_basis']}）"
             line += '）'
             lines.append(line)
 
-    lines += ['', '**不会自动还原，也不替你判断。** 上面只给事实：两份文件的大小和修改时间。'
-              '谁新谁旧是个线索，不是结论——`.bak` 是复制出来的，修改时间可能被 copy2 带成旧值。',
+    lines += ['', '**不会自动还原，也不替你判断。** 上面只给事实：两份文件的大小和'
+              '各自的时间。谁新谁旧只是线索——两边时间来源不同，`.bak` 的修改时间还可能被 '
+              'copy2 带成旧值。',
               '看过内容、确认该留哪一份，再自己动手；确认不需要的可以删掉。']
     return '\n'.join(lines) + '\n'
 
