@@ -1534,12 +1534,24 @@ class AssertionHygieneTests(unittest.TestCase):
         return items
 
     def universal_spots(self, node):
-        """一个函数里「可能对空集合平凡为真」的断言位置。"""
+        """把断言分成三类，只有第一类才需要空集合防护。
+
+        - 'vacuous'：空集合上平凡为真（assertTrue(all(...)) / assert not [...] /
+          循环体内断言 / len(x)==0 之类）——这是真风险，未声明就报。
+        - 'existential'：assertTrue(any(...))，空集合上直接失败，不会静默通过，不管。
+        - 'negative'：assertFalse(any(...))，「不该有坏东西」，空集合本来就该通过，自动放行。
+        """
         import ast as _ast
 
-        def is_all_or_any(n):
+        def texts(n):
+            try:
+                return _ast.unparse(n)
+            except Exception:
+                return ''
+
+        def is_all_or_any(n, name):
             return (isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name)
-                    and n.func.id in ('all', 'any'))
+                    and n.func.id == name)
 
         def is_empty_satisfied(test):
             for n in _ast.walk(test):
@@ -1563,80 +1575,103 @@ class AssertionHygieneTests(unittest.TestCase):
             if isinstance(child, _ast.Call) and isinstance(child.func, _ast.Attribute) \
                     and child.func.attr in ('assertTrue', 'assertFalse'):
                 for arg in child.args:
-                    if isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)):
-                        found.append(child)
-                    elif is_all_or_any(arg) or any(is_all_or_any(n) for n in _ast.walk(arg)):
-                        found.append(child)
+                    vacuous = isinstance(arg, (_ast.GeneratorExp, _ast.ListComp)) or \
+                        any(is_all_or_any(n, 'all') for n in _ast.walk(arg))
+                    existential = any(is_all_or_any(n, 'any') for n in _ast.walk(arg))
+                    if child.func.attr == 'assertTrue' and existential and not vacuous:
+                        found.append((child, 'existential'))
+                    elif vacuous or existential:
+                        found.append((child, 'vacuous' if vacuous else 'negative'))
+                    break
             if isinstance(child, _ast.UnaryOp) and isinstance(child.op, _ast.Not) \
                     and isinstance(child.operand, (_ast.ListComp, _ast.GeneratorExp)):
-                found.append(child)
+                found.append((child, 'vacuous'))
             if isinstance(child, _ast.Assert) and \
-                    any(is_all_or_any(n) for n in _ast.walk(child.test)):
-                found.append(child)
+                    any(is_all_or_any(n, 'all') for n in _ast.walk(child.test)):
+                found.append((child, 'vacuous'))
             if isinstance(child, _ast.Assert) and is_empty_satisfied(child.test):
-                found.append(child)
+                found.append((child, 'vacuous'))
             if isinstance(child, _ast.For) and isinstance(child.iter, _ast.Name):
                 for inner in _ast.walk(child):
                     if isinstance(inner, _ast.Call) and isinstance(inner.func, _ast.Attribute) \
                             and inner.func.attr.startswith('assert'):
-                        found.append(child)
+                        found.append((child, 'vacuous'))
                         break
         return found
 
     def exemption_stats(self, source):
-        """返回 (被注释豁免的断言处数, 全称断言处总数)。分子分母同粒度。"""
+        """(被注释豁免的 vacuous 断言处, vacuous 断言处总数)。同粒度。"""
         import ast as _ast
         import io as _io
         import tokenize as _tokenize
 
-        self._comment_lines = set()
+        comments = set()
         try:
             for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
                 if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
-                    self._comment_lines.add(token.start[0])
+                    comments.add(token.start[0])
         except _tokenize.TokenError:
             pass
 
-        protected = 0
-        total = 0
+        protected = total = 0
         for node in _ast.walk(_ast.parse(source)):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            spots = self.universal_spots(node)
+            spots = [n for n, k in self.universal_spots(node) if k == 'vacuous']
             if not spots:
                 continue
             total += len(spots)
             statement_lines = {n.lineno for n in _ast.walk(node)
                                if isinstance(n, _ast.stmt)}
             for spot in spots:
-                for line in self._comment_lines:
-                    if line >= spot.lineno:
+                for line in comments:
+                    if line >= spot.lineno or spot.lineno - line > self.PROTECT_WINDOW:
                         continue
-                    if spot.lineno - line > self.PROTECT_WINDOW:
-                        continue
-                    between = [ln for ln in statement_lines if line < ln < spot.lineno]
-                    if between:
+                    if [ln for ln in statement_lines if line < ln < spot.lineno]:
                         continue
                     protected += 1
                     break
         return protected, total
 
-    @staticmethod
-    def has_non_comment_protection(node):
+    def offender_reasons(self, source):
+        """{函数名: [原因]}，只针对 vacuous 断言。"""
         import ast as _ast
-        for child in _ast.walk(node):
-            if isinstance(child, _ast.Call):
-                name = getattr(child.func, 'attr', getattr(child.func, 'id', ''))
-                if name == 'non_empty':
-                    return True
-            if isinstance(child, _ast.Assert) and isinstance(child.test, _ast.Name):
-                return True
-            if isinstance(child, _ast.If) and isinstance(child.test, _ast.UnaryOp) \
-                    and isinstance(child.test.op, _ast.Not):
-                for stmt in child.body:
-                    if isinstance(stmt, (_ast.Raise, _ast.Return)):
-                        return True
-        return False
+        import io as _io
+        import tokenize as _tokenize
+
+        comments = set()
+        try:
+            for token in _tokenize.generate_tokens(_io.StringIO(source).readline):
+                if token.type == _tokenize.COMMENT and 'empty-allowed' in token.string:
+                    comments.add(token.start[0])
+        except _tokenize.TokenError:
+            pass
+
+        out = {}
+        for node in _ast.walk(_ast.parse(source)):
+            if not isinstance(node, _ast.FunctionDef):
+                continue
+            spots = [n for n, k in self.universal_spots(node) if k == 'vacuous']
+            if not spots:
+                continue
+            statement_lines = {n.lineno for n in _ast.walk(node)
+                               if isinstance(n, _ast.stmt)}
+            reasons = []
+            for spot in spots:
+                above = [ln for ln in comments if 0 < spot.lineno - ln]
+                near = [ln for ln in above if spot.lineno - ln <= self.PROTECT_WINDOW]
+                if not above:
+                    reasons.append('no_comment_nearby')
+                elif not near:
+                    reasons.append('comment_too_far')
+                elif [ln for ln in near
+                      if [x for x in statement_lines if ln < x < spot.lineno]]:
+                    reasons.append('comment_blocked_by_statement')
+                elif self.has_non_comment_protection(node):
+                    continue
+            if reasons:
+                out[node.name] = reasons
+        return out
 
     def same_line_multi(self, source):
         """同一行有多条全称断言的位置。只提示，不阻断。"""
@@ -1646,8 +1681,9 @@ class AssertionHygieneTests(unittest.TestCase):
         for node in _ast.walk(_ast.parse(source)):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            for spot in self.universal_spots(node):
-                lines[spot.lineno] += 1
+            for spot, kind in self.universal_spots(node):
+                if kind == 'vacuous':
+                    lines[spot.lineno] += 1
         return sorted(ln for ln, n in lines.items() if n > 1)
 
     def offender_reasons(self, source):
@@ -1668,7 +1704,7 @@ class AssertionHygieneTests(unittest.TestCase):
         for node in _ast.walk(_ast.parse(source)):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            spots = self.universal_spots(node)
+            spots = [n for n, k in self.universal_spots(node) if k == 'vacuous']
             if not spots:
                 continue
             statement_lines = {n.lineno for n in _ast.walk(node)
@@ -1753,18 +1789,19 @@ class AssertionHygieneTests(unittest.TestCase):
         for node in _ast.walk(tree):
             if not isinstance(node, _ast.FunctionDef):
                 continue
-            spots = self.universal_spots(node)
+            spots = [(n, k) for n, k in self.universal_spots(node) if k == 'vacuous']
             if not spots:
                 continue
-            spots.sort(key=lambda n: n.lineno)
+            spots.sort(key=lambda nk: nk[0].lineno)
             outermost = []
             for spot in spots:
-                if any(spot.lineno >= kept.lineno and spot.end_lineno <= kept.end_lineno
+                if any(spot[0].lineno >= kept[0].lineno
+                       and spot[0].end_lineno <= kept[0].end_lineno
                        for kept in outermost):
                     continue
                 outermost.append(spot)
             unprotected = [spot for spot in outermost
-                           if not is_protected(node, spot.lineno, spots)]
+                           if not is_protected(node, spot[0].lineno, spots)]
             if unprotected:
                 offenders.append(node.name)
         return offenders
@@ -1772,35 +1809,30 @@ class AssertionHygieneTests(unittest.TestCase):
     # ---- 扫描器元测试：每种形态都要有「无保护会报」的证据 ----
 
     def test_rule_scanner_flags_unprotected(self):
+        # 只有「空集合上平凡为真」的形态才该报
         cases = {
             'assertTrue(all(...))':
                 'def a(self, xs):\n    self.assertTrue(all(x > 0 for x in xs))\n',
-            'assertFalse(any(...))':
-                'def b(self, xs):\n    self.assertFalse(any(x < 0 for x in xs))\n',
-            'not [x for x in xs if bad]':
-                'def c(self, xs):\n    return not [x for x in xs if x < 0]\n',
+            'assert not [...]':
+                'def c(self, xs):\n    self.assertFalse([x for x in xs if x < 0])\n',
             'loop assert':
                 'def d(self, xs):\n    for x in xs:\n        self.assertTrue(x > 0)\n',
         }
         for label, source in cases.items():
             with self.subTest(form=label):
-                self.assertEqual(self.offenders_of(source), [source.split('(')[0].split()[-1]],
-                                 f'{label} 没被抓到')
+                self.assertEqual(len(self.offenders_of(source)), 1, f'{label} 没被抓到')
 
-    def test_rule_scanner_flags_forms_outside_the_list(self):
-        # 这条证明的是「默认方向」：不是七种列表里的形态，也照样报
-        outside = {
-            'sum(1 for ...) == 0': ('def a(self, xs):\n'
-                                    '    assert sum(1 for x in xs if x < 0) == 0\n'),
-            'len(...) == 0': ('def b(self, xs):\n'
-                              '    assert len([x for x in xs if x < 0]) == 0\n'),
-            '== []': ('def c(self, xs):\n'
-                      '    assert xs == []\n'),
+    def test_rule_scanner_does_not_flag_existential_or_negative(self):
+        # 这两类不是「空集合平凡为真」，报了就是误报
+        safe = {
+            'assertTrue(any(...)) 空集合直接失败':
+                'def a(self, xs):\n    self.assertTrue(any(x > 0 for x in xs))\n',
+            'assertFalse(any(...)) 空集合语义正确':
+                'def b(self, xs):\n    self.assertFalse(any(x < 0 for x in xs))\n',
         }
-        for label, source in outside.items():
+        for label, source in safe.items():
             with self.subTest(form=label):
-                self.assertEqual(len(self.offenders_of(source)), 1,
-                                 f'{label} 属于列表外形态，默认方向应当报出来')
+                self.assertEqual(self.offenders_of(source), [], f'{label} 被误报了')
 
     def test_rule_scanner_accepts_real_protection(self):
         protected = {

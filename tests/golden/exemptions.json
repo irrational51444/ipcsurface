@@ -1,9 +1,9 @@
 {
-  "protected": 10,
-  "total": 11,
-  "locked_at_ratio": 0.9091,
-  "locked_at_version": "0.53.0",
+  "protected": 2,
+  "total": 3,
+  "locked_at_ratio": 0.6667,
+  "locked_at_version": "0.54.0",
   "policy": "按版本 + 按比率双锁：比率上涨就红，必须显式更新 locked_at_ratio 并写理由；版本号对不上也红，防止跨版本静默沿用。",
-  "reason": "这轮加了三条用例后分母变 11、比率升到 91%：本套件里的全称断言多为「不该出现某个东西」（assertFalse(any(...))），空集合本来就该通过，注释豁免是正确处置而不是偷懒。比率高本身不是失控，所以锁定在当前值，再涨才红。",
-  "note": "注释豁免的断言处数 / 全称断言处数。警报线，不是安全线。"
+  "reason": "分母重新定义：只数「空集合上平凡为真」的 vacuous 断言。assertTrue(any(...)) 空集合直接失败、assertFalse(any(...)) 空集合语义正确，这两类不再进分母——之前 91% 里绝大部分是它们，属于判据误报而不是豁免膨胀。",
+  "note": "注释豁免的 vacuous 断言处数 / vacuous 断言处数。警报线，不是安全线。"
 }

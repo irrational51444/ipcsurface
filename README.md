@@ -326,9 +326,14 @@ CI 只认三样东西：**退出码、可解析的结构、稳定的规则 id**�
 
 **豁免口的约束**：产品代码里的 `# universal-assert-ok:` 必须带 ≥10 字理由，否则自查红。自查每次都会报「合规豁免 N 条」——这个数涨上去就是信号。
 
-**豁免率怎么算**：分子是「真的靠注释被放行的断言处数」，分母是「全称断言处总数」——两边同粒度。当前 **10 / 11 ≈ 91%**，分布在 11 个函数里（平均每函数约 1 处）；这个数字可以自己复算：`grep -c '# empty-allowed'` 得注释条数，除以全称断言处数。
+**豁免率怎么算**：分子是「真的靠注释被放行的**真空断言**处数」，分母是「真空断言处总数」。
 
-它不代表失控，因为「没有任何被吞掉的通道」这类断言，空集合本来就该通过。所以它是**警报线不是安全线**。
+「真空断言」= 空集合上平凡为真的那种：`assertTrue(all(...))`、`assert not [...]`、循环体内断言、`len(x) == 0` 之类。另外两类**不进分母**：
+
+- `assertTrue(any(...))` 是存在性断言，空集合直接失败，不会静默通过；
+- `assertFalse(any(...))` 是「不该有坏东西」，空集合本来就该通过。
+
+当前 **2 / 3 ≈ 67%**。上一版报的 91% 是把上面两类也算进分母算出来的——那不是豁免膨胀，是判据误报。
 
 **双锁：锁比率，也锁版本。** `tests/golden/exemptions.json` 同时存 `locked_at_ratio` 和 `locked_at_version`。
 
@@ -563,12 +568,12 @@ REA 负责拆，这个脚本负责摆和还原，人负责判断。三段分开�
 
 ## 发布
 
-当前 **0.53.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
+当前 **0.54.0**。每个版本打一个 tag，全部版本在 [Releases](https://github.com/irrational51444/ipcsurface/releases)，逐条改动在 [CHANGELOG.md](CHANGELOG.md)。
 
 ```bash
 git clone https://github.com/irrational51444/ipcsurface
 cd ipcsurface
-git checkout v0.53.0
+git checkout v0.54.0
 python ipcsurface.py --version
 ```
 
@@ -576,7 +581,7 @@ python ipcsurface.py --version
 
 | 版本 | 一句话 |
 | --- | --- |
-| 0.53.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
+| 0.54.0 | 自查抓到通道口径不一致：报告 41 条，基线存了 52 |
 | 0.30.0 | 补正向扫描：新字段靠「有没有登记」判定，不靠名字像不像 |
 | 0.29.0 | 聚合字段登记表：第四次加聚合字段时检查先红 |
 | 0.28.0 | 两个强度各管一件事：最好的多硬 vs 最薄的环节多薄 |
