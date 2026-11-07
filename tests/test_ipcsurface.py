@@ -2131,7 +2131,8 @@ class AssertionHygieneTests(unittest.TestCase):
             if locked is not None and round(rate, 4) > round(locked, 4):
                 # 只报告，不拦：比率涨了可能只是多了一条合理声明
                 print(f'提示：豁免率 {rate:.2%} 高于基线 {locked:.2%}'
-                      '（背景信息，不是门禁；门禁看替代型条数）')
+                      f'（背景信息，不是门禁；分母只有 {spots_total} 处，'
+                      '一条断言就能摆动十几个百分点，别当趋势读）')
             # 基线按版本锁定：版本对不上就得复核，不能静默沿用旧基线
             self.assertEqual(
                 base.get('locked_at_version', ipc.__version__), ipc.__version__,
