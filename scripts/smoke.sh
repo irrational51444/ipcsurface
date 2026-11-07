@@ -55,7 +55,7 @@ if [ -n "$asm" ]; then
   run "asar 比版本" $cmd "$asm" --diff "$asm" -o /tmp/smoke-3.md
   run "深目录自动建" $cmd "$asm" -o /tmp/smoke/deep/out.md
 else
-  echo "  （没有 examples/build/*.asar，先跑 examples/build.sh）"
+  printf '[SKIP] asar 那几项（没有 examples/build/*.asar，先跑 examples/build.sh）\n'
 fi
 
 if [ -n "$dyn" ]; then
@@ -75,7 +75,7 @@ if [ -n "$ev" ]; then
   run "写基线" $cmd "$ev" --write-baseline /tmp/smoke-base.json -o /tmp/smoke-5.md
   run "读基线" $cmd "$ev" --baseline /tmp/smoke-base.json -o /tmp/smoke-6.md
 else
-  echo "  （没找到 Evidence，跳过语法级那几项）"
+  printf '[SKIP] 语法级那几项（没找到 Evidence，需要 rea）\n'
 fi
 
 run_code "不存在的文件" 1 $cmd nope.asar
