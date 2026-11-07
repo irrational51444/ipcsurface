@@ -222,9 +222,17 @@ def check_smoke_count(ok, readme):
                          text=True, encoding='utf-8', errors='replace', timeout=600).stdout
     passed = out.count('[OK]')
     said = parse_count(readme)
-    return ok & check('冒烟项数和 README 说的一致',
-                      passed > 0 and said == passed,
-                      f'实际 {passed} 项 / README {said}')
+    # 两种环境分开判：有示例包时项数必须和 README 对齐；没有示例包时
+    # 有些段会整段跳过，项数自然变少——那时只要求「跑过、且没有 [FAIL]」。
+    examples_built = os.path.isdir(os.path.join(ROOT, 'examples', 'build'))
+    failed_items = out.count('[FAIL]')
+    if examples_built:
+        return ok & check('冒烟项数和 README 说的一致',
+                          passed > 0 and said == passed and failed_items == 0,
+                          f'实际 {passed} 项 / README {said}，失败 {failed_items}')
+    return ok & check('没有示例包时冒烟仍跑过且无失败项',
+                      passed > 0 and failed_items == 0,
+                      f'实际 {passed} 项，失败 {failed_items}（示例包缺失，项数不对齐 README 是预期）')
 
 
 def check_input_error_kinds(ok):
