@@ -1579,15 +1579,38 @@ class AssertionHygieneTests(unittest.TestCase):
                     return False
                 if node.func.id == 'len':
                     return 0        # 空集合长度为 0
+                if node.func.id in ('set', 'dict', 'list', 'tuple', 'frozenset') \
+                        and not node.args:
+                    return False    # xs == set() / dict() 这类空容器
             if isinstance(node, _ast.List) and not node.elts:
+                return False
+            if isinstance(node, _ast.Tuple) and not node.elts:
+                return False        # xs == ()
+            if isinstance(node, _ast.Dict) and not node.keys:
+                return False        # xs == {}
+            if isinstance(node, _ast.Set) and not node.elts:
                 return False
             if isinstance(node, _ast.Compare) and len(node.ops) == 1:
                 op = node.ops[0]
                 other = node.comparators[0]
                 # x == [] / x is not None：空集合上恒真，左边算不出也照样成立
-                if isinstance(op, _ast.Eq) and isinstance(other, _ast.List) \
-                        and not other.elts:
-                    return True
+                def empty_container(n):
+                    if isinstance(n, _ast.List) and not n.elts:
+                        return True
+                    if isinstance(n, _ast.Tuple) and not n.elts:
+                        return True
+                    if isinstance(n, _ast.Set) and not n.elts:
+                        return True
+                    if isinstance(n, _ast.Dict) and not n.keys:
+                        return True
+                    if isinstance(n, _ast.Call) and isinstance(n.func, _ast.Name) \
+                            and n.func.id in ('set', 'dict', 'list', 'tuple',
+                                              'frozenset') and not n.args:
+                        return True
+                    return False
+
+                if isinstance(op, _ast.Eq) and empty_container(other):
+                    return True     # xs == [] / () / {} / set() / dict() ……
                 if isinstance(op, _ast.IsNot) and isinstance(other, _ast.Constant) \
                         and other.value is None:
                     return True
@@ -2025,6 +2048,16 @@ class AssertionHygieneTests(unittest.TestCase):
         # 反面：完全不含集合语义的普通断言，不该被卷进来
         source = 'def f(self):\n    self.assertTrue(flag)\n'
         self.assertEqual(self.kinds_of(source), [])
+
+    def test_rule_classifier_covers_all_empty_containers(self):
+        # README 写了「空容器」，那就得是全部变体，不能只认 == []
+        cases = ['[]', '()', '{}', 'set()', 'dict()', 'frozenset()', 'list()', 'tuple()']
+        # empty-allowed: cases 是常量表，非空由定义保证
+        for literal in cases:
+            with self.subTest(form=literal):
+                code = f'def f(self, xs):\n    self.assertTrue(xs == {literal})\n'
+                self.assertEqual(self.kinds_of(code), ['vacuous'],
+                                 f'xs == {literal} 也是空容器，必须一样被建模')
 
     def test_rule_classifier_keeps_vacuous_without_quantifier(self):
         # 这些都不含 all/any，但空集合上照样通过——0.49.0 定的「默认当危险报」不能退
