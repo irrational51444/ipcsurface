@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.65.8**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.66.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — and **how far you can trust the report itself**.
 
@@ -114,7 +114,16 @@ Durability is tri-state: `yes` / `no` / `unknown`. `unknown` appears on platform
 - **Self-check**: version, schema, rule registry, docs-vs-implementation, clean worktree
 - One command for all three gates: `bash scripts/verify.sh` — CI runs the same script
 
-CI also checks the exit-code contract: a clean archive must exit 0, a dirty one must exit 2, and SARIF must upload.
+CI runs three jobs:
+
+- `check` (Linux): install, build fixtures, all three gates
+- `windows`: the same gates plus `scripts/check_windows_behaviour.py` — directory fsync unavailable, `durable` must be `unknown`, replace-under-lock reports `replace_failed`, a 263-character path is writable
+- `signal`: clean archive exits 0, dirty exits 2, SARIF uploads
+
+Two release steps are scripted, not remembered:
+
+- `python scripts/check_release_tag.py v<version>` — the tagged commit must be CI-green (`0` green / `1` red / `2` unknown)
+- `python scripts/make_release.py v<version> --name ... --notes-file ...` — publishes only after the guard passes (`3` means the script itself failed)
 
 ---
 
@@ -122,7 +131,7 @@ CI also checks the exit-code contract: a clean archive must exit 0, a dirty one 
 
 - String-level scan, no syntax tree; concatenated or computed names stay invisible. Use REA Evidence when you need precision.
 - Sandboxes, native modules, and channels wired up only at runtime are invisible statically.
-- On Windows directory fsync is unavailable, so `durable` is `unknown`; symlink refusal and replace-under-lock paths have never run on a real system. Recorded in the [changelog](CHANGELOG.md).
+- On Windows directory fsync is unavailable, so `durable` is `unknown` — asserted by the CI `windows` job. Read-only directories remain a blind spot; recorded in the [changelog](CHANGELOG.md).
 - `adv-asar.asar` is a hand-made adversarial fixture with no build script; it exists only on the author's machine.
 
 ---

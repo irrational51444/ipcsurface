@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.65.8**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.66.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
 
@@ -143,7 +143,16 @@ python ipcsurface.py --recover out.md
 - **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
 
-CI 同时验证「退出码能不能被下游当信号」：干净包必须退 0，有问题的包必须退 2，SARIF 能上传。
+CI 跑三个任务，缺一不可：
+
+- `check`（Linux）：装包、造示例包、三道闸
+- `windows`：同一套三道闸，外加 `scripts/check_windows_behaviour.py`——目录 fsync 不可用、`durable` 必须是 `unknown`、替换被占用报 `replace_failed`、263 字符长路径写得出来
+- `signal`：干净包必须退 0，有问题的包必须退 2，SARIF 能上传
+
+发布另有两道程序，不靠记性：
+
+- `python scripts/check_release_tag.py v<版本>`：标签指向的提交必须 CI 全绿（`0` 绿 / `1` 红 / `2` 查不到）
+- `python scripts/make_release.py v<版本> --name ... --notes-file ...`：发布前先过守卫，`0` 才继续（`3` 是脚本自己出错）
 
 ---
 
@@ -151,7 +160,7 @@ CI 同时验证「退出码能不能被下游当信号」：干净包必须退 0
 
 - 字符串级粗扫，不建语法树；拼出来的、算出来的名字看不见。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
-- Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`；符号链接拒绝写、替换被占用这几条路径没有在真实环境跑过，写在 [CHANGELOG](CHANGELOG.md) 里。
+- Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`——这条现在由 CI 的 `windows` 任务断言。只读目录仍是盲区（没有在真实只读卷上跑过），写在 [CHANGELOG](CHANGELOG.md) 里。
 - `adv-asar.asar` 这个对抗样本没有生成脚本，只在本地有，别的机器造不出来。
 
 ---
@@ -164,8 +173,8 @@ CI 同时验证「退出码能不能被下游当信号」：干净包必须退 0
   - **用户自定义函数、依赖外部状态的调用 = 函数返回值**，一律策略上不算、保守归真空。
   - 带集合语义但真值没建模的，一律当危险报。
   这两类的边界是「有没有引入集合之外的状态」，不是「长没长成函数调用的样子」——`len` 和 `sum` 都是调用，但它们只吃集合。
-- 发布前跑一次 python scripts/check_release_tag.py v<版本>：标签指向的提交必须 CI 全绿，否则它会退 1。
-- `check_release_tag.py` 第一次跑就发现 `v0.62.0` 发布时 CI 是红的；该版本不追溯修改，仅记录（见 CHANGELOG 0.65.6）。
+- 发布前跑一次 `python scripts/check_release_tag.py v<版本>`：标签指向的提交必须 CI 全绿，红退 1、查不到退 2。
+- `check_release_tag.py` 第一次跑就发现 `v0.62.0` 发布时 CI 是红的；该版本不追溯修改，仅记录（见 CHANGELOG 0.65.5）。
 - 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **4 / 5**（真空断言口径）——这个数涨了就是信号，不是背景音。
 
 ## 设计原则（写给以后改它的人）
