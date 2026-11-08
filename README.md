@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.69.1**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.69.2**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
 
@@ -138,7 +138,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **221 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **223 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，不看内部函数
 - **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
@@ -170,6 +170,7 @@ CI 跑三个任务，缺一不可：
 - **两路交叉单独一行**：静态和运行时各看见一次的，进「两条路都对上的」那一层，不跟别的层合并。
 - **每层给样本**：md 里每层抽一两条 `名字 @ file:line` 给人看；**JSON 里给全量** `sites`（名字 → 所有位置），下游想做批量交叉验证时不该被抽样挡住。
 - **交叉还分强度**：两条路都对上的通道带 `corroboration_level`——`strong`（两个不同文件）、`medium`（同文件、相隔 5 行以上）、`weak-same-line`（同一行：基本是同一处代码的两种视角）、`weak-near-line`（相隔 1–5 行：可能是同一调用点，也可能只是碰巧挨着，**分不清**）、`unknown`（运行时那侧没给位置）。把相邻行单独拆出来，是因为「同一处代码两个视角」和「两段无关代码碰巧挨着」的独立性差得远。
+  - **现在的实情**：运行时那一侧还不提供位置，所以实际输出只会是 `unknown`；`strong` / `medium` / `weak-*` 是位置信息接上之后才有的档位，别当成已经能用。
 
 ## 已知边界
 

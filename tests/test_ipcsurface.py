@@ -1427,6 +1427,19 @@ class TrustworthinessTests(unittest.TestCase):
         self.assertEqual(ipc.corroboration_strength('a.js:10', 'b.js:3')[0], 'strong')
         self.assertEqual(ipc.corroboration_strength('a.js:10', None)[0], 'unknown')
 
+    def test_rule_corroboration_level_is_unknown_without_runtime_sites(self):
+        # 探针不报位置时，档位必须是 unknown——不能凭「都对上了」自己升一档。
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('v:1', f)"})
+        probe = {'handlers': ['v:1'], 'windows': []}
+        item = ipc.channel_sources(facts, probe=probe)['v:1']
+        self.assertTrue(item['corroborated'])
+        self.assertEqual(item.get('corroboration_level'), 'unknown')
+
+    def test_rule_report_says_levels_are_not_in_use_yet(self):
+        # README 得写清「现在只会是 unknown」，否则四档看起来像已经在用
+        text = open(os.path.join(ROOT, 'README.md'), encoding='utf-8').read()
+        self.assertIn('只会是 `unknown`', text)
+
     def test_rule_near_line_says_what_it_cannot_tell(self):
         level, basis = ipc.corroboration_strength('a.js:10', 'a.js:12')
         self.assertEqual(level, 'weak-near-line')

@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.69.1'
+__version__ = '0.69.2'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1220,8 +1220,10 @@ def confidence_levels(facts, probe=None, poke=None):
             'unit': '条',
             'strength': corroborated_strength,
             'can_prove': '静态和运行时各看见一次，两条路互不依赖',
-            'cannot_prove': '对上的是名字，不是行为；门后逻辑仍然没审',
-            'next_step': '优先看这几条，它们最不像我编的',
+            'cannot_prove': '对上的是名字，不是行为；门后逻辑仍然没审。'
+                            '另外：运行时那一侧现在不提供位置，所以 corroboration_level '
+                            '实际只会是 unknown——别的档位是等位置信息接上才有的，别当成已经在用',
+            'next_step': '优先看这几条，它们最不像我编的；但别把「对上了」当成「对上得有多实」',
         })
     levels.append({
         'id': 'literal',
