@@ -96,6 +96,12 @@ def main():
     b.pop('generated_at', None)
     check('同一份输入两次跑结果一致', a == b)
 
+    # 人工标注的 ground truth：把「我觉得准」变成召回/精确率
+    gt = subprocess.run([sys.executable, os.path.join(ROOT, 'scripts', 'ground_truth_check.py')],
+                        capture_output=True, text=True, encoding='utf-8', errors='replace')
+    print(gt.stdout.strip()[-600:])
+    check('ground truth 比对通过', gt.returncode == 0)
+
     print()
     if problems:
         print('没过的项：' + '、'.join(problems))

@@ -231,7 +231,10 @@
         "literal"
       ],
       "weakest_strength": 1.0,
-      "independent_pairs": []
+      "independent_pairs": [],
+      "refutes_if": [
+        "在源码里搜不到这个字符串（或它只是注释/文档里的示例）"
+      ]
     }
   },
   "runtime": null,
@@ -247,13 +250,13 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "a0e78881161ed25086b984e5044c37de2d335d3e196c2986f3b9829e7ff6b810",
-    "version": "0.69.2",
+    "version": "0.70.0",
     "schema": "ipcsurface/asar/10",
     "params": {},
     "channels": [
       "a:b"
     ],
-    "digest": "389429e90262bf1934a592de7cdd4ef2357c527c312043eeff4cf9c7e674647f",
+    "digest": "d20e3f058934a4dd2f35343e7d2d887db8ad6b50cda2ae2f5aa092b9832318cb",
     "algorithm": "sha256(canonical-json)"
   },
   "sites": {

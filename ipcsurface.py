@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.69.2'
+__version__ = '0.70.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1103,6 +1103,7 @@ def channel_sources(facts, probe=None):
                                          if v == lowest)
         item['weakest_strength'] = lowest
         item['independent_pairs'] = ['%s+%s' % (a, b) for a, b in pairs if independent(a, b)]
+        item['refutes_if'] = refutes_if(item['sources'])
         if item['corroboration'] == 'static_runtime':
             level, basis = corroboration_strength(item.get('where'),
                                                   item.get('runtime_where'))
@@ -1172,22 +1173,46 @@ def corroboration_strength(static_where, runtime_where):
     return 'strong', f'两个不同文件：{s_path} / {r_path}'
 
 
+REFUTES = {
+    'literal': '在源码里搜不到这个字符串（或它只是注释/文档里的示例）',
+    'literal-resolved': '常量表里查不到这个名字，或那张表在更早的地方被整个覆盖',
+    'runtime': '程序跑起来后，运行时不注册这个名字',
+    'computed': '调用点的参数在运行时算出来是另一个值',
+    'harvested': '这个字符串不是通道名，只是长得像',
+}
+
+
+def refutes_if(sources):
+    """哪几种观察能推翻这条结论。只给能推翻的，不给能「证实」的。"""
+    out = []
+    for source in sources:
+        text = REFUTES.get(source)
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
 def sample_sites(facts, limit=2, only_resolved=False):
     """抽一两条能自己核对的样本：名字 + file:line。
 
     有样本才叫「你能查」，没样本就只能「你信我」。
     """
     resolved = set(facts.get('resolved') or ())
-    out = []
+    candidates = []
+    seen = set()
     for name, where in (facts['handlers'] + facts['invokes'] + facts['exposes']):
+        if name in seen:          # 同一个名字可能同时出现在 handler 和 invoke 里
+            continue
         if only_resolved and name not in resolved:
             continue
         if not only_resolved and name in resolved:
             continue
-        out.append({'name': name, 'where': where})
-        if len(out) >= limit:
-            break
-    return out
+        seen.add(name)
+        candidates.append({'name': name, 'where': where})
+    # 按名字的 sha1 排，谁的机器上看都是同两条——样本能互相复核才对得上
+    candidates.sort(key=lambda item: hashlib.sha1(
+        item['name'].encode('utf-8')).hexdigest())
+    return candidates[:limit]
 
 
 def confidence_levels(facts, probe=None, poke=None):
@@ -1342,10 +1367,17 @@ def runtime_crosscheck(probe, static_names):
     handlers = probe.get('handlers') or []
     only_runtime = sorted(set(handlers) - set(static_names))
     only_static = sorted(set(static_names) - set(handlers))
+    # 探针可以带位置（name -> "file:line"）。带了我们才敢给交叉定档；
+    # 格式不对的不认，直接丢掉——宁可 unknown，也不拿垃圾位置算强度。
+    sites = {}
+    for name, where in (probe.get('sites') or {}).items():
+        if isinstance(where, str) and ':' in where:
+            sites[name] = where
     return {
         'handlers': handlers,
         'listeners': probe.get('listeners') or [],
         'windows': probe.get('windows') or [],
+        'sites': sites,
         'only_runtime': only_runtime,
         'only_static': only_static,
     }
@@ -2587,6 +2619,7 @@ EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
     'runtime_where', 'corroboration_level', 'corroboration_basis',
+    'refutes_if',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
 

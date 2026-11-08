@@ -43,9 +43,13 @@
 
 `corroboration_level` 现在**只会是 `unknown`**：运行时那一侧只报名字、不报位置。其余四档是为「位置接上」准备的，代码在、用例在，但真实输出里触发不到。这一点写清楚，比让人以为四档都在用要好。
 
+## 已知的扫不到（有数字）
+
+`tests/golden/ground_truth.json` 里 `dyn-asar` 那组：`ledger:add/list/remove` 是 `for (const op of OPS) ipcMain.handle(makeChannel(op))` 运行时拼出来的，静态扫不到。它们记在 `known_unreachable` 里，所以这一组的 recall 是 1.00，但**总覆盖率只有 0.50**——平均总覆盖率 0.88 这个数字里已经含着这部分缺口。
+
 ## 版本锁
 
-版本：0.69.2
+版本：0.70.0
 
 这张表和版本一起走：`scripts/selfcheck.py` 会核对这里的版本号与当前版本一致，
 并对每类的最少条数、表格列名做断言。改版本号时如果没回来动这张表，自检会红——

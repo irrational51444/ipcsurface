@@ -1,0 +1,53 @@
+{
+  "schema": "ipcsurface/ground-truth/1",
+  "why": "人工数出来的通道清单，用来算召回和精确率。第一次跑就发现我原先的标注是凭印象写的：dyn 那组标成 calc:*、static 漏了 ledger:export。现在按源码逐个数；确实扫不到的那些名字单独列在 known_unreachable，不混进漏报。",
+  "fixtures": {
+    "static-asar.asar": {
+      "channels": [
+        "ledger:__internal_sync",
+        "ledger:add",
+        "ledger:export",
+        "ledger:list",
+        "ledger:remove"
+      ],
+      "note": "main.js 里五个 ipcMain.handle 的字面量，preload.js 再引用一遍"
+    },
+    "dyn-asar.asar": {
+      "channels": [
+        "ledger:add",
+        "ledger:list",
+        "ledger:remove",
+        "ledger:clear",
+        "ledger:shadow",
+        "ledger:tpl"
+      ],
+      "known_unreachable": [
+        "ledger:add",
+        "ledger:list",
+        "ledger:remove"
+      ],
+      "note": "五个来自 OPS 循环里的 makeChannel(op)，名字是运行时算的，静态扫不到——这三个记在 known_unreachable 里，算进总量但不算工具漏；其余三个（clear / shadow / tpl）都是能认出来的写法"
+    },
+    "obf-asar.asar": {
+      "channels": [],
+      "note": "强混淆，一个都认不出——这里为空是事实，不是漏"
+    },
+    "realish.asar": {
+      "channels": [
+        "app:ready",
+        "window:minimize",
+        "window:maximize",
+        "window:close",
+        "fs:read",
+        "fs:write",
+        "dialog:open",
+        "dialog:save",
+        "update:check",
+        "settings:get",
+        "settings:set",
+        "log:tail"
+      ],
+      "note": "生成器里写死的十二条"
+    }
+  }
+}
