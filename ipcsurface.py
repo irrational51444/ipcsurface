@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.67.1'
+__version__ = '0.68.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1094,6 +1094,24 @@ def channel_sources(facts, probe=None):
     return seen
 
 
+def sample_sites(facts, limit=2, only_resolved=False):
+    """抽一两条能自己核对的样本：名字 + file:line。
+
+    有样本才叫「你能查」，没样本就只能「你信我」。
+    """
+    resolved = set(facts.get('resolved') or ())
+    out = []
+    for name, where in (facts['handlers'] + facts['invokes'] + facts['exposes']):
+        if only_resolved and name not in resolved:
+            continue
+        if not only_resolved and name in resolved:
+            continue
+        out.append({'name': name, 'where': where})
+        if len(out) >= limit:
+            break
+    return out
+
+
 def confidence_levels(facts, probe=None, poke=None):
     """这份报告里每一样东西，各自能证明到什么程度。
 
@@ -1131,6 +1149,7 @@ def confidence_levels(facts, probe=None, poke=None):
         'id': 'literal',
         'label': '写死的名字',
         'count': literal_direct,
+        'samples': sample_sites(facts, limit=2),
         'unit': '条',
         'strength': 1.0,
         'can_prove': '源码里逐字写着，file:line 能回到原文复核',
@@ -1142,6 +1161,7 @@ def confidence_levels(facts, probe=None, poke=None):
             'id': 'literal-resolved',
             'label': '靠还原才认出的',
             'count': literal_resolved,
+            'samples': sample_sites(facts, limit=2, only_resolved=True),
             'unit': '条',
             'strength': 0.9,
             'can_prove': '名字是从本包的字符串池、常量或常量对象里查出来的，原始出处还在源码里',
@@ -1307,6 +1327,17 @@ def confidence_ladder(facts, probe=None, poke=None):
         out.append(f"| {level['label']} | {amount(level)} | "
                    f"{level['can_prove']} | {level['cannot_prove']}；{level['next_step']} |")
     out.append('')
+
+    # 每层给一两条能自己查的样本：有样本才叫「你能核对」，没样本只能「你信我」
+    samples = [(level['label'], level['samples']) for level in levels
+               if level.get('samples')]
+    if samples:
+        out.append('**抽两条自己看**（打不开就别信这一行）：')
+        out.append('')
+        for label, items in samples:
+            for item in items[:2]:
+                out.append(f"- {label}：`{item['name']}` @ `{item['where']}`")
+        out.append('')
     out.append('> 这张表里的任何一层都不该被单独引用。报告是给人做判断用的地图，不是判决书。')
     out.append('> 每层会重叠——同一个名字可能既靠还原查出来，又被运行时看见，两行都会算它。')
     out.append('> 所以别把这一列加起来当总数，它不是分类，是几张不同的标签。')
@@ -1361,6 +1392,38 @@ def render_baseline(delta):
     return out
 
 
+def input_sha256(path):
+    """输入文件的 sha256。读不动就返回 None——不编一个值出来。"""
+    try:
+        digest = hashlib.sha256()
+        with open(path, 'rb') as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b''):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
+def fingerprint_of(target, channel_names, params=None):
+    """这份报告的可复算指纹。
+
+    同样输入 + 同样版本 + 同样参数 → 同样的值。别人重跑能对上，才叫证据；
+    对不上就是有人改了输入、换了版本，或者我这边行为漂了。
+    """
+    payload = {
+        'input_sha256': input_sha256(target),
+        'version': __version__,
+        'schema': 'ipcsurface/asar/10',
+        'params': params or {},
+        'channels': sorted(channel_names),
+    }
+    blob = json.dumps(payload, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':')).encode('utf-8')
+    payload['digest'] = hashlib.sha256(blob).hexdigest()
+    payload['algorithm'] = 'sha256(canonical-json)'
+    return payload
+
+
 def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
@@ -1391,6 +1454,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'limits': blind_spots(facts),
         'baseline': baseline_obj,
         'version': __version__,
+        'fingerprint': fingerprint_of(target, names),
     }
 
 
@@ -1400,6 +1464,10 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
     out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
     out.append(f'- {stamp()}')
+    fp = fingerprint_of(target, [n for n, _ in facts['handlers'] + facts['invokes']
+                                 + facts['exposes']])
+    out.append(f"- 复算指纹：`{fp['digest']}`（输入 {fp['input_sha256'][:16] if fp['input_sha256'] else '读不到'}…，"
+               f"版本 {fp['version']}；同样的输入和参数重跑，应该得到同一个值）")
     out.append('')
     out.append('## 这份报告能信多少')
     out.append('')
@@ -1624,6 +1692,7 @@ REPORT_TOP_LEVEL_KEYS = frozenset({
     'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
+    'fingerprint',
 })
 
 

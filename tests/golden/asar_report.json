@@ -18,6 +18,12 @@
       "id": "literal",
       "label": "写死的名字",
       "count": 1,
+      "samples": [
+        {
+          "name": "a:b",
+          "where": "src/app.js:1"
+        }
+      ],
       "unit": "条",
       "strength": 1.0,
       "can_prove": "源码里逐字写着，file:line 能回到原文复核",
@@ -230,5 +236,16 @@
     "没有给 --poke，门禁状态全部未知"
   ],
   "baseline": null,
-  "version": "<version>"
+  "version": "<version>",
+  "fingerprint": {
+    "input_sha256": "a0e78881161ed25086b984e5044c37de2d335d3e196c2986f3b9829e7ff6b810",
+    "version": "0.68.0",
+    "schema": "ipcsurface/asar/10",
+    "params": {},
+    "channels": [
+      "a:b"
+    ],
+    "digest": "cd83761fa37214ad53b005d8e0d9e400fe64af9f74f604f1e84cdcff440bf6a1",
+    "algorithm": "sha256(canonical-json)"
+  }
 }

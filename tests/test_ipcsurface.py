@@ -1410,6 +1410,60 @@ class ReleaseGuardTests(unittest.TestCase):
         self.assertIn('凭据', why)
 
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+class TrustworthinessTests(unittest.TestCase):
+    """可信度四件：指纹、两路交叉、抽样、已知会错。"""
+
+    def test_rule_fingerprint_is_reproducible(self):
+        sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(sample):
+            self.skipTest('没有靶场')
+        a = ipc.fingerprint_of(sample, ['a', 'b'])
+        b = ipc.fingerprint_of(sample, ['b', 'a'])   # 顺序不该影响
+        self.assertEqual(a['digest'], b['digest'])
+        self.assertEqual(a['input_sha256'], ipc.input_sha256(sample))
+
+    def test_rule_fingerprint_changes_with_input(self):
+        sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        other = os.path.join(ROOT, 'examples', 'build', 'dyn-asar.asar')
+        if not (os.path.exists(sample) and os.path.exists(other)):
+            self.skipTest('没有靶场')
+        a = ipc.fingerprint_of(sample, ['a'])
+        b = ipc.fingerprint_of(other, ['a'])
+        self.assertNotEqual(a['digest'], b['digest'])
+
+    def test_rule_fingerprint_reports_missing_input_as_null(self):
+        data = ipc.fingerprint_of(os.path.join(ROOT, 'nope.asar'), [])
+        self.assertIsNone(data['input_sha256'])
+
+    def test_rule_report_carries_samples_per_tier(self):
+        sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(sample):
+            self.skipTest('没有靶场')
+        out = os.path.join(tempfile.mkdtemp(), 'r.json')
+        proc = subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                               sample, '--format', 'json', '-o', out],
+                              capture_output=True, text=True, encoding='utf-8',
+                              errors='replace')
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.load(open(out, encoding='utf-8'))
+        levels = [lv for lv in report['confidence'] if lv.get('samples')]
+        self.assertTrue(levels, '至少一层要给出可核对的样本')
+        # empty-allowed: levels 由上面的断言保证非空，items 是它自己的样本
+        for level in levels:
+            for item in level['samples']:
+                self.assertTrue(item['where'], '样本必须带位置')
+                self.assertRegex(item['where'], r':\d+$', '位置要能回到行号')
+
+    def test_rule_known_wrong_file_exists_and_is_linked(self):
+        path = os.path.join(ROOT, 'docs', 'known-wrong.md')
+        self.assertTrue(os.path.exists(path), '已知会错清单得在')
+        readme = open(os.path.join(ROOT, 'README.md'), encoding='utf-8').read()
+        self.assertIn('known-wrong.md', readme, 'README 得链到它，不然没人看')
+
+
 class ReleaseScriptTests(unittest.TestCase):
     """make_release.py 自己也得有证据，不然它只是「这次跑了一下」。"""
 
