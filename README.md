@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.65.6**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.65.7**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
 
@@ -138,7 +138,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **207 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **212 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口
 - **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
@@ -158,7 +158,7 @@ CI 同时验证「退出码能不能被下游当信号」：干净包必须退 0
 
 ## 维护者自查（写给改它的人）
 
-- 用例与文档的数字必须一致：207 个用例、冒烟 15 项，自查会核对。
+- 用例与文档的数字必须一致：212 个用例、冒烟 15 项，自查会核对。
 - 全称断言的空集合防护是**按语义**判的：只建模真值只依赖集合自身属性的表达式。
   - **内建集合操作 = 集合自身的属性**，会被建模：`len(xs)`、`sum(xs)`、`sum(1 for ...)`、`xs.count(x)`、`xs.index(x)`、`sorted(xs)`、`set(xs)`、`all(...)`、`any(...)`、推导式、空容器字面量。
   - **用户自定义函数、依赖外部状态的调用 = 函数返回值**，一律策略上不算、保守归真空。

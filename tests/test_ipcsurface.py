@@ -5,6 +5,7 @@
 """
 
 import errno
+import io
 import json
 import os
 import re
@@ -1381,6 +1382,73 @@ class ReleaseGuardTests(unittest.TestCase):
         code, why = self.guard.check_tag('v0.65.5', tok='')
         self.assertEqual(code, self.guard.EXIT_UNKNOWN)
         self.assertIn('凭据', why)
+
+
+class ReleaseScriptTests(unittest.TestCase):
+    """make_release.py 自己也得有证据，不然它只是「这次跑了一下」。"""
+
+    def setUp(self):
+        import importlib.util as _u
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'scripts', 'make_release.py')
+        spec = _u.spec_from_file_location('rel', path)
+        self.rel = _u.module_from_spec(spec)
+        spec.loader.exec_module(self.rel)
+
+    def _poster(self, calls):
+        def poster(tag, name, notes, tok):
+            calls.append((tag, name, notes))
+            return {'html_url': 'https://example.invalid/rel'}
+        return poster
+
+    def test_rule_release_script_stops_when_guard_red(self):
+        calls = []
+        code, msg = self.rel.publish('v0.0.1', 'n', 'b',
+                                     guard=lambda tag: (1, '有检查不是绿：windows'),
+                                     poster=self._poster(calls), tok='x')
+        self.assertEqual(code, self.rel.EXIT_GUARD_RED)
+        self.assertIn('CI 红', msg)
+        self.assertEqual(calls, [], '守卫红了还去建 release')
+
+    def test_rule_release_script_stops_when_guard_unknown(self):
+        calls = []
+        code, msg = self.rel.publish('v0.0.1', 'n', 'b',
+                                     guard=lambda tag: (2, '查询失败：HTTP 403'),
+                                     poster=self._poster(calls), tok='x')
+        self.assertEqual(code, self.rel.EXIT_GUARD_UNKNOWN)
+        self.assertIn('不是 CI 红', msg)
+        self.assertEqual(calls, [])
+
+    def test_rule_release_script_publishes_when_guard_green(self):
+        calls = []
+        code, msg = self.rel.publish('v0.0.1', 'n', 'b',
+                                     guard=lambda tag: (0, '6 个检查全绿'),
+                                     poster=self._poster(calls), tok='x')
+        self.assertEqual(code, self.rel.EXIT_OK)
+        self.assertEqual(calls, [('v0.0.1', 'n', 'b')])
+        self.assertIn('DONE', msg)
+
+    def test_rule_release_script_own_failure_is_three(self):
+        # 脚本自己出错用 3，不能和「守卫查不到」的 2 混
+        def boom(*a, **k):
+            raise RuntimeError('network down')
+
+        code, msg = self.rel.publish('v0.0.1', 'n', 'b',
+                                     guard=lambda tag: (0, 'ok'), poster=boom, tok='x')
+        self.assertEqual(code, self.rel.EXIT_SCRIPT_ERROR)
+        self.assertIn('发布失败', msg)
+
+    def test_rule_release_script_existing_release_is_red_not_three(self):
+        import urllib.error
+
+        def exists(*a, **k):
+            raise urllib.error.HTTPError('u', 422, 'exists', None,
+                                         io.BytesIO(b'{"errors":[{"code":"already_exists"}]}'))
+
+        code, msg = self.rel.publish('v0.0.1', 'n', 'b',
+                                     guard=lambda tag: (0, 'ok'), poster=exists, tok='x')
+        self.assertEqual(code, self.rel.EXIT_GUARD_RED)
+        self.assertIn('已经存在', msg)
 
 
 class GoldenScriptTests(unittest.TestCase):
