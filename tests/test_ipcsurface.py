@@ -2051,6 +2051,22 @@ class AssertionHygieneTests(unittest.TestCase):
         self.assertEqual(self.kinds_of(source), ['vacuous'],
                          '组合表达式算不出真值时应保守归真空')
 
+    def test_rule_overlapping_signals_count_once(self):
+        # 量词和集合语义同时命中（any 里带 in xs），只能记一次：
+        # 记两次会把分母虚高，密度算错。
+        cases = {
+            'any() + in xs': ('def f(self, xs):\n'
+                              '    self.assertTrue(any(x in xs for x in xs))\n'),
+            'len() + []': ('def f(self, xs):\n'
+                           '    self.assertTrue(len(xs) == 0 and xs == [])\n'),
+            'not + count()': ('def f(self, xs, y):\n'
+                              '    self.assertTrue(not xs.count(y))\n'),
+        }
+        for label, source in cases.items():
+            with self.subTest(form=label):
+                self.assertEqual(len(self.kinds_of(source)), 1,
+                                 f'{label} 同时命中两类信号，只该记一次')
+
     def test_rule_classifier_ignores_plain_boolean(self):
         # 不含量化的普通断言不该被当成真空断言
         source = ('def f(self):\n'
