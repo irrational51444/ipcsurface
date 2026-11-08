@@ -1416,6 +1416,38 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class TrustworthinessTests(unittest.TestCase):
     """可信度四件：指纹、两路交叉、抽样、已知会错。"""
 
+    def test_rule_content_digest_is_reproducible(self):
+        # 报告自己的指纹：去掉时间戳后应当可复算，谁拿这份报告都能验
+        sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(sample):
+            self.skipTest('没有靶场')
+        out1 = os.path.join(tempfile.mkdtemp(), 'a.json')
+        out2 = os.path.join(tempfile.mkdtemp(), 'b.json')
+        for out in (out1, out2):
+            subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                            sample, '--format', 'json', '-o', out],
+                           capture_output=True, text=True, encoding='utf-8')
+        a = json.load(open(out1, encoding='utf-8'))
+        b = json.load(open(out2, encoding='utf-8'))
+        self.assertEqual(a['content_digest']['digest'], b['content_digest']['digest'],
+                         '同一份输入，报告指纹必须一样')
+        # 自己也能重算
+        self.assertEqual(a['content_digest']['digest'], ipc.content_digest(a)['digest'])
+
+    def test_rule_merkle_root_changes_with_content(self):
+        files_a = {'a.js': b'one', 'b.js': b'two'}
+        files_b = {'a.js': b'one', 'b.js': b'three'}
+        self.assertNotEqual(ipc.archive_merkle(files_a)['root'],
+                            ipc.archive_merkle(files_b)['root'])
+        self.assertEqual(ipc.archive_merkle(files_a)['files'], 2)
+
+    def test_rule_evidence_lists_all_positions(self):
+        # 一个名字可能出现在多个文件里，只报第一处会让人以为只有一处
+        facts = ipc.scan_asar({'a.js': b"ipcMain.handle('x:y', f)",
+                               'b.js': b"ipcMain.handle('x:y', g)"})
+        item = ipc.channel_sources(facts)['x:y']
+        self.assertGreaterEqual(len(item.get('where_all') or []), 2)
+
     def test_rule_corroboration_levels_are_not_one_block(self):
         # weak 里有两种语义：同一行（同一处代码的两种视角）和相邻行（可能是同一调用点，
         # 也可能只是碰巧挨着）。压成一档就是把不同独立性塞进同一个词里。
@@ -1647,8 +1679,14 @@ class ReportContractTests(unittest.TestCase):
         with open(golden_path, encoding='utf-8') as fh:
             golden = json.load(fh)
         report = self.build()
-        for volatile in ('subject', 'version'):
-            report[volatile] = golden[volatile]   # 路径与版本号不进金标准
+        # 路径、版本号、以及依赖路径算出的指纹都不进金标准：
+        # content_digest 里的 fingerprint 含输入路径的 sha256，换个临时文件就对不上。
+        for volatile in ('subject', 'version', 'content_digest'):
+            report[volatile] = golden[volatile]
+        # 指纹里含着输入文件的 sha256（临时文件每次都不同），跟金标准一样抹掉
+        if isinstance(report.get('fingerprint'), dict):
+            report['fingerprint']['input_sha256'] = '<input-sha256>'
+            report['fingerprint']['digest'] = '<fingerprint-digest>'
         differing = sorted(k for k in set(golden) | set(report)
                            if golden.get(k) != report.get(k))
         self.assertEqual(differing, [], f'这些字段跟金标准不一致：{differing}')

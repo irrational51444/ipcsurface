@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.70.0'
+__version__ = '0.71.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1046,13 +1046,17 @@ def channel_sources(facts, probe=None):
     seen = {}
 
     def add(name, source, strength, where=None):
-        item = seen.setdefault(name, {'sources': [], 'strength': 0.0, 'where': None})
+        item = seen.setdefault(name, {'sources': [], 'strength': 0.0,
+                                      'where': None, 'where_all': []})
         if source not in item['sources']:
             item['sources'].append(source)
         if strength > item['strength']:
             item['strength'] = strength
-        if where and not item['where']:
-            item['where'] = where
+        if where:
+            if not item['where']:
+                item['where'] = where
+            if where not in item['where_all']:
+                item['where_all'].append(where)
 
     for name, where in facts['handlers'] + facts['invokes'] + facts['exposes']:
         if name in facts.get('resolved', ()):
@@ -1504,6 +1508,37 @@ def render_baseline(delta):
     return out
 
 
+def archive_merkle(files):
+    """包内文件的 Merkle 根：路径 + 每个文件内容的 sha256，按路径排序后聚合。
+
+    作用只有一个：别人拿到同一个包，能算出同一个根，确认「我们说的是同一份东西」。
+    """
+    entries = []
+    for name in sorted(files):
+        digest = hashlib.sha256(files[name]).hexdigest()
+        entries.append(f'{name}:{digest}')
+    blob = '\n'.join(entries).encode('utf-8')
+    return {'files': len(entries), 'root': hashlib.sha256(blob).hexdigest(),
+            'algorithm': 'sha256(sorted(path:sha256) joined by newline)'}
+
+
+def content_digest(report):
+    """报告正文自己的指纹：去掉时间戳与自身 digest 后算。
+
+    任何人拿到这份报告都能重算一遍——对得上，说明这份报告没被改过、
+    也不是别的版本生成的。
+    """
+    body = {k: v for k, v in report.items()
+            if k not in ('generated_at', 'content_digest')}
+    fp = dict(report.get('fingerprint') or {})
+    fp.pop('digest', None)
+    body['fingerprint'] = fp
+    blob = json.dumps(body, ensure_ascii=False, sort_keys=True,
+                      separators=(',', ':')).encode('utf-8')
+    return {'algorithm': 'sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)',
+            'digest': hashlib.sha256(blob).hexdigest()}
+
+
 def input_sha256(path):
     """输入文件的 sha256。读不动就返回 None——不编一个值出来。"""
     try:
@@ -1537,9 +1572,9 @@ def fingerprint_of(target, channel_names, params=None):
 
 
 def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
-                      checks, poke_buckets, baseline_obj):
+                      checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
-    return {
+    report = {
         'schema': 'ipcsurface/asar/10',
         'mode': 'asar',
         'subject': target,
@@ -1568,7 +1603,12 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'version': __version__,
         'fingerprint': fingerprint_of(target, names),
         'sites': all_sites(facts),
+        'archive_merkle': merkle,
     }
+    # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
+    # 不会出现「漏了这个键」的两种形态。
+    report['content_digest'] = content_digest(report)
+    return report
 
 
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
@@ -1805,7 +1845,7 @@ REPORT_TOP_LEVEL_KEYS = frozenset({
     'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
-    'fingerprint', 'sites',
+    'fingerprint', 'sites', 'archive_merkle', 'content_digest','sites', 'archive_merkle', 'content_digest',
 })
 
 
@@ -2618,7 +2658,7 @@ AGGREGATE_FIELDS = [
 EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
-    'runtime_where', 'corroboration_level', 'corroboration_basis',
+    'runtime_where', 'corroboration_level', 'corroboration_basis', 'where_all',
     'refutes_if',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
@@ -3215,6 +3255,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
             facts['scanned'] += extra['scanned']
         facts['recovered'] = sorted(recovered)
         facts['harvested'] = harvest_strings(files)
+        facts['archive_merkle'] = archive_merkle(files)
         total = files.total_bytes()
         return facts, len(files), total
     finally:
@@ -3378,11 +3419,12 @@ def main(argv=None):
             checks = runtime_crosscheck(probe_data, names)
             evidence = channel_sources(facts, probe=probe_data)
             poke_buckets = classify_poke(poke_data) if poke_data else None
-            text = json.dumps(
-                build_asar_report(args.input, facts, count, total, names, evidence,
-                                  checks, poke_buckets, load_baseline(args.baseline)
-                                  if args.baseline else None),
-                ensure_ascii=False, indent=2)
+            report = build_asar_report(
+                args.input, facts, count, total, names, evidence,
+                checks, poke_buckets, load_baseline(args.baseline)
+                if args.baseline else None,
+                merkle=facts.get('archive_merkle'))
+            text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
         else:
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,

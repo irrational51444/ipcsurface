@@ -218,6 +218,9 @@
       ],
       "strength": 1.0,
       "where": "src/app.js:1",
+      "where_all": [
+        "src/app.js:1"
+      ],
       "actions": [
         "cite"
       ],
@@ -249,19 +252,24 @@
   "baseline": null,
   "version": "<version>",
   "fingerprint": {
-    "input_sha256": "a0e78881161ed25086b984e5044c37de2d335d3e196c2986f3b9829e7ff6b810",
-    "version": "0.70.0",
+    "input_sha256": "<input-sha256>",
+    "version": "0.71.0",
     "schema": "ipcsurface/asar/10",
     "params": {},
     "channels": [
       "a:b"
     ],
-    "digest": "d20e3f058934a4dd2f35343e7d2d887db8ad6b50cda2ae2f5aa092b9832318cb",
+    "digest": "<fingerprint-digest>",
     "algorithm": "sha256(canonical-json)"
   },
   "sites": {
     "a:b": [
       "src/app.js:1"
     ]
+  },
+  "archive_merkle": null,
+  "content_digest": {
+    "algorithm": "sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)",
+    "digest": "<content-digest>"
   }
 }

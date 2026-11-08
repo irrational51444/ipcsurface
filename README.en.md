@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.70.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.71.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — and **how far you can trust the report itself**.
 
@@ -109,7 +109,7 @@ Durability is tri-state: `yes` / `no` / `unknown`. `unknown` appears on platform
 
 ## How quality is held
 
-- **223 test cases**, standard library only: `python -m unittest discover -s tests`
+- **226 test cases**, standard library only: `python -m unittest discover -s tests`
 - **15 smoke items**: every CLI entry point actually executed
 - **Self-check**: version, schema, rule registry, docs-vs-implementation, clean worktree
 - One command for all three gates: `bash scripts/verify.sh` — CI runs the same script

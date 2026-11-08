@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.70.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.71.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
 
@@ -138,7 +138,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **223 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **226 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，不看内部函数
 - **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
@@ -173,6 +173,9 @@ CI 跑三个任务，缺一不可：
   - **位置从哪来**：探针的输入 JSON 里带 `sites`（`名字 → file:line`）就能定档；不带就是 `unknown`。格式不对的条目会被丢掉，不拿垃圾位置算强度。
 - **每条结论配「推翻它的判据」**：`evidence[*].refutes_if` 写的是「什么观察能驳倒这条」，不是「什么能支持它」。`literal` 配的是「源码里搜不到这个字符串」。
 - **样本按 hash 选**：`samples` 取名字 sha1 排前两条，谁的机器上看都是同两条，能互相复核。
+- **报告自指纹**：`content_digest` 是报告正文（去掉时间戳和它自己）的 sha256。拿到报告的人能自己重算——对得上，说明这份报告没被改过、也不是别的版本生成的。
+- **包级 Merkle 根**：`archive_merkle` 把包内每个文件的 `路径:sha256` 排序后聚合。作用是确认「我们说的是同一份包」，不是「这个包安全」。
+- **每个名字给全部位置**：`evidence[*].where_all` 是这个名字出现过的所有位置，不只第一处——只报第一处会让人以为它只在那儿。
 - **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算 recall / precision / 总覆盖率。**当前平均总覆盖率 0.88**——那 0.12 是 `dyn` 靶场里 `'ledger:' + op` 这种运行时拼出来的名字，静态扫不到，标在 `known_unreachable` 里，不算修饰。
 
 ## 已知边界

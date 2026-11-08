@@ -49,6 +49,13 @@ def build_report():
         os.unlink(path)
     report['subject'] = '<fixture>'
     report['version'] = '<version>'
+    # 指纹里有输入文件的 sha256（临时文件每次都不同），
+    # 不抹掉的话这份快照「每次都比上次不一样」，永远红。
+    if isinstance(report.get('fingerprint'), dict):
+        report['fingerprint']['input_sha256'] = '<input-sha256>'
+        report['fingerprint']['digest'] = '<fingerprint-digest>'
+    if isinstance(report.get('content_digest'), dict):
+        report['content_digest']['digest'] = '<content-digest>'
     return report
 
 
