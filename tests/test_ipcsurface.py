@@ -1378,6 +1378,32 @@ class ReleaseGuardTests(unittest.TestCase):
         self.assertEqual(code, self.guard.EXIT_UNKNOWN, why)
         self.assertNotIn('不是绿', why)
 
+    def test_rule_release_guard_classification_layer(self):
+        # 归类层单独测：403、超时、空列表都由 check_tag 变成 2，
+        # 有红变 1。之前只测了 evaluate()，转成「空列表」这一步没人看。
+        import urllib.error as _uerr
+
+        def http403(sha, tok):
+            raise _uerr.HTTPError('u', 403, 'rate limited', None, None)
+
+        def timeout(sha, tok):
+            raise TimeoutError('timed out')
+
+        def empty(sha, tok):
+            return []
+
+        def red(sha, tok):
+            return [{'name': 'windows', 'conclusion': 'failure'}]
+
+        for name, fetcher in (('403', http403), ('超时', timeout), ('空列表', empty)):
+            with self.subTest(kind=name):
+                code, why = self.guard.check_tag('v0.65.5', tok='x', fetcher=fetcher)
+                self.assertEqual(code, self.guard.EXIT_UNKNOWN, why)
+                self.assertIn('不是 CI 红', why)
+
+        code, why = self.guard.check_tag('v0.65.5', tok='x', fetcher=red)
+        self.assertEqual(code, self.guard.EXIT_RED, why)
+
     def test_rule_release_guard_no_token_is_unknown(self):
         code, why = self.guard.check_tag('v0.65.5', tok='')
         self.assertEqual(code, self.guard.EXIT_UNKNOWN)
@@ -2098,11 +2124,26 @@ class AssertionHygieneTests(unittest.TestCase):
     # ---- 扫描器元测试：每种形态都要有「无保护会报」的证据 ----
 
     def kinds_of(self, source):
-        """直接测分类函数本身，不经过 offenders_of。"""
+        """直接测分类函数本身，不经过 offenders_of。
+
+        空列表的语义（写清楚，别让人猜）：
+        - **合法**：这条断言跟集合无关，三类都不沾（比如 `assertTrue(resp.ok)`）。
+        - **不合法**：带集合语义但真值没建模——那种情况一律保守归 `vacuous`，
+          不许静默返回空列表，否则三个消费者会「一致地漏掉」它。
+        """
         import ast as _ast
         fn = next(n for n in _ast.walk(_ast.parse(source))
                   if isinstance(n, _ast.FunctionDef))
         return [kind for _node, kind in self.universal_spots(fn)]
+
+    def test_rule_kinds_of_empty_means_not_about_collections(self):
+        # 跟集合无关的断言，返回空列表是合法的
+        code = 'def f(self):\n    self.assertTrue(resp.ok)\n'
+        self.assertEqual(self.kinds_of(code), [])
+
+        # 带集合语义但真值没建模的，必须归 vacuous，不能空
+        code = 'def f(self, xs):\n    self.assertTrue(len(xs) > 0 and xs.called)\n'
+        self.assertEqual(self.kinds_of(code)[:1], ['vacuous'])
 
     def test_rule_classifier_labels_each_kind(self):
         # 分类规则本身要有测试：被误分类的那一条，扫描器会静默不报，
@@ -2194,6 +2235,11 @@ class AssertionHygieneTests(unittest.TestCase):
         # 改了常量就得跟着改这里，不然「可以调整」只是句空话。
         one_year = 365 * 86400
         self.assertEqual(ipc._age_text(one_year - 86400), '364.0 天前')
+        # 恰好一年：按「不超过一年算正常」还是「一年就落异常」，得有个说法，
+        # 所以这一条钉住它——改常量就会改到这一行。
+        exact = ipc._age_text(one_year)
+        self.assertTrue(exact.endswith('天前') or '时间过久' in exact,
+                        f'恰好一年落在边界上，实际是：{exact}')
         self.assertIn('时间过久', ipc._age_text(one_year + 86400),
                       '跨过一年就该落到「时间过久」分支')
 

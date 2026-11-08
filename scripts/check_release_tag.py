@@ -50,7 +50,7 @@ def evaluate(runs):
     - 全部成功或跳过：绿（0）
     """
     if not runs:
-        return EXIT_UNKNOWN, '查不到这个提交的 CI 结果（可能还没跑）'
+        return EXIT_UNKNOWN, '查不到这个提交的 CI 结果（可能还没跑；不是 CI 红）'
     bad = [r.get('name', '?') for r in runs
            if r.get('conclusion') not in ('success', 'skipped')]
     if bad:

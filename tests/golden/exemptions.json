@@ -5,7 +5,7 @@
   "substitutive": 0,
   "allowed_substitutive": 0,
   "locked_at_ratio": 0.8,
-  "locked_at_version": "0.65.7",
+  "locked_at_version": "0.65.8",
   "policy": "门禁只挂在「替代型」条数上（allowed_substitutive，默认 0）；总比率是背景报告，不构成失败条件。版本号对不上也红。",
   "reason": "补了「kinds_of 不许静默空返回」的表驱动用例，多一个真空断言、多一条常量表豁免；比率 3/4 → 4/5，性质没变。",
   "note": "比率仅供观察：protected/total 的分子分母都只算 vacuous 断言。"
