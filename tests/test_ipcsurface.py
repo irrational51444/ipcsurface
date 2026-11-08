@@ -2049,6 +2049,37 @@ class AssertionHygieneTests(unittest.TestCase):
         source = 'def f(self):\n    self.assertTrue(flag)\n'
         self.assertEqual(self.kinds_of(source), [])
 
+    def test_rule_kinds_of_matches_the_classifier(self):
+        # kinds_of 必须就是分类函数的输出，不能是又写一遍：
+        # 否则三个消费者会「一致地错」，一致性用例抓不到。
+        import ast as _ast
+        source = ('def f(self, xs):\n'
+                  '    self.assertTrue(all(x > 0 for x in xs))\n'
+                  '    self.assertTrue(any(x in xs for x in xs))\n')
+        fn = next(n for n in _ast.walk(_ast.parse(source))
+                  if isinstance(n, _ast.FunctionDef))
+        self.assertEqual(self.kinds_of(source),
+                         [kind for _node, kind in self.universal_spots(fn)])
+
+    def test_rule_kinds_of_never_silently_empty_for_known_forms(self):
+        # 每个已知形态都必须至少分出一类；返回空列表就是「既不算真空也不算存在性」，
+        # 那三个消费者会一起漏掉它。
+        forms = ['xs == []', 'xs == ()', 'len(xs) == 0', 'not xs',
+                 'all(x > 0 for x in xs)', 'any(x > 0 for x in xs)']
+        # empty-allowed: forms 是常量表，非空由定义保证
+        for form in forms:
+            with self.subTest(form=form):
+                code = f'def f(self, xs):\n    self.assertTrue({form})\n'
+                self.assertTrue(self.kinds_of(code), f'{form} 没被分成任何一类')
+
+    def test_rule_age_threshold_boundary(self):
+        # 「一年」是代码常量，但不是随便改的：边界要有用例，
+        # 改了常量就得跟着改这里，不然「可以调整」只是句空话。
+        one_year = 365 * 86400
+        self.assertEqual(ipc._age_text(one_year - 86400), '364.0 天前')
+        self.assertIn('时间过久', ipc._age_text(one_year + 86400),
+                      '跨过一年就该落到「时间过久」分支')
+
     def test_rule_classifier_covers_all_empty_containers(self):
         # README 写了「空容器」，那就得是全部变体，不能只认 == []
         cases = ['[]', '()', '{}', 'set()', 'dict()', 'frozenset()', 'list()', 'tuple()']
