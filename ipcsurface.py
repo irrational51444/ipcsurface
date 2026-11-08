@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.65.2'
+__version__ = '0.65.3'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1961,11 +1961,22 @@ def inspect_leftovers(path):
 def render_leftovers(report, path):
     lines = [f'# 崩溃残留检查：{path}', '']
     if not report['target_exists']:
-        lines.append('- **目标文件不存在。** 如果有副本，那就是唯一现存的一份，'
-                     '先别删，先看内容。')
-    else:
-        lines.append(f"- 目标：{report['target_bytes']} 字节，改动时间 "
-                     f"{report['target_mtime_text']}（按文件修改时间）")
+        # target 不在，就没有「对比」可言。整张表退化成副本清单，
+        # 不摆半张只有一侧的表——那会让人以为另一侧的值只是没显示。
+        lines.append('- **目标文件不存在。** 下面列出仅存的副本，先看内容，先别删。')
+        if not report['backups'] and not report['failed']:
+            lines.append('- 也没有副本。这份报告确实什么都没留下。')
+            return '\n'.join(lines) + '\n'
+        for label, items in (('备份副本', report['backups']),
+                             ('替换失败现场', report['failed'])):
+            for item in items:
+                lines.append(f"- {label}：`{item['path']}`（{item['bytes']} 字节，"
+                             f"{item['age_text']}，按文件名里的时间戳）")
+        lines += ['', '**不自动还原，也不替你判断。** 副本存在只说明「上次可能崩在'
+                  '替换与清理之间」；没有 target 可以对比，就只能由人看内容定。']
+        return '\n'.join(lines) + '\n'
+    lines.append(f"- 目标：{report['target_bytes']} 字节，改动时间 "
+                 f"{report['target_mtime_text']}（按文件修改时间）")
     if not report['backups'] and not report['failed']:
         lines.append('- 没有发现 `.bak` / `.failed` 残留。')
         return '\n'.join(lines) + '\n'
