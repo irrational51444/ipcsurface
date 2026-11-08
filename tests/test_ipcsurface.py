@@ -11,6 +11,7 @@ import re
 import shutil
 import struct
 import subprocess
+import urllib.error
 import sys
 import tempfile
 import time
@@ -1332,6 +1333,54 @@ class ExemptionLockTests(unittest.TestCase):
         full = dict(self.base, locked_at_ratio=10 / 11, locked_at_version='0.53.0')
         ok, reasons = exemption_lock_state(full, 10 / 11, '0.53.0')
         self.assertTrue(ok, reasons)
+
+
+class ReleaseGuardTests(unittest.TestCase):
+    """发布守卫自己也得有证据：三个分支各一条。"""
+
+    def setUp(self):
+        import importlib.util as _u
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            'scripts', 'check_release_tag.py')
+        spec = _u.spec_from_file_location('guard', path)
+        self.guard = _u.module_from_spec(spec)
+        spec.loader.exec_module(self.guard)
+
+    def test_rule_release_guard_all_green_exits_zero(self):
+        runs = [{'name': 'check', 'conclusion': 'success'},
+                {'name': 'windows', 'conclusion': 'success'},
+                {'name': 'signal', 'conclusion': 'skipped'}]
+        self.assertEqual(self.guard.evaluate(runs)[0], self.guard.EXIT_OK)
+
+    def test_rule_release_guard_red_exits_one(self):
+        runs = [{'name': 'check', 'conclusion': 'success'},
+                {'name': 'windows', 'conclusion': 'failure'}]
+        code, why = self.guard.evaluate(runs)
+        self.assertEqual(code, self.guard.EXIT_RED)
+        self.assertIn('windows', why)
+
+    def test_rule_release_guard_unknown_exits_two(self):
+        # 三种「没拿到结果」都要归 2，不能归 1
+        self.assertEqual(self.guard.evaluate([])[0], self.guard.EXIT_UNKNOWN)
+
+        def boom(sha, tok):
+            raise urllib.error.HTTPError('u', 403, 'rate limited', None, None)
+
+        code, why = self.guard.check_tag('v0.65.5', tok='x', fetcher=boom)
+        self.assertEqual(code, self.guard.EXIT_UNKNOWN, why)
+        self.assertIn('403', why)
+
+        def timeout(sha, tok):
+            raise TimeoutError('timed out')
+
+        code, why = self.guard.check_tag('v0.65.5', tok='x', fetcher=timeout)
+        self.assertEqual(code, self.guard.EXIT_UNKNOWN, why)
+        self.assertNotIn('不是绿', why)
+
+    def test_rule_release_guard_no_token_is_unknown(self):
+        code, why = self.guard.check_tag('v0.65.5', tok='')
+        self.assertEqual(code, self.guard.EXIT_UNKNOWN)
+        self.assertIn('凭据', why)
 
 
 class GoldenScriptTests(unittest.TestCase):
