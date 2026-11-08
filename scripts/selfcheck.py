@@ -380,6 +380,9 @@ def main():
                 f'定义 {tests_defined} / 实跑 {actually_ran} / 跳过 {skipped}（不计入实跑）')
     ok &= check('README 用例数和实际一致',
                 f'{tests_count} 个用例' in readme, f'实际 {tests_count}')
+    ok &= check('英文版 README 用例数和实际一致',
+                f'{tests_count} test cases' in read('README.en.md'),
+                f'实际 {tests_count}')
     ok &= check('badge 用例数和实际一致',
                 f'{tests_count} passed' in read('docs', 'badges', 'tests.svg'))
     ok = check_versions_match_tags(ok, version, changelog)
