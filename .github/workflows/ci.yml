@@ -39,6 +39,9 @@ jobs:
     # 目录 fsync 不可用、符号链接建不出来、replace 被占用、长路径。
     # 这些以前只在作者本机手动跑过，等于没验。
     runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONUTF8: '1'
     defaults:
       run:
         shell: bash

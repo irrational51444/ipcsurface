@@ -302,6 +302,14 @@ def main():
     ok &= check('version 与 badge 一致', version in read('docs', 'badges', 'version.svg'), version)
     readme = read('README.md')
     ok &= check('README 写着同一个版本', version in readme)
+
+    # pyproject 里的版本号也得跟上：它决定 pip 装出来的 wheel 叫什么名字。
+    # 之前它停在 0.6.1，五十多个版本没人看——安装包名和人说的版本号是两回事。
+    pyproject = read('pyproject.toml')
+    m = re.search(r'^version = "([^"]+)"', pyproject, re.M)
+    ok &= check('pyproject 版本与 __version__ 一致',
+                bool(m) and m.group(1) == version,
+                f'pyproject {m.group(1) if m else "?"} / 代码 {version}')
     changelog = read('CHANGELOG.md')
     ok &= check('CHANGELOG 有这一版', '## ' + version in changelog)
     tests_defined = len(re.findall(r'def test_', read('tests', 'test_ipcsurface.py')))

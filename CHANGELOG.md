@@ -2,6 +2,13 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.65.1 — 2026-11-08
+
+Windows 任务一上线就抓到两个真问题，都不是 Windows 特有的那种：
+
+1. **pyproject.toml 的版本号停在 0.6.1**，和代码里的 0.65.0 差了五十多个版本。pip install . 打出来的 wheel 叫 ipcsurface-0.6.1，装完了 --version 报 0.65.0。以前的版本检查只看 README / badge / CHANGELOG，没看打包元数据。现在自查加了一条：两边不一致就红。
+2. **CI 的 Windows 任务死在 charmap 编码上**：脚本打印中文时控制台按 cp1252 编码，直接 UnicodeEncodeError。工作流加了 PYTHONIOENCODING/PYTHONUTF8，examples/build.sh 自己也导出一次，别的机器跑也一样。
+
 ## 0.65.0 — 2026-11-08
 
 补第一条：只在 Windows 上才不一样的那些路径，以前只在作者本机手动跑过，等于没验。
