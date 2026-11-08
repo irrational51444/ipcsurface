@@ -10,6 +10,15 @@ mkdir -p build
 # bulk 和 map 都是生成的，不是手写的
 python make-bulk.py
 python make-map.py
+python make_realish.py
+
+# 可复现的「像真项目」靶场：3042 个文件、12 条通道。
+# 名字固定是 build/realish.asar（不带 -asar 后缀），selfcheck 和 e2e 都用这个名字。
+# 放在循环前面：后面任何一步出问题，这个靶场都已经造好了。
+echo "==> realish"
+npx --yes @electron/asar pack realish-asar build/realish.asar
+ipcsurface build/realish.asar -o build/realish.scan.md
+
 
 for target in static-asar dyn-asar obf-asar obf2-asar obf3-asar obf4-asar obf5-asar bulk-asar native-asar; do
   echo "==> $target"
@@ -30,3 +39,5 @@ done
 
 echo
 echo "报告都在 build/ 里，对着本目录的 README 核对。"
+
+# 可复现的「像真项目」靶场：3042 个文件、12 条通道。

@@ -118,6 +118,7 @@ TARGET_EXPECT = {
     'bulk-asar.asar': 800,
     'native-asar.asar': 2,
     'adv-asar.asar': 1,      # 十二种写法里认出三处，但同名，去重后是 1 条通道
+    'realish.asar': 12,      # 可复现的「像真项目」靶场：3042 个文件、12 条通道
 }
 
 
@@ -149,6 +150,34 @@ def check_targets(ok):
         facts, _count, _total = t.analyse_asar(path)
         got = len(facts['channels'])
         ok &= check(f'{name} 认得出 {expect} 条', got == expect, f'实际 {got}')
+    return ok
+
+
+
+def check_realish(ok):
+    """可复现的「像真项目」靶场：规模、通道数、性能都在这里守。
+
+    以前这几项只挂在作者本机的 Electron 应用上，换台机器就 SKIP。
+    """
+    sample = os.path.join(ROOT, 'examples', 'build', 'realish.asar')
+    if not os.path.exists(sample):
+        return ok & check('可复现真包靶场存在（先跑 examples/build.sh）', False, sample)
+
+    import subprocess
+    import time
+    started = time.time()
+    proc = subprocess.run(['python', os.path.join(ROOT, 'ipcsurface.py'), sample,
+                           '--format', 'json', '-o', os.path.join(ROOT, 'build', 'realish.json')],
+                          capture_output=True, text=True, encoding='utf-8', errors='replace')
+    elapsed = time.time() - started
+    ok &= check('真包靶场跑得动', proc.returncode == 0, (proc.stderr or '')[:120])
+
+    data = json.loads(open(os.path.join(ROOT, 'build', 'realish.json'), encoding='utf-8').read())
+    ok &= check('真包靶场文件数 3042', data['files'] == 3042, str(data['files']))
+    ok &= check('真包靶场通道 12 条', len(data['channels']) == TARGET_EXPECT['realish.asar'],
+                str(len(data['channels'])))
+    ok &= check('真包靶场没有算不出来的名字', not data['dynamic'], str(len(data['dynamic'])))
+    ok &= check('真包靶场性能（< 8 秒）', elapsed < 8.0, f'{elapsed:.2f}s')
     return ok
 
 
@@ -398,7 +427,10 @@ def main():
     print('== 五、靶场期望值 ==')
     ok = check_targets(ok)
 
-    print('== 六、两种输出口径一致 ==')
+    print('== 六、可复现真包靶场（规模 / 通道 / 性能）==')
+    ok = check_realish(ok)
+
+    print('== 七、两种输出口径一致 ==')
     ok = check_output_parity(ok)
 
     print('== 七、坏输入必须报错 ==')

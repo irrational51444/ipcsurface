@@ -12,3 +12,6 @@ build/
 probe/node_modules/
 probe/package-lock.json
 examples/map.asar
+
+# realish 靶场是 examples/make_realish.py 生成的，不进仓库
+examples/realish-asar

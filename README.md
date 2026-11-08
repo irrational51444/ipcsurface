@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.66.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.67.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
 
@@ -140,6 +140,7 @@ python ipcsurface.py --recover out.md
 
 - **214 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口
+- **端到端**：`python scripts/e2e_check.py`，走装好的命令行，不看内部函数
 - **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
 
@@ -148,6 +149,7 @@ CI 跑三个任务，缺一不可：
 - `check`（Linux）：装包、造示例包、三道闸
 - `windows`：同一套三道闸，外加 `scripts/check_windows_behaviour.py`——目录 fsync 不可用、`durable` 必须是 `unknown`、替换被占用报 `replace_failed`、263 字符长路径写得出来
 - `signal`：干净包必须退 0，有问题的包必须退 2，SARIF 能上传
+- `e2e`：装成包 → 对 `realish.asar` 跑 → 校验 schema、md/json 口径、`--fail-on` 退 2、两次输出一致
 
 发布另有两道程序，不靠记性：
 
@@ -161,7 +163,8 @@ CI 跑三个任务，缺一不可：
 - 字符串级粗扫，不建语法树；拼出来的、算出来的名字看不见。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
 - Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`——这条现在由 CI 的 `windows` 任务断言。只读目录仍是盲区（没有在真实只读卷上跑过），写在 [CHANGELOG](CHANGELOG.md) 里。
-- `adv-asar.asar` 这个对抗样本没有生成脚本，只在本地有，别的机器造不出来。
+- `adv-asar.asar` 这个对抗样本没有生成脚本，只在本地有，别的机器造不出来；其余靶场都能由 `examples/build.sh` 重造。
+- 规模与性能的断言跑在可复现的 `realish.asar`（3042 个文件、12 条通道、< 8 秒）上，**不是**作者本机那个 441 MB 的真实应用——后者仍只在本机验。
 
 ---
 

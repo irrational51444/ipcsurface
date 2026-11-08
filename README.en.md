@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.66.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current version **0.67.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — and **how far you can trust the report itself**.
 
@@ -119,6 +119,7 @@ CI runs three jobs:
 - `check` (Linux): install, build fixtures, all three gates
 - `windows`: the same gates plus `scripts/check_windows_behaviour.py` — directory fsync unavailable, `durable` must be `unknown`, replace-under-lock reports `replace_failed`, a 263-character path is writable
 - `signal`: clean archive exits 0, dirty exits 2, SARIF uploads
+- `e2e`: install the package, run on `realish.asar`, verify schema, md/json agreement, `--fail-on` exit 2, and determinism
 
 Two release steps are scripted, not remembered:
 
@@ -132,7 +133,8 @@ Two release steps are scripted, not remembered:
 - String-level scan, no syntax tree; concatenated or computed names stay invisible. Use REA Evidence when you need precision.
 - Sandboxes, native modules, and channels wired up only at runtime are invisible statically.
 - On Windows directory fsync is unavailable, so `durable` is `unknown` — asserted by the CI `windows` job. Read-only directories remain a blind spot; recorded in the [changelog](CHANGELOG.md).
-- `adv-asar.asar` is a hand-made adversarial fixture with no build script; it exists only on the author's machine.
+- `adv-asar.asar` is a hand-made adversarial fixture with no build script; every other fixture is reproducible via `examples/build.sh`.
+- Scale and performance assertions run on the reproducible `realish.asar` (3042 files, 12 channels, < 8 s), **not** on the author's 441 MB app — that one stays local-only.
 
 ---
 

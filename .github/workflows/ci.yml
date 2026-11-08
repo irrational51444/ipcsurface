@@ -62,6 +62,25 @@ jobs:
       - name: Windows 专属行为断言
         run: python scripts/check_windows_behaviour.py
 
+  e2e:
+    # 端到端：装成包 → 对一个「像真项目」的靶场跑 → 校验 schema、口径、退出码。
+    # 以前只有单元与冒烟，缺一条从安装到报告的完整路径。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 装成包
+        run: pip install .
+      - name: 造靶场（含可复现真包 realish）
+        run: cd examples && bash build.sh
+      - name: 端到端跑一遍并校验
+        run: python scripts/e2e_check.py
+
   signal:
     # 这一节验的是「CI 能不能靠退出码和 SARIF 做判断」，不是验工具本身
     runs-on: ubuntu-latest
