@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.68.0'
+__version__ = '0.69.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -960,6 +960,13 @@ CONFIDENCE_SEMANTICS = {
             'instead': '在 limits 里找这一路的盲点',
         },
         {
+            'id': 'corroboration_level_is_not_uniform',
+            'text': '两路对上也分档：同文件相邻行和两个不同文件不是一回事。'
+                    '引用档位时必须带 corroboration_basis，说明凭什么叫这一档。',
+            'must_not': ['use_corroboration_level_alone'],
+            'instead': '看 corroboration_basis；没有位置就是 unknown，别补一个「强」',
+        },
+        {
             'id': 'strength_is_not_risk',
             'text': 'strength 用来排序复核顺序，不用来当风险分值。',
             'must_not': ['score_risk_from_strength'],
@@ -1058,6 +1065,11 @@ def channel_sources(facts, probe=None):
             add(name, 'runtime', 0.8)
         for name in probe.get('listeners') or []:
             add(name, 'runtime', 0.8)
+        # 探针有时会给位置（窗口/文件），有就记，没有就留空
+        for name, where in (probe.get('sites') or {}).items():
+            item = seen.setdefault(name, {'sources': [], 'strength': 0.0,
+                                          'where': None, 'runtime_where': None})
+            item['runtime_where'] = where
     for what, where in facts['dynamic']:
         add(what, 'computed', 0.3, where)
     for name, value in (facts.get('harvested') or {}).items():
@@ -1091,7 +1103,64 @@ def channel_sources(facts, probe=None):
                                          if v == lowest)
         item['weakest_strength'] = lowest
         item['independent_pairs'] = ['%s+%s' % (a, b) for a, b in pairs if independent(a, b)]
+        if item['corroboration'] == 'static_runtime':
+            level, basis = corroboration_strength(item.get('where'),
+                                                  item.get('runtime_where'))
+            item['corroboration_level'] = level
+            item['corroboration_basis'] = basis
     return seen
+
+
+def all_sites(facts):
+    """全量证据位置表：名字 → 所有见过的位置（去重、保序）。
+
+    md 里只抽两条给人看；下游想做批量交叉验证，得有一份不抽样的。
+    """
+    out = {}
+    for name, where in (facts['handlers'] + facts['invokes'] + facts['exposes']):
+        out.setdefault(name, [])
+        if where and where not in out[name]:
+            out[name].append(where)
+    for what, where in facts['dynamic']:
+        out.setdefault(what, [])
+        if where and where not in out[what]:
+            out[what].append(where)
+    for name, value in (facts.get('harvested') or {}).items():
+        where = value[0] if isinstance(value, tuple) and value else None
+        out.setdefault(name, [])
+        if where and where not in out[name]:
+            out[name].append(where)
+    return out
+
+
+def corroboration_strength(static_where, runtime_where):
+    """两条证据「交叉得有多实」。
+
+    同文件相邻行和「一个在主进程、一个在渲染进程包里」显然不是一回事。
+    但如果运行时那侧没给位置，就老实说 unknown——不拿「都看见了」冒充强度。
+    """
+    if not static_where:
+        return 'unknown', '静态那一侧没有位置'
+    if not runtime_where:
+        return 'unknown', '运行时那侧没给位置，分不出独立还是相邻'
+
+    def split(where):
+        text = str(where)
+        if ':' in text:
+            path, _, line = text.rpartition(':')
+            try:
+                return path, int(line)
+            except ValueError:
+                return path, None
+        return text, None
+
+    s_path, s_line = split(static_where)
+    r_path, r_line = split(runtime_where)
+    if s_path == r_path:
+        if s_line is not None and r_line is not None and abs(s_line - r_line) <= 5:
+            return 'weak', f'同一个文件、相隔不到 5 行（{s_path}）'
+        return 'medium', f'同一个文件的不同位置（{s_path}）'
+    return 'strong', f'两个不同文件：{s_path} / {r_path}'
 
 
 def sample_sites(facts, limit=2, only_resolved=False):
@@ -1455,6 +1524,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'baseline': baseline_obj,
         'version': __version__,
         'fingerprint': fingerprint_of(target, names),
+        'sites': all_sites(facts),
     }
 
 
@@ -1692,7 +1762,7 @@ REPORT_TOP_LEVEL_KEYS = frozenset({
     'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
-    'fingerprint',
+    'fingerprint', 'sites',
 })
 
 
@@ -2494,6 +2564,10 @@ AGGREGATE_FIELDS = [
      'must_not': 'use_primary_action_alone'},
     {'field': 'weakest_strength', 'detail': 'weakest_sources',
      'must_not': 'use_weakest_without_list'},
+    # 交叉档位也是聚合：一个 strong 盖住「哪两个文件」的细节，
+    # 想引用这一档，得能点回 corroboration_basis。
+    {'field': 'corroboration_level', 'detail': 'corroboration_basis',
+     'must_not': 'use_corroboration_level_alone'},
 ]
 
 # evidence 里每个名字允许出现的字段。不在这张白名单、也不在 AGGREGATE_FIELDS 里的新字段，
@@ -2501,6 +2575,7 @@ AGGREGATE_FIELDS = [
 EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
+    'runtime_where', 'corroboration_level', 'corroboration_basis',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
 

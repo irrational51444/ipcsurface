@@ -145,6 +145,14 @@
         "instead": "在 limits 里找这一路的盲点"
       },
       {
+        "id": "corroboration_level_is_not_uniform",
+        "text": "两路对上也分档：同文件相邻行和两个不同文件不是一回事。引用档位时必须带 corroboration_basis，说明凭什么叫这一档。",
+        "must_not": [
+          "use_corroboration_level_alone"
+        ],
+        "instead": "看 corroboration_basis；没有位置就是 unknown，别补一个「强」"
+      },
+      {
         "id": "strength_is_not_risk",
         "text": "strength 用来排序复核顺序，不用来当风险分值。",
         "must_not": [
@@ -239,13 +247,18 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "a0e78881161ed25086b984e5044c37de2d335d3e196c2986f3b9829e7ff6b810",
-    "version": "0.68.0",
+    "version": "0.69.0",
     "schema": "ipcsurface/asar/10",
     "params": {},
     "channels": [
       "a:b"
     ],
-    "digest": "cd83761fa37214ad53b005d8e0d9e400fe64af9f74f604f1e84cdcff440bf6a1",
+    "digest": "81b11f90150766d0f4316927022ccdee73a0ada3abefc186eee000c2503a378b",
     "algorithm": "sha256(canonical-json)"
+  },
+  "sites": {
+    "a:b": [
+      "src/app.js:1"
+    ]
   }
 }

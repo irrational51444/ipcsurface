@@ -181,6 +181,26 @@ def check_realish(ok):
     return ok
 
 
+
+def check_known_wrong(ok, version):
+    """已知会错清单：结构、条数、版本锁。内容好不好判断不了，下限能守。"""
+    path = os.path.join(ROOT, 'docs', 'known-wrong.md')
+    if not os.path.exists(path):
+        return ok & check('已知会错清单存在', False, path)
+    text = open(path, encoding='utf-8').read()
+
+    ok &= check('清单表格用统一三列（症状/为什么/怎么办）',
+                text.count('| 症状 | 为什么 | 怎么办 |') >= 2)
+    rows = [ln for ln in text.splitlines()
+            if ln.startswith('| ') and '---' not in ln and '症状' not in ln]
+    ok &= check('清单至少 8 条具体症状', len(rows) >= 8, f'{len(rows)} 条')
+    locked = re.search(r'^版本：([0-9.]+)$', text, re.M)
+    ok &= check('清单版本锁和当前版本一致',
+                bool(locked) and locked.group(1) == version,
+                f'清单 {locked.group(1) if locked else "?"} / 当前 {version}')
+    return ok
+
+
 def check_output_parity(ok):
     """同一份东西，md 说几条、json 说几条，必须是一个数。
 
@@ -434,6 +454,7 @@ def main():
     ok = check_realish(ok)
 
     print('== 七、两种输出口径一致 ==')
+    ok = check_known_wrong(ok, version)
     ok = check_output_parity(ok)
 
     print('== 七、坏输入必须报错 ==')
