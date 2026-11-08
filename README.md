@@ -5,23 +5,23 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.71.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.72.0**。
 
-`ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出一份报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像，以及**这份报告能信到什么程度**。
+`ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
-[English README](README.en.md) · [变更记录](CHANGELOG.md) · [示例靶场](examples/README.md)
+[English README](README.en.md) · [变更记录](CHANGELOG.md) · [示例靶场](examples/README.md) · [已知会错的地方](docs/known-wrong.md)
 
 ---
 
-## 它长什么样
+## 真跑一次
 
-拿一个真实的 Electron 应用跑：22,102 个文件、441 MB、**41 条通道**、4.6 秒。
+本机一个真实的 Electron 应用，441 MB、22,102 个文件，4.7 秒：
 
 ![真实应用扫描输出](docs/img/case-real-scan.png)
 
-一条命令出报告，md 和 json 同源：
+一条命令出报告，再拿人工标注对账（召回 / 精确 / 总覆盖率）：
 
-![示例靶场](docs/img/case-fixture-run.png)
+![示例靶场与对账](docs/img/case-fixture-run.png)
 
 三道闸，本地和 CI 跑同一套：
 
@@ -31,17 +31,17 @@
 
 ## 为什么不是「扫出通道数」就完事
 
-同一份报告里的话，强度不是一样的。
+同一份报告里的话，强度不一样。上面那份真实报告：
 
-| 这一层 | 这份真实报告里的数量 | 能证明什么 | 不能证明什么 |
+| 这一层 | 数量 | 能证明什么 | 不能证明什么 |
 | --- | --- | --- | --- |
 | 写死的名字 | 11 条 | 源码里逐字写着，`file:line` 能回到原文复核 | 只覆盖写死的写法 |
-| 靠还原才认出的 | 84 条 | 名字是从字符串池、常量里查出来的，出处还在源码里 | 查得出不等于它真是通道 |
+| 靠还原才认出的 | 84 条 | 名字从字符串池/常量表里查出来的，出处还在源码里 | 查得出不等于它真是通道 |
 | 名字是算出来的 | 0 条 | 知道这里在调用，名字不是写死的 | 名字是什么，算不出来 |
 | 捞出来的候选 | 221 个（51 个它自己写的） | 这些字符串长得像通道名 | 长得像不等于就是 |
 | 没看见的 | 未知 | 无 | 这条路看不见，不代表它不在 |
 
-**这几层不可相加。** 同一个名字可能既被还原出来、又被运行时看到，两边都会算它。报告是给人做判断用的地图，不是判决书。
+**这几层不可相加。** 同一个名字可能既被还原出来、又被运行时看到，两边都会算它。报告是地图，不是判决书。
 
 ---
 
@@ -58,17 +58,10 @@ python ipcsurface.py app.asar
 ## 一分钟上手
 
 ```bash
-# 1. 扫一个包，出 md
-python ipcsurface.py app.asar -o report.md
-
-# 2. 机器读的版本
-python ipcsurface.py app.asar --format json -o report.json
-
-# 3. 和上一版比，只看新冒出来的
-python ipcsurface.py app.asar --baseline last.json -o diff.md
-
-# 4. 挂 CI：有高危项就退出码 2
-python ipcsurface.py app.asar --fail-on high -o report.md
+python ipcsurface.py app.asar -o report.md              # markdown
+python ipcsurface.py app.asar --format json -o r.json   # 机器读的
+python ipcsurface.py app.asar --baseline last.json      # 只看新冒出来的
+python ipcsurface.py app.asar --fail-on high            # 有高危项退 2，挂 CI
 ```
 
 自带靶场可以直接试（要先造包）：
@@ -82,11 +75,26 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 ## 这份报告的三条规矩
 
-**一、未知写 `null`，不写 `0`。** 没看见不等于没有；`0` 会被人读成「确认没有」。
+**一、未知写 `null`，不写 `0`。** 没看见不等于没有；`0` 会被读成「确认没有」。
 
-**二、证据只记来源，不下结论。** 每条通道都带 `evidence`，写清名字是从哪来的、强度多少。强度排的是**复核成本**，不是概率。
+**二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、**哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在十六位是 `ipcsurface/asar/10`；对不上就停下，别按字段在不在猜。
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/10`；对不上就停下，别按字段在不在猜。
+
+---
+
+## 可信度靠什么撑起来
+
+不是靠形容词，靠六件能被别人自己核对的事：
+
+- **报告自指纹 `content_digest`**：报告正文（去掉时间戳和它自己）的 sha256。谁拿到都能重算——对得上，说明没被改过、也不是别的版本生成的。
+- **包级 Merkle 根 `archive_merkle`**：包内每个文件的 `路径:sha256` 排序聚合，确认「我们说的是同一份包」。它不是安全评级。
+- **输入指纹 `fingerprint`**：输入 sha256 + 版本 + schema + 参数 + 通道名，一起算。同输入重跑必须同值；输入读不到就是 `null`，不编。
+- **每条结论配「推翻它的判据」**：`evidence[*].refutes_if` 写的是「什么观察能驳倒这条」，不是「什么能支持它」。
+- **每层给样本，JSON 给全量**：md 每层抽两条 `名字 @ file:line`（按名字 sha1 选，谁的机器上都一样）；JSON 里 `sites` 给全部位置，`evidence[*].where_all` 给每个名字的所有位置。
+- **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算召回 / 精确 / 总覆盖率。**当前平均总覆盖率 0.88**——缺口全在 `'ledger:' + op` 这种运行时拼出来的名字，标在 `known_unreachable` 里，不算修饰。
+
+交叉强度的四档（`strong` / `medium` / `weak-same-line` / `weak-near-line`）也在代码和用例里，但**运行时那一侧目前不报位置，所以真实输出只会是 `unknown`**。这一条写明，不假装已经在用。
 
 ---
 
@@ -100,31 +108,23 @@ python ipcsurface.py build/static-asar.asar -o report.md
 | 3 | 工具自己崩了 | 报 issue |
 | 4 | 已写入但未持久化（目录 fsync 失败） | **文件已是新版，不要回滚、不要重跑** |
 
-写失败时 stderr 会带一行 `kind: <类别>`，类别表在下面「错误词表」。
+发布脚本的退出码是另一套：`0` 成功、`1` 守卫红或 release 已存在、`2` 守卫查不到、`3` 脚本自己出错。**非零不等于失败**，这几种要分开。
 
 ---
 
 ## 写入可靠性 / 崩溃残留
 
-报告是「要么完整、要么不动」的：先写同目录临时文件、`fsync`、核字节数，再用 `os.replace` 原子换上去。**任何时刻从约定路径读到的都是一份完整报告。**
+报告「要么完整、要么不动」：先写同目录临时文件、`fsync`、核字节数，再 `os.replace` 原子换上去。任何时刻从约定路径读到的都是完整报告。
 
-写完之后：
-
-- **目录 fsync 失败**不等于写失败。内容已经替换，只是崩溃后可能回退。`WriteResult.durable` 是三态：`yes` / `no` / `unknown`。`unknown` 出现在没有目录 fsync 能力的平台（Windows），退出码仍是 0，只在 stderr 说一次「无法确认持久性」。
-- **替换被占用**（Windows 上常见）报 `replace_failed`，这次要写的内容留在 `.failed` 里当现场，原报告不动。
-- **崩在中间**会留下 `.bak` / `.failed`。用 `--recover` 看：
+- **目录 fsync 失败**不等于写失败，内容已替换，只是崩溃后可能回退。`durable` 是三态：`yes` / `no` / `unknown`；`unknown` 出现在 Windows，退出码仍是 0。
+- **替换被占用**报 `replace_failed`，这次的正文留在 `.failed` 里当现场，原报告不动。
+- **崩在中间**会留下 `.bak` / `.failed`，用 `--recover` 看：
 
 ```bash
 python ipcsurface.py --recover out.md
 ```
 
-它打印 target 与副本各自的大小、时间、以及两者的时间先后，**只给事实、不动文件**：副本存在只说明「上次可能崩在替换与清理之间」，谁新谁旧要人看内容定。
-
-三条措辞上的边界，别读成结论：
-
-- **副本时间来自文件名里的时间戳，target 只有 mtime**，两边不同源，所以「谁更新」那一栏会明写「仅作线索」。
-- **target 缺失时整张对比表退化成副本清单**：没有 target 就没有「对比」可言，留着半张只有一侧的表，会让人以为另一侧的值只是没显示。清单里每条副本仍然给**大小、年龄、以及年龄的时间来源**（文件名里的时间戳），够判断「哪份留着看」。
-- **前跳识别是启发式，不是结构判定**：阈值定在「超过一年」，命中显示「时间过久（启发式：超过一年就会落这里——可能是时钟前跳，也可能是正常旧文件）」。这个数**不是从数据里得出的**，只是拍出来的一条界线；它写在源码里（`_age_text` 那段的一年代上限），**不是运行时配置，没有 `--threshold` 之类的开关**，要改就得改代码；一份五年前的正常旧报告也会落进来。更可靠的信号是结构性矛盾（mtime 早于所在目录创建时间、早于工具版本发布时间），目前没做。
+只给事实、不动文件：副本存在只说明「上次可能崩在替换与清理之间」；target 缺失时整张对比表退化成副本清单（大小、年龄、年龄的时间来源都保留），不留半张只有一侧的表。前跳识别的「一年」是**启发式**，正常旧文件也会落进来，要改只能改源码。
 
 ## 错误词表（机器可读）
 
@@ -132,73 +132,50 @@ python ipcsurface.py --recover out.md
 
 输出侧：`disk_full`、`permission_denied`、`short_write`、`replace_failed`、`symlink_target`、`write_failed`、`invalid_json_output`。
 
-写入的持久性是三态：`yes` / `no` / `unknown`。`unknown` 出现在没有目录 fsync 能力的平台（Windows），退出码仍是 0，只在 stderr 说一次「无法确认持久性」。
-
 ---
 
 ## 质量怎么保证的
 
 - **226 个用例**，只跑标准库：`python -m unittest discover -s tests`
-- **冒烟 15 项**：真跑一遍 CLI 的所有入口
-- **端到端**：`python scripts/e2e_check.py`，走装好的命令行，不看内部函数
-- **自查**：版本、schema、规则注册表、文档与实现一致性、工作区是否干净
+- **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
+- **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
+- **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
 
-CI 跑三个任务，缺一不可：
+CI 四个任务，缺一不可：
 
 - `check`（Linux）：装包、造示例包、三道闸
-- `windows`：同一套三道闸，外加 `scripts/check_windows_behaviour.py`——目录 fsync 不可用、`durable` 必须是 `unknown`、替换被占用报 `replace_failed`、263 字符长路径写得出来
-- `signal`：干净包必须退 0，有问题的包必须退 2，SARIF 能上传
-- `e2e`：装成包 → 对 `realish.asar` 跑 → 校验 schema、md/json 口径、`--fail-on` 退 2、两次输出一致
+- `windows`：同一套三道闸，外加 Windows 专属断言（目录 fsync 不可用、`durable` 必须 `unknown`、替换被占用报 `replace_failed`、263 字符长路径写得出来）
+- `signal`：干净包退 0、有问题的包退 2、SARIF 能上传
+- `e2e`：装成包 → 对可复现靶场跑 → 校准 schema 与口径 → 人工标注对账
 
-发布另有两道程序，不靠记性：
-
-- `python scripts/check_release_tag.py v<版本>`：标签指向的提交必须 CI 全绿（`0` 绿 / `1` 红 / `2` 查不到）
-- `python scripts/make_release.py v<版本> --name ... --notes-file ...`：发布前先过守卫，`0` 才继续（`3` 是脚本自己出错）
+发布也不靠记性：`check_release_tag.py` 查标签指向的提交是否 CI 全绿（`0` 绿 / `1` 红 / `2` 查不到），`make_release.py` 先过守卫再发（`3` 是脚本自己出错）。两张脚本自己都有用例。
 
 ---
 
 ## 已知会错的地方
 
-拼出来的名字看不见、长得像的字符串会误报、混淆器的痕迹只是线索——这些都写在 [docs/known-wrong.md](docs/known-wrong.md) 里，按「看不见的 / 会误报的 / 别当结论用的场合」分了三类。
+拼出来的名字看不见、长得像的字符串会误报、混淆器的痕迹只是线索——按「看不见的 / 会误报的 / 别当结论用的场合」写在 [docs/known-wrong.md](docs/known-wrong.md)。
 
-清单有机械下限：三列固定、每类至少若干条、顶部版本锁与当前版本一致，自检会核对。**内容是判断，不是断言**——自检能保证它没退化成空壳，保证不了每一条都够具体。
-
-## 可信度靠什么撑起来
-
-- **复算指纹**：报告顶部给 `输入 sha256 + 版本 + 参数` 算出的 `fingerprint`。同样的输入重跑得到同一个值，对不上就是有人改了输入、换了版本，或者我这边行为漂了。
-- **两路交叉单独一行**：静态和运行时各看见一次的，进「两条路都对上的」那一层，不跟别的层合并。
-- **每层给样本**：md 里每层抽一两条 `名字 @ file:line` 给人看；**JSON 里给全量** `sites`（名字 → 所有位置），下游想做批量交叉验证时不该被抽样挡住。
-- **交叉还分强度**：两条路都对上的通道带 `corroboration_level`——`strong`（两个不同文件）、`medium`（同文件、相隔 5 行以上）、`weak-same-line`（同一行：基本是同一处代码的两种视角）、`weak-near-line`（相隔 1–5 行：可能是同一调用点，也可能只是碰巧挨着，**分不清**）、`unknown`（运行时那侧没给位置）。把相邻行单独拆出来，是因为「同一处代码两个视角」和「两段无关代码碰巧挨着」的独立性差得远。
-  - **位置从哪来**：探针的输入 JSON 里带 `sites`（`名字 → file:line`）就能定档；不带就是 `unknown`。格式不对的条目会被丢掉，不拿垃圾位置算强度。
-- **每条结论配「推翻它的判据」**：`evidence[*].refutes_if` 写的是「什么观察能驳倒这条」，不是「什么能支持它」。`literal` 配的是「源码里搜不到这个字符串」。
-- **样本按 hash 选**：`samples` 取名字 sha1 排前两条，谁的机器上看都是同两条，能互相复核。
-- **报告自指纹**：`content_digest` 是报告正文（去掉时间戳和它自己）的 sha256。拿到报告的人能自己重算——对得上，说明这份报告没被改过、也不是别的版本生成的。
-- **包级 Merkle 根**：`archive_merkle` 把包内每个文件的 `路径:sha256` 排序后聚合。作用是确认「我们说的是同一份包」，不是「这个包安全」。
-- **每个名字给全部位置**：`evidence[*].where_all` 是这个名字出现过的所有位置，不只第一处——只报第一处会让人以为它只在那儿。
-- **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算 recall / precision / 总覆盖率。**当前平均总覆盖率 0.88**——那 0.12 是 `dyn` 靶场里 `'ledger:' + op` 这种运行时拼出来的名字，静态扫不到，标在 `known_unreachable` 里，不算修饰。
+清单有机械下限：三列固定、症状条数不少于八条、顶部版本锁与当前版本一致，自检核对。**内容是判断，自检保证不了它够具体**——这条边界写在 README 里，不装作能自动判断质量。
 
 ## 已知边界
 
 - 字符串级粗扫，不建语法树；拼出来的、算出来的名字看不见。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
-- Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`——这条现在由 CI 的 `windows` 任务断言。只读目录仍是盲区（没有在真实只读卷上跑过），写在 [CHANGELOG](CHANGELOG.md) 里。
-- `adv-asar.asar` 这个对抗样本没有生成脚本，只在本地有，别的机器造不出来；其余靶场都能由 `examples/build.sh` 重造。
-- 规模与性能的断言跑在可复现的 `realish.asar`（3042 个文件、12 条通道、< 8 秒）上，**不是**作者本机那个 441 MB 的真实应用——后者仍只在本机验。
+- Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`——由 CI 的 `windows` 任务断言。只读目录仍是盲区。
+- `adv-asar.asar` 是对抗样本，没有生成脚本，只在本地有；其余靶场都能由 `examples/build.sh` 重造。
+- 规模与性能的断言跑在可复现的 `realish.asar`（3042 个文件、12 条通道、< 8 秒）上，**不是**作者本机那个 441 MB 的应用——后者仍只在本机验。
 
 ---
 
 ## 维护者自查（写给改它的人）
 
-- 用例数、冒烟项数只写在上面「质量怎么保证的」那一节，别处引用不重写——这里以前也抄了一遍，两处会漂。
-- 全称断言的空集合防护是**按语义**判的：只建模真值只依赖集合自身属性的表达式。
-  - **内建集合操作 = 集合自身的属性**，会被建模：`len(xs)`、`sum(xs)`、`sum(1 for ...)`、`xs.count(x)`、`xs.index(x)`、`sorted(xs)`、`set(xs)`、`all(...)`、`any(...)`、推导式、空容器字面量。
-  - **用户自定义函数、依赖外部状态的调用 = 函数返回值**，一律策略上不算、保守归真空。
-  - 带集合语义但真值没建模的，一律当危险报。
-  这两类的边界是「有没有引入集合之外的状态」，不是「长没长成函数调用的样子」——`len` 和 `sum` 都是调用，但它们只吃集合。
-- 发布前跑一次 `python scripts/check_release_tag.py v<版本>`：标签指向的提交必须 CI 全绿，红退 1、查不到退 2。
-- `check_release_tag.py` 第一次跑就发现 `v0.62.0` 发布时 CI 是红的；该版本不追溯修改，仅记录（见 CHANGELOG 0.65.5）。
-- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **5 / 6**（真空断言口径）——这个数涨了就是信号，不是背景音。
+- 用例数、冒烟项数只写在上面「质量怎么保证的」那一节，别处引用不重写——两处会漂。
+- 全称断言的空集合防护按语义判：内建集合操作（`len`、`sum`、`count`、`index`、`sorted`、`set`、`all`/`any`、推导式、空容器）算集合自身属性；用户自定义函数、依赖外部状态的调用才算「函数返回值」，一律保守归真空。
+- 发布前跑一次 `python scripts/check_release_tag.py v<版本>`。它的 `2` 是「查不到」，不是「CI 红」。
+- `check_release_tag.py` 第一次跑就发现 `v0.62.0` 发布时 CI 是红的；该版本不追溯修改，仅记录（CHANGELOG 0.65.5）。
+- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **5 / 6**（真空断言口径）——这个数涨了就是信号。
 
 ## 设计原则（写给以后改它的人）
 

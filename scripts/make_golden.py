@@ -81,6 +81,7 @@ def main():
         changed = sorted(k for k in set(before) | set(report)
                          if before.get(k) != report.get(k))
     if before and not changed:
+        # 「没变」说明走 stderr：它不是正常产出，是「你以为变了其实没变」的提醒
         print(f'SKIPPED: {GOLDEN} unchanged, not rewritten', file=sys.stderr)
         print('（这次的 reason 没有写进 CHANGELOG.golden.md：内容没变。'
               '如果你本来以为会变，那说明改的不是这里。）', file=sys.stderr)

@@ -1468,10 +1468,11 @@ class TrustworthinessTests(unittest.TestCase):
         self.assertEqual(item.get('corroboration_level'), 'unknown')
 
     def test_rule_report_says_where_positions_come_from(self):
-        # README 得写清位置从哪来、不带位置会退成什么，否则四档看起来像已经在用
+        # README 得写清：运行时目前不报位置，所以四档实际只会是 unknown，
+        # 否则读者会以为这四档已经在用。
         text = open(os.path.join(ROOT, 'README.md'), encoding='utf-8').read()
-        self.assertIn('位置从哪来', text)
-        self.assertIn('不带就是 `unknown`', text)
+        self.assertIn('运行时那一侧目前不报位置', text)
+        self.assertIn('只会是 `unknown`', text)
 
     def test_rule_near_line_says_what_it_cannot_tell(self):
         level, basis = ipc.corroboration_strength('a.js:10', 'a.js:12')
