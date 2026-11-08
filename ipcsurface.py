@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.69.0'
+__version__ = '0.69.1'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1157,8 +1157,17 @@ def corroboration_strength(static_where, runtime_where):
     s_path, s_line = split(static_where)
     r_path, r_line = split(runtime_where)
     if s_path == r_path:
-        if s_line is not None and r_line is not None and abs(s_line - r_line) <= 5:
-            return 'weak', f'同一个文件、相隔不到 5 行（{s_path}）'
+        if s_line is not None and r_line is not None:
+            gap = abs(s_line - r_line)
+            if gap == 0:
+                # 同一行：基本就是同一处代码的两种视角，独立性最低
+                return 'weak-same-line', f'同一个文件、同一行（{s_path}:{s_line}）'
+            if gap <= 5:
+                # 相邻但不同行：可能是同一个调用点，也可能只是碰巧挨着。
+                # 静态没法分辨这个，所以档位名字只说「相邻」，不说「同源」。
+                return 'weak-near-line', (
+                    f'同一个文件、相隔 {gap} 行（{s_path}:{s_line} / {r_line}）；'
+                    '分不清是同一个调用点还是只是相邻')
         return 'medium', f'同一个文件的不同位置（{s_path}）'
     return 'strong', f'两个不同文件：{s_path} / {r_path}'
 

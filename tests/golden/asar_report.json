@@ -247,13 +247,13 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "a0e78881161ed25086b984e5044c37de2d335d3e196c2986f3b9829e7ff6b810",
-    "version": "0.69.0",
+    "version": "0.69.1",
     "schema": "ipcsurface/asar/10",
     "params": {},
     "channels": [
       "a:b"
     ],
-    "digest": "81b11f90150766d0f4316927022ccdee73a0ada3abefc186eee000c2503a378b",
+    "digest": "2d361ce9c8729a4c9ad1a474d9d055a56f19837c4c8895c36a67bac443f40758",
     "algorithm": "sha256(canonical-json)"
   },
   "sites": {

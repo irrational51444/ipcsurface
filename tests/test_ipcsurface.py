@@ -1416,6 +1416,22 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class TrustworthinessTests(unittest.TestCase):
     """可信度四件：指纹、两路交叉、抽样、已知会错。"""
 
+    def test_rule_corroboration_levels_are_not_one_block(self):
+        # weak 里有两种语义：同一行（同一处代码的两种视角）和相邻行（可能是同一调用点，
+        # 也可能只是碰巧挨着）。压成一档就是把不同独立性塞进同一个词里。
+        self.assertEqual(ipc.corroboration_strength('a.js:10', 'a.js:10')[0],
+                         'weak-same-line')
+        self.assertEqual(ipc.corroboration_strength('a.js:10', 'a.js:13')[0],
+                         'weak-near-line')
+        self.assertEqual(ipc.corroboration_strength('a.js:10', 'a.js:40')[0], 'medium')
+        self.assertEqual(ipc.corroboration_strength('a.js:10', 'b.js:3')[0], 'strong')
+        self.assertEqual(ipc.corroboration_strength('a.js:10', None)[0], 'unknown')
+
+    def test_rule_near_line_says_what_it_cannot_tell(self):
+        level, basis = ipc.corroboration_strength('a.js:10', 'a.js:12')
+        self.assertEqual(level, 'weak-near-line')
+        self.assertIn('分不清', basis, '相邻档必须自己说明「分不清是不是同一调用点」')
+
     def test_rule_fingerprint_is_reproducible(self):
         sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
         if not os.path.exists(sample):
