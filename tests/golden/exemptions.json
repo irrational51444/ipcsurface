@@ -5,7 +5,7 @@
   "substitutive": 0,
   "allowed_substitutive": 0,
   "locked_at_ratio": 0.6667,
-  "locked_at_version": "0.64.1",
+  "locked_at_version": "0.65.0",
   "policy": "门禁只挂在「替代型」条数上（allowed_substitutive，默认 0）；总比率是背景报告，不构成失败条件。版本号对不上也红。",
   "reason": "替代型 = 本该写 non_empty() 却用注释替代信任。总比率把合理声明和该检查没检查混在一起，拦它说不清拦的是哪一种，所以阈值不再挂在比率上。",
   "note": "比率仅供观察：protected/total 的分子分母都只算 vacuous 断言。"

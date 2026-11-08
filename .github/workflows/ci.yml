@@ -34,6 +34,31 @@ jobs:
           echo "exit=$code"
           test "$code" -ne 0
 
+  windows:
+    # 这一节验的是「只在 Windows 上才不一样」的路径：
+    # 目录 fsync 不可用、符号链接建不出来、replace 被占用、长路径。
+    # 这些以前只在作者本机手动跑过，等于没验。
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 装
+        run: pip install .
+      - name: 造示例包
+        run: cd examples && bash build.sh
+      - name: 三道闸（Windows）
+        run: bash scripts/verify.sh
+      - name: Windows 专属行为断言
+        run: python scripts/check_windows_behaviour.py
+
   signal:
     # 这一节验的是「CI 能不能靠退出码和 SARIF 做判断」，不是验工具本身
     runs-on: ubuntu-latest
@@ -43,9 +68,6 @@ jobs:
       security-events: write
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -57,13 +79,13 @@ jobs:
         run: |
           set -e
           ipcsurface examples/build/static-asar.asar -o /tmp/clean.md --fail-on high
-          echo "干净包退出码 $?"
+          echo "干净包退出了 $?"
       - name: 有问题的靶子必须退出 2
         run: |
           set +e
           ipcsurface examples/build/obf-asar.asar -o /tmp/dirty.md --fail-on high
           code=$?
-          echo "有问题的包退出码 $code"
+          echo "有问题的包退出了 $code"
           test "$code" -eq 2
       - name: 产出 SARIF 并上传
         if: always()

@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.64.1'
+__version__ = '0.65.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1987,6 +1987,21 @@ def render_leftovers(report, path):
     return '\n'.join(lines) + '\n'
 
 
+def _win_long(path):
+    """Windows 上超过 260 字符的路径要加扩展前缀，否则 create/open 直接报 206。
+
+    只改传进去的路径，不改调用方看到的名字。
+    """
+    if os.name != 'nt':
+        return path
+    full = os.path.abspath(path)
+    if len(full) < 240 or full.startswith('\\\\?\\'):
+        return full
+    if full.startswith('\\\\'):
+        return '\\\\?\\UNC\\' + full[2:]
+    return '\\\\?\\' + full
+
+
 def write_output(path, text, expect_json=False):
     """要么完整写出来，要么一个字节都不留。
 
@@ -2005,10 +2020,12 @@ def write_output(path, text, expect_json=False):
             '备份会跟随链接复制目标内容，而替换会把链接本身变成普通文件，两头语义不一样。\n'
             f'下一步：把真实路径 {os.path.realpath(path)} 传进来，别让工具替你猜。')
 
+    raw_target = _win_long(path)
     directory = os.path.dirname(os.path.abspath(path)) or '.'
+    long_directory = os.path.dirname(raw_target)
     basename = os.path.basename(path)
     try:
-        os.makedirs(directory, exist_ok=True)
+        os.makedirs(long_directory, exist_ok=True)
     except OSError as exc:
         raise OutputError(_output_kind(exc), f'目标目录建不出来：{directory}\n{exc}')
 
@@ -2018,10 +2035,12 @@ def write_output(path, text, expect_json=False):
         warnings.append(f'发现 {len(kept)} 个未处理的备份副本，可能是之前崩在中间留下的；'
                         f'没自动恢复，请人工确认（第一个：{kept[0]}）')
 
-    handle, temp_path = tempfile.mkstemp(dir=directory, prefix=WRITE_TMP_PREFIX, suffix='.part')
+    handle, temp_path = tempfile.mkstemp(dir=long_directory,
+                                        prefix=WRITE_TMP_PREFIX, suffix='.part')
     stamp = int(time.time() * 1000)
-    backup = os.path.join(directory, f'.{basename}.{stamp}.{uuid.uuid4().hex[:8]}.bak')
-    had_old = os.path.exists(path)
+    backup = os.path.join(long_directory, f'.{basename}.{stamp}.{uuid.uuid4().hex[:8]}.bak')
+    target_path = raw_target
+    had_old = os.path.exists(target_path)
     failed_keep = os.path.join(directory, f'.{basename}.{stamp}.{uuid.uuid4().hex[:8]}.failed')
     try:
         with os.fdopen(handle, 'w', encoding='utf-8', newline='') as fh:
@@ -2047,13 +2066,13 @@ def write_output(path, text, expect_json=False):
 
         if had_old:
             try:
-                shutil.copy2(path, backup)
+                shutil.copy2(target_path, backup)
             except OSError as exc:
                 raise OutputError(_output_kind(exc),
                                   f'备份旧报告失败，所以没有替换：{path}\n{exc.strerror or exc}')
 
         try:
-            os.replace(temp_path, path)
+            os.replace(temp_path, target_path)
         except OSError as exc:
             # 这份 tmp 是「我们确实想写什么」的唯一现场，留着当诊断，改名 .failed
             try:
@@ -2082,7 +2101,7 @@ def write_output(path, text, expect_json=False):
 
         if os.name == 'nt' and not _windows_hint_shown:
             globals()['_windows_hint_shown'] = True
-            warnings.append('Windows 上这几条路径未经验证：replace 被占用、长路径、只读目录；'
+            warnings.append('Windows 上还有一条路径未经验证：只读目录；'
                             '真踩到问题请按 replace_failed 的提示处理。')
     except OutputError:
         raise
