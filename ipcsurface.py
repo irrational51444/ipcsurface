@@ -2623,6 +2623,12 @@ def load_record(path):
     for record in records:
         result = record.get('normalized_result') or {}
         if 'graph' in result:
+            # 顺手把能力面也算上：Evidence 给了精确的 handler 行列，切出来的
+            # 处理函数体比字符串级括号配对准；算不出来就留空，不硬猜。
+            try:
+                result['capability'] = capability_from_evidence(result)
+            except (OSError, ValueError, KeyError, TypeError):
+                result['capability'] = {}
             return result
     raise SystemExit('证据里没有应用图，可能不是 analyze-javascript-application 的输出')
 
