@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.73.0'
+__version__ = '0.74.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -498,6 +498,295 @@ def fold_literals(text):
     return text
 
 
+# ------------------------------------------------------- 穷举「拼出来的名字」
+# 拼出来的名字有两种。一种写在别处，代回去就行（上面那套常量传播）；
+# 另一种是「一小组取值 × 一个拼装函数」：
+#
+#     const OPS = ['add', 'list', 'remove'];
+#     for (const op of OPS) ipcMain.handle(makeChannel(op), …)
+#     function makeChannel(rest) { return 'ledger:' + rest; }
+#
+# 这种不是猜：取值集合有限、写在源码里，拼法也只有字面量和加号，穷举出来就是全部。
+# 超出这个范围的（读配置、循环里累加、查完表再拼）仍旧算不出来——那是真边界，
+# 不往上凑一个「大概是这样」。
+
+ENUM_MAX_VALUES = 64        # 一个变量最多枚举这么多个取值
+ENUM_MAX_NAMES = 256        # 一个调用点最多展开这么多名字
+ENUM_MAX_DEPTH = 3          # 函数套函数最多跟三层
+ENUM_SCAN_LIMIT = 40000     # 找循环体大括号时最多往后看这么多字符
+
+ARRAY_LITERAL_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\[\s*"
+    r"((?:['\"](?:\\.|[^'\"\\])*['\"]\s*,?\s*){1,%d})\s*\]" % ENUM_MAX_VALUES)
+STRING_ITEM = re.compile(r"""(['"])((?:\\.|(?!\1)[^\\])*)\1""")
+SIMPLE_FUNC_DEF = re.compile(
+    r"function\s+([A-Za-z_$][\w$]*)\s*\(([^)]{0,200})\)\s*\{\s*return\s+([^;{}]{1,300});?\s*\}")
+SIMPLE_ARROW_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(([^)]{0,200})\)\s*=>\s*([^;{}\n]{1,300})")
+FOR_OF_HEAD = re.compile(r"for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([^)]{1,600})\)")
+FOR_EACH_HEAD = re.compile(
+    r"forEach\s*\(\s*(?:function\s*\(([A-Za-z_$][\w$]*)[^)]*\)|\(?([A-Za-z_$][\w$]*)\)?\s*=>)\s*\{")
+IPC_HEADS = re.compile(
+    r"ipcMain(?:\.(?:handle|handleOnce|on)|\[\s*['\"](?:handle|handleOnce|on)['\"]\s*\])"
+    r"|ipcRenderer(?:\.(?:invoke|send|sendSync)|\[\s*['\"](?:invoke|send|sendSync)['\"]\s*\])")
+
+
+def _skip_string(text, pos):
+    """pos 指在引号上，返回这个字面量之后的位置。模板串只按反引号算，不解析 ${}。"""
+    quote = text[pos]
+    i = pos + 1
+    limit = min(len(text), pos + 4096)
+    while i < limit:
+        char = text[i]
+        if char == '\\':
+            i += 2
+            continue
+        if char == quote:
+            return i + 1
+        i += 1
+    return limit
+
+
+def _split_top(text, sep=','):
+    """按顶层分隔符切分，跳过引号和括号。切不开返回 None。"""
+    parts, depth, start, i = [], 0, 0, 0
+    while i < len(text):
+        char = text[i]
+        if char in '\'"`':
+            i = _skip_string(text, i)
+            continue
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+            if depth < 0:
+                return None
+        elif char == sep and depth == 0:
+            parts.append(text[start:i])
+            start = i + 1
+        i += 1
+    if depth != 0:
+        return None
+    parts.append(text[start:])
+    return [part.strip() for part in parts]
+
+
+def _block_end(text, open_pos):
+    """从 `{` 开始找到配对的 `}`，跳过字符串。找不到返回 None。"""
+    depth, i, limit = 0, open_pos, min(len(text), open_pos + ENUM_SCAN_LIMIT)
+    while i < limit:
+        char = text[i]
+        if char in '\'"`':
+            i = _skip_string(text, i)
+            continue
+        if char == '{':
+            depth += 1
+        elif char == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return None
+
+
+def parse_array_literals(text):
+    """只收「全是字符串字面量」的数组常量：{名字: 取值元组}。"""
+    table = {}
+    for match in ARRAY_LITERAL_DEF.finditer(text):
+        values = tuple(value for _quote, value in STRING_ITEM.findall(match.group(2)))
+        if values:
+            table.setdefault(match.group(1), values)
+    return table
+
+
+def parse_simple_functions(text):
+    """单表达式函数：`function f(a) { return 'x' + a; }` 和箭头版。
+
+    只收「函数体就是一个表达式」的。带分支、带赋值、带循环的一律不收——
+    那种拼法不是穷举能算的，硬算就是编。
+    """
+    table = {}
+    for match in SIMPLE_FUNC_DEF.finditer(text):
+        params = [p.strip() for p in match.group(2).split(',') if p.strip()]
+        table[match.group(1)] = (params, match.group(3).strip())
+    for match in SIMPLE_ARROW_DEF.finditer(text):
+        params = [p.strip() for p in match.group(2).split(',') if p.strip()]
+        table.setdefault(match.group(1), (params, match.group(3).strip()))
+    return table
+
+
+def parse_loops(text, arrays):
+    """找出遍历「有限取值」的循环：[(开始, 结束, 变量名, 取值元组, 来源说明)]。"""
+    loops = []
+    for match in FOR_OF_HEAD.finditer(text):
+        source = match.group(2).strip()
+        values = arrays.get(source)
+        if values is None and source.startswith('['):
+            values = tuple(value for _quote, value in STRING_ITEM.findall(source))
+        if not values:
+            continue
+        brace = text.find('{', match.end())
+        if brace != -1 and not text[match.end():brace].strip():
+            end = _block_end(text, brace)
+            if end is None:
+                continue
+            loops.append((brace, end, match.group(1), values, source))
+    for match in FOR_EACH_HEAD.finditer(text):
+        var = match.group(1) or match.group(2)
+        brace = match.end() - 1
+        end = _block_end(text, brace)
+        if end is None:
+            continue
+        # forEach 的数组在调用点左边：OPS.forEach(…) ——往前取一个标识符
+        before = text[max(0, match.start() - 120):match.start()]
+        names = re.findall(r'([A-Za-z_$][\w$]*)\s*\.\s*$', before)
+        if not names:
+            continue
+        values = arrays.get(names[0])
+        if not values:
+            continue
+        loops.append((brace, end, var, values, names[0]))
+    return loops
+
+
+def _eval_atom(atom, env, funcs, depth):
+    """一个「加号之间」的片段能取哪些值。算不出返回 None。"""
+    text = atom.strip()
+    if not text:
+        return None
+    while len(text) > 1 and text[0] == '(' and text[-1] == ')':
+        text = text[1:-1].strip()
+    if text[:1] in ('"', "'") and len(text) >= 2:
+        match = STRING_ITEM.match(text)
+        return frozenset([match.group(2)]) if match else None
+    if text[:1] == '`':
+        return _eval_template(text, env, funcs, depth)
+    call = re.match(r'^([A-Za-z_$][\w$]*)\s*\((.*)\)$', text, re.S)
+    if call:
+        if depth >= ENUM_MAX_DEPTH:
+            return None
+        entry = funcs.get(call.group(1))
+        if not entry:
+            return None
+        params, body = entry
+        args = _split_top(call.group(2)) if call.group(2).strip() else []
+        if args is None or len(args) != len(params):
+            return None
+        inner = dict(env)
+        for name, arg in zip(params, args):
+            value = _eval_value(arg, env, funcs, depth + 1)
+            if value is None:
+                return None
+            inner[name] = value
+        return _eval_value(body, inner, funcs, depth + 1)
+    if re.match(r'^[A-Za-z_$][\w$]*$', text):
+        return env.get(text)
+    return None
+
+
+def _eval_template(text, env, funcs, depth):
+    """模板串：`ledger:${op}`。只支持 ${标识符} 和 ${'字面量'}。"""
+    body = text[1:-1] if text.endswith('`') else text[1:]
+    total = ['']
+    i = 0
+    while i < len(body):
+        if body.startswith('${', i):
+            end = body.find('}', i)
+            if end == -1:
+                return None
+            value = _eval_atom(body[i + 2:end], env, funcs, depth)
+            if value is None:
+                return None
+            total = [a + b for a in total for b in sorted(value)]
+            if len(total) > ENUM_MAX_NAMES:
+                return None
+            i = end + 1
+            continue
+        total = [a + body[i] for a in total]
+        i += 1
+    return frozenset(total)
+
+
+def _eval_value(expr, env, funcs, depth=0):
+    """把一个表达式算成「可能的取值集合」。算不出返回 None。"""
+    parts = _split_top(expr, '+')
+    if not parts:
+        return None
+    total = ['']
+    for part in parts:
+        values = _eval_atom(part, env, funcs, depth)
+        if values is None:
+            return None
+        total = [a + b for a in total for b in sorted(values)]
+        if len(total) > ENUM_MAX_NAMES:
+            return None
+    return frozenset(total)
+
+
+def _first_argument(text, open_paren):
+    """取调用括号里的第一个实参原文。取不到返回 None。"""
+    depth, i, limit = 0, open_paren + 1, min(len(text), open_paren + 2000)
+    start = i
+    while i < limit:
+        char = text[i]
+        if char in '\'"`':
+            i = _skip_string(text, i)
+            continue
+        if char in '([{':
+            depth += 1
+        elif char == ')':
+            if depth == 0:
+                return text[start:i].strip()
+            depth -= 1
+        elif char == ',' and depth == 0:
+            return text[start:i].strip()
+        i += 1
+    return None
+
+
+def enumerate_computed_names(text, rel):
+    """把「有限取值 × 字面量拼装」的调用点穷举成具体名字。
+
+    返回 [(kind, name, where, basis)]。算不出来的一律不返回——
+    那种留给 dynamic 那一档照实报「名字是算的」。
+    """
+    if 'for' not in text and 'forEach' not in text:
+        return []
+    arrays = parse_array_literals(text)
+    loops = parse_loops(text, arrays)
+    if not loops:
+        return []
+    funcs = parse_simple_functions(text)
+    consts = {name: frozenset([value])
+              for name, _quote, value in CONST_DEF.findall(text)}
+
+    found = []
+    for head in IPC_HEADS.finditer(text):
+        paren = text.find('(', head.end())
+        if paren == -1:
+            continue
+        if text[head.end():paren].strip():
+            continue
+        expr = _first_argument(text, paren)
+        if not expr:
+            continue
+        # 只有落在某个循环体里，才谈得上穷举
+        loop = next((item for item in loops if item[0] <= paren <= item[1]), None)
+        if loop is None:
+            continue
+        env = dict(consts)
+        env[loop[2]] = frozenset(loop[3])
+        values = _eval_value(expr, env, funcs)
+        if not values:
+            continue
+        kind = 'handle' if text.startswith('ipcMain', head.start()) else 'invoke'
+        where = f'{rel}:{line_of(text, head.start())}'
+        basis = f'{loop[2]} 在 {loop[4]} 里取 {len(loop[3])} 个值，拼法 {expr}'
+        for name in sorted(values):
+            found.append((kind, name, where, basis))
+    return found
+
+
 def detect_obfuscation(blob, rel):
     """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
 
@@ -687,6 +976,8 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     dynamic, prefs, preloads = [], {}, []
     obfuscation = []
     resolved = set()   # 靠还原才认出名字的那些，强度低一档
+    enumerated = []    # 穷举出来的名字，(名字, 位置, 依据)
+    enumerated_sites = set()
     scanned = 0
     # 先收一遍全包的常量，跨文件那种才配得上
     global_consts, global_members = build_global_tables(files)
@@ -695,8 +986,10 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         if not rel.endswith(TEXT_EXT):
             continue
         # 先用字节找标记。解成字符串再找，慢十倍不止。
-        hot_ipc = (b'ipcMain' in blob or b'contextBridge' in blob
-                   or b'webPreferences' in blob)
+        # ipcRenderer 也要算热：只有页面侧调用的文件（没 contextBridge、没 ipcMain）
+        # 以前整份被跳过，那条 invoke 就白丢了。
+        hot_ipc = (b'ipcMain' in blob or b'ipcRenderer' in blob
+                   or b'contextBridge' in blob or b'webPreferences' in blob)
         suspicious = (b'eval(' in blob or b'_0x' in blob or b'atob(' in blob
                       or b'new Function(' in blob)
         if not hot_ipc and not suspicious:
@@ -745,12 +1038,27 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                 else:
                     prefs[kind] = (value, where)
 
+        # 算出来的名字：能穷举就穷举成具体名字，穷举不了的留在 dynamic 里照实报。
+        # 用还原之后的文本：常量代回去之后，拼装式子才看得清。
+        # 先在字节上看一眼有没有循环——绝大多数文件没有，没必要为它跑四条正则。
+        # 只认 `for(` / `for (` / `forEach`：光找 `for` 会撞上 information 这类词。
+        has_loop = (b'for(' in blob or b'for (' in blob or b'forEach' in blob)
+        if has_loop:
+            for kind, name, where, basis in enumerate_computed_names(text, rel):
+                (handlers if kind == 'handle' else invokes).append((name, where))
+                enumerated.append((name, where, basis))
+                enumerated_sites.add(where)
+
+    # 已经穷举出来的调用点不再算「名字是算的」——那处现在有名字了。
+    dynamic = [item for item in dynamic if item[1] not in enumerated_sites]
+
     return {
         'scanned': scanned,
         'exposes': sorted(set(exposes)),
         'handlers': sorted(set(handlers)),
         'invokes': sorted(set(invokes)),
         'dynamic': sorted(set(dynamic)),
+        'enumerated': sorted(set(enumerated)),
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
         'obfuscation': sorted(set(obfuscation))[:200],
@@ -777,7 +1085,7 @@ def audit_asar(facts):
 
 
 # 独立性判定表：不是举几个例子，是把全部两两组合写死。没点名的地方最容易按自己的理解走。
-STATIC_SOURCES = ('literal', 'literal-resolved', 'computed', 'harvested')
+STATIC_SOURCES = ('literal', 'literal-resolved', 'enumerated', 'computed', 'harvested')
 ALL_SOURCES = STATIC_SOURCES + ('runtime',)
 
 
@@ -880,6 +1188,10 @@ RULES = [
      'text': '基线文件自带 schema 号；对不上就拒绝，不静默按旧口径比'},
     {'id': 'baseline_error_carries_next_step',
      'text': '基线被拒绝时，错误信息里必须带重写和比较的两条命令'},
+    {'id': 'enumerated_requires_literal_set',
+     'text': '穷举只在「取值集合是字面量数组、拼法只有字面量和加号」时发生；'
+             '取值来自配置、函数返回值或循环累加的一律退回 dynamic，不猜；'
+             '展开数量超过上限也整处退回，不截断了交点半份'},
     {'id': 'unknown_is_null',
      'text': '未知写 null，不写 0；0 会被读成「查过，没有」'},
 ]
@@ -895,8 +1207,8 @@ CONFIDENCE_SEMANTICS = {
         'table': INDEPENDENCE_TABLE,
         'sources': list(ALL_SOURCES),
         'rule': '独立性按两两组合查表判定，不留没点名的缝隙。'
-                '静态来源之间（literal / literal-resolved / computed / harvested）共享同一份源码，'
-                '不算独立；运行时与任一静态来源算独立。'
+                '静态来源之间（literal / literal-resolved / enumerated / computed / harvested）'
+                '共享同一份源码，不算独立；运行时与任一静态来源算独立。'
                 '每个名字的 corroboration 已经按这张表算好，下游不必自己推导。',
     },
     'corroborated_rule': '至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，'
@@ -1021,6 +1333,7 @@ CONFIDENCE_SEMANTICS = {
 ACTION_BY_SOURCE = {
     'literal': 'cite',
     'literal-resolved': 'spot_check_source',
+    'enumerated': 'spot_check_source',
     'runtime': 'trust_after_setup',
     'computed': 'read_code',
     'harvested': 'triage',
@@ -1032,6 +1345,7 @@ SOURCE_STRENGTH = {
     'literal': 1.0,
     'literal-resolved': 0.9,
     'runtime': 0.8,
+    'enumerated': 0.75,
     'computed': 0.3,
     'harvested': 0.2,
 }
@@ -1058,10 +1372,17 @@ def channel_sources(facts, probe=None):
             if where not in item['where_all']:
                 item['where_all'].append(where)
 
+    enumerated_names = {name for name, _w, _b in (facts.get('enumerated') or ())}
+    enumerated_sites = {(name, where) for name, where, _b in (facts.get('enumerated') or ())}
     for name, where in facts['handlers'] + facts['invokes'] + facts['exposes']:
         if name in facts.get('resolved', ()):
             # 名字是靠还原推出来的，不是逐字写在那儿，强度低一档
             add(name, 'literal-resolved', 0.9, where)
+        elif (name, where) in enumerated_sites:
+            # 穷举出来的：取值集合和拼法都在源码里，但「循环里没人改过这个变量」
+            # 这一条静态证明不了，所以排在写死的和还原的后面。
+            # 按「这一处」判，不按名字判：同一个名字在别处逐字写着，就该按写死的算。
+            add(name, 'enumerated', 0.75, where)
         else:
             add(name, 'literal', 1.0, where)
     if probe and not probe.get('error'):
@@ -1090,7 +1411,8 @@ def channel_sources(facts, probe=None):
         srcs = item['sources']
         pairs = [(a, b) for i, a in enumerate(srcs) for b in srcs[i + 1:]]
         has_independent = any(independent(a, b) for a, b in pairs)
-        static_sources = {'literal', 'literal-resolved', 'computed', 'harvested'} & set(srcs)
+        static_sources = {'literal', 'literal-resolved', 'enumerated',
+                          'computed', 'harvested'} & set(srcs)
         if has_independent:
             item['corroboration'] = 'static_runtime'
         elif len(static_sources) >= 2:
@@ -1180,6 +1502,8 @@ def corroboration_strength(static_where, runtime_where):
 REFUTES = {
     'literal': '在源码里搜不到这个字符串（或它只是注释/文档里的示例）',
     'literal-resolved': '常量表里查不到这个名字，或那张表在更早的地方被整个覆盖',
+    'enumerated': '那个循环里有人改过变量（或取值集合不是字面量数组），'
+                  '拼出来的名字就不止这几个',
     'runtime': '程序跑起来后，运行时不注册这个名字',
     'computed': '调用点的参数在运行时算出来是另一个值',
     'harvested': '这个字符串不是通道名，只是长得像',
@@ -1196,12 +1520,13 @@ def refutes_if(sources):
     return out
 
 
-def sample_sites(facts, limit=2, only_resolved=False):
+def sample_sites(facts, limit=2, only_resolved=False, only_enumerated=False):
     """抽一两条能自己核对的样本：名字 + file:line。
 
     有样本才叫「你能查」，没样本就只能「你信我」。
     """
     resolved = set(facts.get('resolved') or ())
+    enumerated = {name for name, _w, _b in (facts.get('enumerated') or ())}
     candidates = []
     seen = set()
     for name, where in (facts['handlers'] + facts['invokes'] + facts['exposes']):
@@ -1209,7 +1534,10 @@ def sample_sites(facts, limit=2, only_resolved=False):
             continue
         if only_resolved and name not in resolved:
             continue
-        if not only_resolved and name in resolved:
+        if only_enumerated and name not in enumerated:
+            continue
+        if not only_resolved and not only_enumerated and (name in resolved
+                                                         or name in enumerated):
             continue
         seen.add(name)
         candidates.append({'name': name, 'where': where})
@@ -1227,10 +1555,13 @@ def confidence_levels(facts, probe=None, poke=None):
     """
     literal = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
     resolved_names = set(facts.get('resolved') or ())
-    literal_resolved = sum(
-        1 for name, _where in facts['handlers'] + facts['invokes'] + facts['exposes']
-        if name in resolved_names)
-    literal_direct = literal - literal_resolved
+    enumerated_sites = {(name, where) for name, where, _b in (facts.get('enumerated') or ())}
+    occurrences = facts['handlers'] + facts['invokes'] + facts['exposes']
+    literal_resolved = sum(1 for name, _where in occurrences if name in resolved_names)
+    enumerated_count = sum(
+        1 for name, where in occurrences
+        if name not in resolved_names and (name, where) in enumerated_sites)
+    literal_direct = literal - literal_resolved - enumerated_count
     harvested = facts.get('harvested') or {}
     own = sum(1 for value in harvested.values()
               if isinstance(value, tuple) and len(value) == 2 and value[1] == 'self')
@@ -1276,6 +1607,21 @@ def confidence_levels(facts, probe=None, poke=None):
             'can_prove': '名字是从本包的字符串池、常量或常量对象里查出来的，原始出处还在源码里',
             'cannot_prove': '查得出不等于它真是通道；表可能被覆盖、字段可能同名不同义',
             'next_step': '能和运行时对上一个就更硬；对不上要回原文看那张表',
+        })
+
+    if enumerated_count:
+        levels.append({
+            'id': 'enumerated',
+            'label': '穷举出来的',
+            'count': enumerated_count,
+            'samples': sample_sites(facts, limit=2, only_enumerated=True),
+            'unit': '条',
+            'strength': 0.75,
+            'can_prove': '取值集合是源码里的字面量数组、拼法是字面量加参数，'
+                         '穷举出来的就是全部可能',
+            'cannot_prove': '证明不了「循环里没人改过这个变量」——静态看不到执行顺序；'
+                            '取值集合一旦来自配置或返回值，这一档就退回「算不出来」',
+            'next_step': '回原文看那个循环和拼装函数；条件对得上就能直接引用这些名字',
         })
 
     if probe and not probe.get('error'):
@@ -1573,7 +1919,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/10',
+        'schema': 'ipcsurface/asar/11',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -1588,7 +1934,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/10',
+        'schema': 'ipcsurface/asar/11',
         'mode': 'asar',
         'subject': target,
         'files': file_count,

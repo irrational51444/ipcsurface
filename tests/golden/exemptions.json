@@ -5,8 +5,8 @@
   "substitutive": 0,
   "allowed_substitutive": 0,
   "locked_at_ratio": 0.8333,
-  "locked_at_version": "0.73.0",
+  "locked_at_version": "0.74.0",
   "policy": "门禁只挂在「替代型」条数上（allowed_substitutive，默认 0）；总比率是背景报告，不构成失败条件。版本号对不上也红。",
-  "reason": "0.73.0 补的两处（完整性声明、Windows 目录刷盘）都是加断言不加豁免：新用例盯的是字段值和真刷盘返回值，没有新增 vacuous 断言，比率仍是 5/6，构成不变。",
+  "reason": "0.74.0 加了穷举那一档的用例：新断言全部作用在具体的名字列表和来源字段上（assertEqual 比对具体集合），没新增 vacuous 断言，比率仍是 5/6。",
   "note": "比率仅供观察：protected/total 的分子分母都只算 vacuous 断言。"
 }

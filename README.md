@@ -1,11 +1,11 @@
-﻿# ipcsurface
+# ipcsurface
 
 [![version](docs/badges/version.svg)](https://github.com/irrational51444/ipcsurface/releases)
 [![tests](docs/badges/tests.svg)](tests/test_ipcsurface.py)
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.73.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.74.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -15,7 +15,7 @@
 
 ## 真跑一次
 
-本机一个真实的 Electron 应用，441 MB、22,102 个文件，4.7 秒：
+本机一个真实的 Electron 应用，441 MB、22,102 个文件，5.0 秒：
 
 ![真实应用扫描输出](docs/img/case-real-scan.png)
 
@@ -42,6 +42,8 @@
 | 没看见的 | 未知 | 无 | 这条路看不见，不代表它不在 |
 
 **这几层不可相加。**真实报告共 41 条通道、221 个候选。 同一个名字可能既被还原出来、又被运行时看到，两边都会算它。报告是地图，不是判决书。
+
+还有一层这张表里没有，因为**这个包 0 条**：穷举出来的名字（`enumerated`，强度 0.75）。取值集合是源码里的字面量数组、拼法是字面量加参数时，`for (const op of OPS) ipcMain.handle(makeChannel(op))` 这种能算成三个具体名字。靶场 `dyn` 里就是三条，真实应用很少这么写。
 
 ---
 
@@ -79,7 +81,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、**哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/10`；对不上就停下，别按字段在不在猜。
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/11`；对不上就停下，别按字段在不在猜。
 
 ---
 
@@ -93,7 +95,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 - **输入指纹 `fingerprint`**：输入 sha256 + 版本 + schema + 参数 + 通道名，一起算。同输入重跑必须同值；输入读不到就是 `null`，不编。
 - **每条结论配「推翻它的判据」**：`evidence[*].refutes_if` 写的是「什么观察能驳倒这条」，不是「什么能支持它」。
 - **每层给样本，JSON 给全量**：md 每层抽两条 `名字 @ file:line`（按名字 sha1 选，谁的机器上都一样）；JSON 里 `sites` 给全部位置，`evidence[*].where_all` 给每个名字的所有位置。
-- **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算召回 / 精确 / 总覆盖率。**当前平均总覆盖率 0.88**——缺口全在 `'ledger:' + op` 这种运行时拼出来的名字，标在 `known_unreachable` 里，不算修饰。
+- **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算召回 / 精确 / 总覆盖率。**当前平均总覆盖率 1.00**——四个靶场全对上了（`dyn` 那三条以前是「算不出来」，这一版才穷举出来）。**这个 1.00 只说明这四个靶场**：加起来 23 条通道、写法全是我自己写的，不代表真实应用；`known_unreachable` 这一栏现在是空的，空了才敢说满，但它跟着源码变。
 
 交叉强度的四档（`strong` / `medium` / `weak-same-line` / `weak-near-line`）也在代码和用例里，但**运行时那一侧目前不报位置，所以真实输出只会是 `unknown`**。这一条写明，不假装已经在用。
 
@@ -137,7 +139,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **232 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **241 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
@@ -162,7 +164,7 @@ CI 四个任务，缺一不可：
 
 ## 已知边界
 
-- 字符串级粗扫，不建语法树；拼出来的、算出来的名字看不见。要准的走 REA Evidence。
+- 字符串级粗扫，不建语法树。拼出来的名字只有一种能算：取值集合是字面量数组、拼法是字面量加参数，那就穷举（`enumerated`，强度 0.75）；取值来自配置、函数返回值或循环累加的一律退回「算不出来」。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
 - Windows 上目录刷盘用 `ctypes` 调 `FlushFileBuffers`（句柄要带写权限，读权限会被拒）。只读卷和网络盘没实测过——那种情况下报 `durable=no`，不是 `unknown`。
 - `adv-asar.asar` 是对抗样本，没有生成脚本，只在本地有；其余靶场都能由 `examples/build.sh` 重造。

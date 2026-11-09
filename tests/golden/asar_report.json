@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/10",
+  "schema": "ipcsurface/asar/11",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -74,12 +74,17 @@
     "independence": {
       "table": {
         "literal|literal-resolved": false,
+        "enumerated|literal": false,
         "computed|literal": false,
         "harvested|literal": false,
         "literal|runtime": true,
+        "enumerated|literal-resolved": false,
         "computed|literal-resolved": false,
         "harvested|literal-resolved": false,
         "literal-resolved|runtime": true,
+        "computed|enumerated": false,
+        "enumerated|harvested": false,
+        "enumerated|runtime": true,
         "computed|harvested": false,
         "computed|runtime": true,
         "harvested|runtime": true
@@ -87,11 +92,12 @@
       "sources": [
         "literal",
         "literal-resolved",
+        "enumerated",
         "computed",
         "harvested",
         "runtime"
       ],
-      "rule": "独立性按两两组合查表判定，不留没点名的缝隙。静态来源之间（literal / literal-resolved / computed / harvested）共享同一份源码，不算独立；运行时与任一静态来源算独立。每个名字的 corroboration 已经按这张表算好，下游不必自己推导。"
+      "rule": "独立性按两两组合查表判定，不留没点名的缝隙。静态来源之间（literal / literal-resolved / enumerated / computed / harvested）共享同一份源码，不算独立；运行时与任一静态来源算独立。每个名字的 corroboration 已经按这张表算好，下游不必自己推导。"
     },
     "corroborated_rule": "至少两条独立见证才叫对上；对上之后强度取该名字所有来源里最高的那条，不累加，也不因为对上就跳档。",
     "action_rule": "每个名字的 actions 列出它所有适用动作，primary_action 取其中最严格的一个（顺序：cite < spot_check_source < trust_after_setup < read_code < triage）。报告给的是最低保证，所以按最费事的那条走，下游不必再自己比。",
@@ -253,8 +259,8 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.73.0",
-    "schema": "ipcsurface/asar/10",
+    "version": "0.74.0",
+    "schema": "ipcsurface/asar/11",
     "params": {},
     "channels": [
       "a:b"

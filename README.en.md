@@ -1,11 +1,11 @@
-﻿# ipcsurface
+# ipcsurface
 
 [![version](docs/badges/version.svg)](https://github.com/irrational51444/ipcsurface/releases)
 [![tests](docs/badges/tests.svg)](tests/test_ipcsurface.py)
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.73.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.74.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -15,7 +15,7 @@ Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a 
 
 ## One real run
 
-A real Electron app on this machine: 441 MB, 22,102 files, 4.7 s.
+A real Electron app on this machine: 441 MB, 22,102 files, 5.0 s.
 
 ![Real app scan](docs/img/case-real-scan.png)
 
@@ -78,7 +78,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **2. Evidence records provenance, never a verdict.** Every channel carries where the name came from, how strong it is, and **what observations would refute it**. Strength orders review effort, not probability.
 
-**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/10`. If it does not match, stop.
+**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/11`. If it does not match, stop.
 
 ---
 
@@ -92,7 +92,7 @@ Six things someone else can verify without trusting the author:
 - **`fingerprint`** — input sha256 + version + schema + params + channel names. Same input must give the same value; unreadable input stays `null`.
 - **`refutes_if`** — per channel, what observation would prove the conclusion wrong, not what supports it.
 - **Samples** — md shows two per tier, picked by name sha1 so everyone sees the same two; JSON carries `sites` (all positions) and `evidence[*].where_all`.
-- **Hand-labelled ground truth** — `tests/golden/ground_truth.json`, scored by `scripts/ground_truth_check.py`. Current average coverage **0.88**; the gap is `'ledger:' + op` style runtime-composed names, listed under `known_unreachable`.
+- **Hand-labelled ground truth** — `tests/golden/ground_truth.json`, scored by `scripts/ground_truth_check.py`. Current average coverage **1.00** — all four fixtures match, the three `dyn` names that used to be "cannot compute" are now enumerated (0.74.0). **That 1.00 covers four fixtures only**: 23 channels, every one written by me. `known_unreachable` is now empty; it stays honest only as long as it follows the source.
 
 Corroboration levels (`strong` / `medium` / `weak-same-line` / `weak-near-line`) exist in code and tests, but **the runtime side does not report positions yet, so real output is always `unknown`** — stated plainly instead of pretending.
 
@@ -131,7 +131,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **232 test cases**, standard library only
+- **241 test cases**, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **End to end**: `python scripts/e2e_check.py` — installed CLI, schema, md/json agreement, exit codes, determinism, ground-truth scoring
 - **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list
@@ -145,13 +145,13 @@ Releases are scripted: `check_release_tag.py` verifies the tagged commit is CI-g
 
 ## Known wrong
 
-Concatenated names are invisible, look-alike strings produce false positives, obfuscator traces are leads only — catalogued in [docs/known-wrong.md](docs/known-wrong.md) under "unseen / will misfire / not to be used as a verdict".
+Concatenated names are mostly still invisible, look-alike strings produce false positives, obfuscator traces are leads only — catalogued in [docs/known-wrong.md](docs/known-wrong.md) under "unseen / will misfire / not to be used as a verdict".
 
 The list has mechanical lower bounds (fixed columns, at least eight symptoms, version lock). **Content is judgement; the self-check can only prove it has not decayed into an empty shell.**
 
 ## Known limits
 
-- String-level scan, no syntax tree; concatenated or computed names stay invisible. Use REA Evidence for precision.
+- String-level scan, no syntax tree. One kind of composed name is now computable: when the value set is a literal array and the assembly is literals plus parameters, it gets enumerated (`enumerated`, strength 0.75); values from config, return values or loop accumulation fall back to "cannot compute". Use REA Evidence for precision.
 - Sandboxes, native modules, runtime-wired channels are invisible statically.
 - Windows directory flush goes through `ctypes` + `FlushFileBuffers` (the handle needs write access; read-only handles are refused). Read-only volumes and network shares are untested — there it reports `durable=no`, not `unknown`.
 - `adv-asar.asar` is a hand-made adversarial fixture with no build script; every other fixture is reproducible.

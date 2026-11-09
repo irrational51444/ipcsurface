@@ -387,6 +387,123 @@ class LiteralFoldTests(unittest.TestCase):
         self.assertEqual(facts['handlers'], [])
 
 
+class EnumerationTests(unittest.TestCase):
+    """拼出来的名字，能不能算回去。
+
+    这叫「穷举」不叫「猜」：取值集合写在源码里，拼法只有字面量和加号。
+    条件不满足就整处退回「算不出来」，一条都不许凑。
+    """
+
+    def scan(self, source):
+        return ipc.scan_asar({'a.js': source.encode('utf-8')})
+
+    def test_rule_enumerated_requires_literal_set(self):
+        # 数组 + 循环 + 单表达式拼装函数：三类都在，才穷举
+        source = """
+        const OPS = ['add', 'list', 'remove'];
+        function makeChannel(rest) { return 'ledger:' + rest; }
+        for (const op of OPS) {
+          ipcMain.handle(makeChannel(op), () => {});
+        }
+        """
+        facts = self.scan(source)
+        names = sorted(n for n, _w in facts['handlers'])
+        self.assertEqual(names, ['ledger:add', 'ledger:list', 'ledger:remove'])
+        self.assertEqual(len(facts['enumerated']), 3)
+        # 穷举出来的名字不能再挂在「名字是算的」那档里
+        self.assertEqual(facts['dynamic'], [])
+
+    def test_rule_enumerated_falls_back_when_set_is_not_literal(self):
+        # 取值来自函数返回值 → 算不出来，必须退回 dynamic，不许猜
+        source = """
+        function getOps() { return loadFromConfig(); }
+        for (const op of getOps()) {
+          ipcMain.handle('ledger:' + op, () => {});
+        }
+        """
+        facts = self.scan(source)
+        self.assertEqual(facts['handlers'], [])
+        self.assertEqual(facts['enumerated'], [])
+        self.assertEqual(len(facts['dynamic']), 1)
+
+    def test_enumerates_inline_array_and_template(self):
+        source = """
+        for (const op of ['a', 'b']) {
+          ipcMain.handle(`db:${op}`, () => {});
+        }
+        """
+        facts = self.scan(source)
+        self.assertEqual(sorted(n for n, _w in facts['handlers']), ['db:a', 'db:b'])
+
+    def test_enumerates_foreach_body(self):
+        source = """
+        const OPS = ['x', 'y'];
+        OPS.forEach((op) => {
+          ipcRenderer.invoke('task:' + op);
+        });
+        """
+        facts = self.scan(source)
+        self.assertEqual(sorted(n for n, _w in facts['invokes']), ['task:x', 'task:y'])
+
+    def test_loop_variable_outside_body_is_not_enumerated(self):
+        # 循环体之外的调用点没有取值集合，不许借用别处的
+        source = """
+        const OPS = ['add'];
+        ipcMain.handle(makeChannel(op), () => {});
+        for (const op of OPS) { ipcMain.handle('ledger:' + op, () => {}); }
+        """
+        facts = self.scan(source)
+        names = sorted(n for n, _w in facts['handlers'])
+        self.assertEqual(names, ['ledger:add'])
+        self.assertEqual(len(facts['dynamic']), 1)
+
+    def test_helper_with_branch_is_not_inlined(self):
+        # 带分支的拼装函数不是「字面量拼装」，硬算就是编
+        source = """
+        const OPS = ['add'];
+        function makeChannel(rest) { if (rest) { return 'ledger:' + rest; } return 'x'; }
+        for (const op of OPS) { ipcMain.handle(makeChannel(op), () => {}); }
+        """
+        facts = self.scan(source)
+        self.assertEqual(facts['handlers'], [])
+        self.assertEqual(len(facts['dynamic']), 1)
+
+    def test_expansion_is_capped_not_truncated(self):
+        # 取值一多就整处放弃：交半份结果比说「算不出来」更坏
+        many = ', '.join(f"'n{i}'" for i in range(200))
+        source = f"""
+        const OPS = [{many}];
+        for (const op of OPS) {{ ipcMain.handle('ledger:' + op, () => {{}}); }}
+        """
+        facts = self.scan(source)
+        self.assertEqual(facts['handlers'], [])
+        self.assertTrue(facts['dynamic'], '放弃时要留下「这里有调用、名字没定」的记录')
+
+    def test_enumerated_names_carry_a_weaker_source(self):
+        source = """
+        const OPS = ['add'];
+        for (const op of OPS) { ipcMain.handle('ledger:' + op, () => {}); }
+        """
+        facts = self.scan(source)
+        item = ipc.channel_sources(facts)['ledger:add']
+        self.assertEqual(item['sources'], ['enumerated'])
+        self.assertLess(item['strength'], ipc.SOURCE_STRENGTH['literal'])
+        self.assertGreater(item['strength'], ipc.SOURCE_STRENGTH['computed'])
+        # 推翻它的判据要具体到「循环里有人改过变量」，不能含糊
+        self.assertTrue(any('改过变量' in text for text in item['refutes_if']))
+
+    def test_literal_wins_when_both_ways_see_it(self):
+        source = """
+        const OPS = ['add'];
+        ipcMain.handle('ledger:add', () => {});
+        for (const op of OPS) { ipcMain.handle('ledger:' + op, () => {}); }
+        """
+        item = ipc.channel_sources(self.scan(source))['ledger:add']
+        self.assertIn('literal', item['sources'])
+        self.assertIn('enumerated', item['sources'])
+        self.assertEqual(item['strength'], 1.0, '有一处逐字写死，就不该按穷举降档')
+
+
 class SourcemapTests(unittest.TestCase):
     def test_sources_content_is_recovered(self):
         blob = json.dumps({
@@ -583,7 +700,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/10')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/11')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))

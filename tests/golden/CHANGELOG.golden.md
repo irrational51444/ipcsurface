@@ -122,3 +122,13 @@
 
 - 变了的字段：content_digest, fingerprint
 - 理由：这次内容其实没有变化，只是验证提示语
+
+## 2026-11-09 14:28
+
+- 变了的字段：confidence_semantics, fingerprint, schema
+- 理由：这次内容其实没有变化，只是验证提示语
+
+## 2026-11-09 14:31
+
+- 变了的字段：fingerprint
+- 理由：这次内容其实没有变化，只是验证提示语

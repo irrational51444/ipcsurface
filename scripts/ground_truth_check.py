@@ -71,7 +71,14 @@ def main():
           f'precision {worst["precision"]:.2f}')
     total_hit = sum(r['precision'] * 1 for r in rows)
     avg_cov = sum(r['coverage'] for r in rows) / len(rows)
-    print(f'平均总覆盖率：{avg_cov:.2f}（含已知扫不到的，所以这个数是真实水平，不是修饰过的）')
+    unreachable = sum(len(spec.get('known_unreachable') or ())
+                      for spec in truth.get('fixtures', {}).values())
+    if unreachable:
+        print(f'平均总覆盖率：{avg_cov:.2f}（含 {unreachable} 个已知扫不到的名字，'
+              '所以这个数是真实水平，不是修饰过的）')
+    else:
+        print(f'平均总覆盖率：{avg_cov:.2f}（没有登记「已知扫不到」的名字；'
+              '这个数只说明这几个靶场，不代表真实应用）')
 
     # 底线：能扫到的那些必须扫到（recall），标出来的必须基本对（precision）
     bad = [r for r in rows if r['recall'] < 0.8]

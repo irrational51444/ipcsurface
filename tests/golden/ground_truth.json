@@ -1,6 +1,6 @@
 {
   "schema": "ipcsurface/ground-truth/1",
-  "why": "人工数出来的通道清单，用来算召回和精确率。第一次跑就发现我原先的标注是凭印象写的：dyn 那组标成 calc:*、static 漏了 ledger:export。现在按源码逐个数；确实扫不到的那些名字单独列在 known_unreachable，不混进漏报。",
+  "why": "人工数出来的通道清单，用来算召回和精确率。第一次跑就发现我原先的标注是凭印象写的：dyn 那组标成 calc:*、static 漏了 ledger:export。现在按源码逐个数；确实扫不到的放在 known_unreachable，不混进漏报。0.74.0 起 dyn 那三个（循环 + 拼装函数）能穷举出来了，known_unreachable 清空——这一栏空了是好事，但要跟着源码变，别为了好看硬清。",
   "fixtures": {
     "static-asar.asar": {
       "channels": [
@@ -21,12 +21,8 @@
         "ledger:shadow",
         "ledger:tpl"
       ],
-      "known_unreachable": [
-        "ledger:add",
-        "ledger:list",
-        "ledger:remove"
-      ],
-      "note": "五个来自 OPS 循环里的 makeChannel(op)，名字是运行时算的，静态扫不到——这三个记在 known_unreachable 里，算进总量但不算工具漏；其余三个（clear / shadow / tpl）都是能认出来的写法"
+      "known_unreachable": [],
+      "note": "五个来自 OPS 循环里的 makeChannel(op)，名字是运行时算的。0.73.0 及以前三个记在 known_unreachable 里（算进总量但不算工具漏）；0.74.0 起能穷举：OPS 是字面量数组、makeChannel 是单表达式函数，穷举出 add/list/remove 三个，所以这一栏空了。clear / shadow / tpl 一直是能认出来的写法"
     },
     "obf-asar.asar": {
       "channels": [],
