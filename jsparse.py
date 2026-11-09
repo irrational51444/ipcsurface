@@ -16,6 +16,10 @@ import re
 IDENT_START = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$')
 IDENT_PART = IDENT_START | set('0123456789')
 PUNCT = list('{}()[];,<>+-*/%&|^!~?:=.@#')
+# 多字符运算符必须先试长的，否则 !== 会被拆成 ! = = 三个 token，
+# 上层任何「比较符」判定都会失效（中性化判定就栽在这上面）。
+OPS = ('>>>=', '...', '===', '!==', '**=', '<<=', '>>=', '=>', '==', '!=', '<=', '>=',
+       '&&', '||', '++', '--', '+=', '-=', '*=', '/=', '??', '?.', '<<', '>>', '**')
 NUMBER_RE = re.compile(r'[0-9][0-9a-zA-Z_.]*')
 REGEX_PREV = set('(,=:[!&|?{};+-*%<>~^')
 
@@ -139,11 +143,23 @@ def tokenize(text):
                 i += 1
             tokens.append(Token('regex', text[start:i], line, start, i))
             continue
+        merged = next((op for op in OPS if text.startswith(op, i)), None)
+        if merged:
+            tokens.append(Token('punct', merged, line, i, i + len(merged)))
+            i += len(merged)
+            continue
         if ch in PUNCT:
             tokens.append(Token('punct', ch, line, i, i + 1))
             i += 1
             continue
-        raise ParseError(f'没见过的字符 {ch!r}')
+        # 真包里会出现落单的反斜杠（续行、正则被误判成正则之外的位置等）。
+        # 它不可能变成标识符，当成标点收下比整份文件解析失败更有用；
+        # 记成 punct，谁也不会把它当名字用。
+        if ch == '\\':
+            tokens.append(Token('punct', '\\', line, i, i + 1))
+            i += 1
+            continue
+        raise ParseError(f'没见过的字符 {ch!r}（第 {line + 1} 行、第 {i - text.rfind(chr(10), 0, i)} 列）')
     return tokens
 
 
@@ -177,13 +193,62 @@ def match_brace(tokens, index):
     raise ParseError(f'{opening} 没有配对')
 
 
+def object_property_functions(tokens):
+    """对象属性形式的函数：`pick: (p) => { … }`、`pick: function (p) { … }`。
+
+    打包产物里这比方法简写更常见，只认简写会漏掉一大片——真包 41 条通道
+    只能走到 1 条，主要就是栽在这儿。
+    """
+    found = []
+    for i, tok in enumerate(tokens):
+        if tok.kind != 'ident' or i + 2 >= len(tokens) or tokens[i + 1].text != ':':
+            continue
+        j = i + 2
+        # pick: function (p) { … }
+        if tokens[j].text == 'function':
+            k = j + 1
+            if k < len(tokens) and tokens[k].text == '(':
+                close = match_brace(tokens, k)
+                if close + 1 < len(tokens) and tokens[close + 1].text == '{':
+                    end = match_brace(tokens, close + 1)
+                    found.append({'name': tok.text, 'line': tok.line,
+                                  'params': _param_names(tokens, k, close),
+                                  'body_start': close + 1, 'body_end': end})
+            continue
+        # pick: (p) => { … }   /   pick: p => …
+        params, arrow = [], None
+        if tokens[j].text == '(':
+            close = match_brace(tokens, j)
+            params = _param_names(tokens, j, close)
+            arrow = close + 1
+        elif tokens[j].kind == 'ident':
+            params = [tokens[j].text]
+            arrow = j + 1
+        if arrow is None or arrow >= len(tokens):
+            continue
+        if tokens[arrow].text == '=>':
+            body = arrow + 1
+        elif (arrow + 1 < len(tokens) and tokens[arrow].text == '='
+              and tokens[arrow + 1].text == '>'):
+            body = arrow + 2
+        else:
+            continue
+        if body < len(tokens) and tokens[body].text == '{':
+            end = match_brace(tokens, body)
+        else:
+            end = _expression_end(tokens, body)
+        found.append({'name': tok.text, 'line': tok.line, 'params': params,
+                      'body_start': body, 'body_end': end})
+    return found
+
+
 def function_defs(tokens):
     """找函数定义：function f()、const f = () =>、对象方法简写 f() {。
 
     返回 [{name, params, line, body_start, body_end}]，body_* 是 tokens 下标。
     认不出名字的定义（匿名回调）跳过——它们在调用图里没有节点。
     """
-    found = []
+    found = object_property_functions(tokens)
     for i, tok in enumerate(tokens):
         if tok.kind != 'ident':
             continue
@@ -227,9 +292,13 @@ def function_defs(tokens):
             arrow = j + 1
         else:
             continue
-        if arrow + 1 >= len(tokens) or tokens[arrow].text != '=' or tokens[arrow + 1].text != '>':
+        if tokens[arrow].text == '=>':
+            body = arrow + 1
+        elif (arrow + 1 < len(tokens) and tokens[arrow].text == '='
+              and tokens[arrow + 1].text == '>'):
+            body = arrow + 2
+        else:
             continue
-        body = arrow + 2
         if body < len(tokens) and tokens[body].text == '{':
             end = match_brace(tokens, body)
         else:
@@ -359,7 +428,10 @@ def ipc_registrations(tokens, objects=None):
                          if tok.start >= start and tok.end <= end
                          and tok.kind == 'ident' and k + 1 < len(tokens)
                          and tokens[k + 1].text == '(']
-        found.append({'channel': channel, 'target': target,
+        span = None
+        if len(args) >= 2 and args[1]:
+            span = (tokens.index(args[1][0]), tokens.index(args[1][-1]))
+        found.append({'channel': channel, 'target': target, 'span': span,
                       'calls': list(dict.fromkeys(calls)),
                       'guards': list(dict.fromkeys(guards)), '_window': [t.text for t in tokens[start_i:end_i]], 'line': token.line + 1})
     # 来源校验常常写成内联比较（event.sender !== window.webContents），

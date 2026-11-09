@@ -85,7 +85,12 @@ def tainted_names(table, rounds=4):
             for value in values:
                 if value is None:
                     continue
-                if any(tok.kind == 'ident' and tok.text in tainted for tok in value):
+                # 模板串是单个 token，里面出现的名字得单独捞出来——${payload.dir} 这种
+                if any((tok.kind == 'ident' and tok.text in tainted)
+                       or (tok.kind == 'template'
+                           and any(name in tainted
+                                   for name in __import__('re').findall(r'[A-Za-z_$][\w$]*', tok.text)))
+                       for tok in value):
                     tainted.add(name)
                     grew = True
                     break
@@ -184,7 +189,162 @@ def interprocedural_hits(tokens, defs, rounds=3):
                             grew = True
         if not grew:
             break
-    return hits
+    filtered = {}
+    for name, found in hits.items():
+        span = (by_name[name]['body_start'], by_name[name]['body_end'])
+        kept = [hit for hit in found
+                if not guard_neutralized(tokens, span[0], span[1], hit[1])]
+        if kept:
+            filtered[name] = kept
+    return filtered
+
+
+def guard_neutralized(tokens, start, end, name):
+    """这个变量是不是先被白名单校验过、再拿去用（中和）。
+
+    只认最保守的一种形状：`if (x !== '字面量') return;` 这类提前退出，
+    且名字与字面量比较。保守的意思是——只认这一种，别的（正则、函数调用、
+    白名单数组）一律不算中和，宁可多报也不替人免责。
+    """
+    for i in range(start, min(end, len(tokens) - 4)):
+        if tokens[i].text != 'if' or tokens[i + 1].text != '(':
+            continue
+        close = _end_of_statement(tokens, i + 2, end)
+        cond = tokens[i + 2:close]
+        names = [tok.text for tok in cond if tok.kind == 'ident']
+        has_literal = any(tok.kind in ('string', 'number') for tok in cond)
+        compares = any(tok.text in ('!==', '!=', '===', '==') for tok in cond)
+        if name in names and has_literal and compares:
+            # 条件后面紧跟 return / throw，才算提前退出
+            tail = tokens[min(close + 1, end - 1):min(close + 3, end)]
+            if any(tok.text in ('return', 'throw') for tok in tail):
+                return True
+    return False
+
+def reachable_sinks(tokens, defs, roots, max_depth=3):
+    """可达性口径：从 roots 出发能调到哪些函数，其中哪些函数里有危险 API。
+
+    和污点分析是两个问题，别混：
+      可达性问「这条通道能不能碰到写文件/执行命令」——实参从哪来不重要；
+      污点问「外部输入能不能到达危险参数」——那才需要看数据流。
+    用污点去算可达性，会把「自己拼路径再写文件」的通道全判成 0，实测就是这样。
+    """
+    by_name = {item['name']: item for item in defs}
+    out = {}
+    seen, frontier, depth = set(), list(roots), 0
+    while frontier and depth < max_depth:
+        nxt = []
+        for name in frontier:
+            if name in seen or name not in by_name:
+                continue
+            seen.add(name)
+            body = by_name[name]
+            calls = []
+            for i in range(body['body_start'], min(body['body_end'], len(tokens) - 1)):
+                tok = tokens[i]
+                if tok.kind == 'ident' and tok.text in DANGER and tokens[i + 1].text == '(':
+                    if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+                        continue
+                    calls.append(tok.text)
+            if calls:
+                out[name] = calls
+            nxt.extend(body.get('calls', []))
+        frontier, depth = nxt, depth + 1
+    return out
+
+
+def sinks_in_span(tokens, start, end):
+    """直接扫一段（比如内联处理函数体），看里面有没有危险调用，不看实参。"""
+    found = []
+    for i in range(start, min(end, len(tokens) - 1)):
+        tok = tokens[i]
+        if tok.kind == 'ident' and tok.text in DANGER and tokens[i + 1].text == '(':
+            if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+                continue
+            found.append(tok.text)
+    return found
+
+
+def module_aliases(tokens):
+    """这个文件里，谁指向哪个模块：`const cp = require('child_process')`、
+    `import { pick } from './svc'`、`const { pick } = require('./svc')`。
+
+    返回 {本地名: (模块说明, 导入的名字)}。跨文件跟图的第一块砖——
+    没有它，`svc.pick()` 里的 svc 是什么都不知道。
+    """
+    aliases = {}
+    for i, tok in enumerate(tokens):
+        if tok.text not in ('require', 'from'):
+            continue
+        if tok.text == 'require':
+            if i + 2 >= len(tokens) or tokens[i + 1].text != '(':
+                continue
+            source = tokens[i + 2] if tokens[i + 2].kind == 'string' else None
+            if source is None:
+                continue
+            # 往前找 const X = / const { a, b } =
+            j = i - 1
+            while j >= 0 and tokens[j].text not in ('=', '{', ';'):
+                j -= 1
+            if j < 0:
+                continue
+            if tokens[j].text == '{':
+                k = j
+                while k >= 0 and tokens[k].text != '}':
+                    if tokens[k].kind == 'ident':
+                        aliases.setdefault(tokens[k].text, (source.text, tokens[k].text))
+                    k -= 1
+            elif tokens[j].text == '=' and j >= 1 and tokens[j - 1].kind == 'ident':
+                aliases.setdefault(tokens[j - 1].text, (source.text, None))
+            continue
+        # import { a, b } from './x'  /  import X from './x'
+        source = tokens[i + 1] if i + 1 < len(tokens) and tokens[i + 1].kind == 'string' else None
+        if source is None:
+            continue
+        j = i - 1
+        while j >= 0 and tokens[j].text not in ('import', ';'):
+            if tokens[j].kind == 'ident':
+                aliases.setdefault(tokens[j].text, (source.text, tokens[j].text))
+            j -= 1
+    return aliases
+
+def callback_taints(tokens, start, end, tainted):
+    """回调里的形参也算脏：`payload.list.map(v => read(v))`。
+
+    只在一种形状上下结论：某个脏值上调用了方法（map/forEach/filter/find/...），
+    后面紧跟箭头函数，箭头形参就当脏。别的形状（回调在别处定义、传函数名）
+    一律不认——认不出来就少说，不猜。
+    """
+    ITER = ('map', 'forEach', 'filter', 'find', 'findIndex', 'some', 'every', 'flatMap')
+    extra = set()
+    for i in range(start, min(end, len(tokens) - 3)):
+        tok = tokens[i]
+        if tok.text not in ITER or tokens[i + 1].text != '(':
+            continue
+        # 往前走：X.map( → 看 X 是不是脏的（允许 X.y.z）
+        j = i - 1
+        if j >= 1 and tokens[j].text == '.':
+            base = j - 1
+            while base >= 1 and tokens[base - 1].text == '.':
+                base -= 2
+            if base < start or tokens[base].text not in tainted:
+                continue
+        else:
+            continue
+        # 往后看：map( (v) => … 或 map( v => …
+        k = i + 2
+        if k >= end:
+            continue
+        if tokens[k].text == '(':
+            m = k + 1
+            while m < end and tokens[m].text != ')':
+                if tokens[m].kind == 'ident':
+                    extra.add(tokens[m].text)
+                m += 1
+        elif tokens[k].kind == 'ident':
+            extra.add(tokens[k].text)
+    return extra
+
 
 def flows_into_danger(tokens, start, end, params, aliases=None):
     """函数体里，哪个危险调用吃到了外部输入。返回 [(调用名, 参数名, 行号)]。"""
@@ -192,6 +352,7 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     """函数体里，哪个危险调用吃到了外部输入。返回 [(调用名, 参数名, 行号)]。"""
     table = assignments(tokens, start, end, params)
     tainted = tainted_names(table)
+    tainted |= callback_taints(tokens, start, end, tainted)
     aliases = aliases if aliases is not None else child_process_aliases(tokens)
     hits = []
     for i in range(start, min(end, len(tokens) - 1)):
