@@ -362,7 +362,12 @@ def main():
                 f'pyproject {m.group(1) if m else "?"} / 代码 {version}')
     changelog = read('CHANGELOG.md')
     ok &= check('CHANGELOG 有这一版', '## ' + version in changelog)
-    tests_defined = len(re.findall(r'def test_', read('tests', 'test_ipcsurface.py')))
+    # 定义数要数全目录，不能只数主用例文件——新加的 tests/test_jssem.py
+    # 曾经被漏在统计之外，README 写着 248、实际跑 264，这种漂移必须自己红出来。
+    tests_defined = 0
+    for name in sorted(os.listdir(os.path.join(ROOT, 'tests'))):
+        if name.startswith('test_') and name.endswith('.py'):
+            tests_defined += len(re.findall(r'def test_', read('tests', name)))
     # 「定义了多少」和「真跑了多少」不是一回事，两个数都报出来
     ran, skipped = run_unittest_summary()
     tests_count = tests_defined
