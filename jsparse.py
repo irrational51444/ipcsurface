@@ -307,7 +307,7 @@ def _string_of(token):
     return body.encode('utf-8').decode('unicode_escape') if '\\' in body else body
 
 
-def ipc_registrations(tokens):
+def ipc_registrations(tokens, objects=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
 
     返回 [{channel, target, calls, line}]：
@@ -339,21 +339,40 @@ def ipc_registrations(tokens):
         if not args:
             continue
         first = args[0]
-        channel = _string_of(first[0]) if len(first) == 1 and first[0].kind in ('string', 'template') else None
-        target, calls = None, []
+        channel = None
+        if len(first) == 1 and first[0].kind in ('string', 'template'):
+            channel = _string_of(first[0])
+        elif len(first) == 3 and first[0].kind == 'ident' and first[1].text == '.':
+            # 常量对象成员：DESKTOP_IPC.fileSave。表由调用方喂进来，解不出就是 None
+            channel = (objects or {}).get(first[0].text, {}).get(first[2].text)
+        target, calls, guards = None, [], []
         if len(args) >= 2:
             second = args[1]
             if len(second) == 1 and second[0].kind == 'ident':
                 target = second[0].text
             else:
+                start_i = tokens.index(second[0]) if second else 0
                 start = second[0].start if second else 0
+                end_i = tokens.index(second[-1]) + 1 if second else 0
                 end = second[-1].end if second else 0
                 calls = [tok.text for k, tok in enumerate(tokens)
                          if tok.start >= start and tok.end <= end
                          and tok.kind == 'ident' and k + 1 < len(tokens)
                          and tokens[k + 1].text == '(']
         found.append({'channel': channel, 'target': target,
-                      'calls': list(dict.fromkeys(calls)), 'line': token.line + 1})
+                      'calls': list(dict.fromkeys(calls)),
+                      'guards': list(dict.fromkeys(guards)), '_window': [t.text for t in tokens[start_i:end_i]], 'line': token.line + 1})
+    # 来源校验常常写成内联比较（event.sender !== window.webContents），
+    # 只按被调函数名找会把它漏成「没有校验」。这里按 token 兜一遍。
+    GUARD_NAME = ('assert', 'check', 'validate', 'verify', 'ensure', 'require')
+    for item in found:
+        for name in item['calls']:
+            if name.lower().startswith(GUARD_NAME):
+                item['guards'].append('call:' + name)
+        window = item.pop('_window', [])
+        if any(name in window for name in
+               ('sender', 'senderFrame', 'getURL', 'webContents')):
+            item['guards'].append('inline-sender-check')
     return found
 
 
