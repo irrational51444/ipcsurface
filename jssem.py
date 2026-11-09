@@ -469,15 +469,20 @@ def member_calls(tokens, start, end):
     return out
 
 
-def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens):
-    """跨文件一跳：handler 里调 `svc.read(...)`，svc 指向包内另一个文件，
-    就去看那个文件里 read 有没有碰危险 API。
+def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens,
+                            depth=2, _visited=None):
+    """跨文件跟成员调用：handler 里 `svc.read(...)`，就看那个文件里的 read。
 
-    files_tokens: {包内路径: 该文件的 token 列表}
-    返回 [(文件, 函数名, [危险调用名])]
+    跟 depth 层（默认两跳：main → svc → util）。每层都只认「本文件里能解析到
+    包内路径」的接收者；解析不到（包名、动态 require）就停在那儿不猜。
     """
+    import jsparse
+
     known = set(files_tokens)
     targets = cross_file_targets(tokens, from_rel, known)
+    if not targets:
+        return []
+    visited = set() if _visited is None else _visited
     out = []
     for receiver, member in member_calls(tokens, start, end):
         for (local, imported), rel in targets.items():
@@ -486,18 +491,24 @@ def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens):
             if imported is not None and imported != member:
                 continue
             other = files_tokens[rel]
-            defs = []
             try:
-                import jsparse
                 defs = jsparse.function_defs(other)
             except Exception:
                 continue
             for item in defs:
                 if item['name'] != member:
                     continue
+                key = (rel, member)
+                if key in visited:
+                    continue
+                visited.add(key)
                 sinks = sinks_in_span(other, item['body_start'], item['body_end'])
                 if sinks:
                     out.append((rel, member, sinks))
+                if depth > 1:
+                    out.extend(cross_file_member_sinks(
+                        other, item['body_start'], item['body_end'], rel,
+                        files_tokens, depth - 1, visited))
     return out
 
 def resolve_spec(spec, from_rel, known):

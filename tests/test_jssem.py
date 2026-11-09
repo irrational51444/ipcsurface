@@ -102,6 +102,20 @@ class CrossFileTests(unittest.TestCase):
         targets = jssem.cross_file_targets(tokens, 'src/main.js', set(self.FILES))
         self.assertEqual(targets, {})
 
+    def test_two_hops_across_files(self):
+        """main → svc → util，真正碰文件的在第二跳，必须跟到。"""
+        files = {
+            'src/main.js': "const svc = require('./svc');\n"
+                           "function h(e, p) { return svc.read(p.path); }\n",
+            'src/svc.js': "const util = require('./util');\n"
+                          "module.exports = { read(p) { return util.load(p); } };\n",
+            'src/util.js': "module.exports = { load(p) { return fs.readFileSync(p); } };\n",
+        }
+        tokens = {rel: jsparse.tokenize(text) for rel, text in files.items()}
+        main = tokens['src/main.js']
+        found = jssem.cross_file_member_sinks(main, 0, len(main), 'src/main.js', tokens)
+        self.assertIn('src/util.js', [item[0] for item in found])
+
 
 if __name__ == '__main__':
     unittest.main()
