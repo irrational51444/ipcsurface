@@ -97,8 +97,12 @@ def tainted_names(table, rounds=4):
                     break
         if not grew:
             break
-    # 解构绑出来的名字只在 early 里，得一起交出去
-    return tainted | early
+    # 解构绑出来的名字只在 early 里，得一起交出去；
+    # 回调与循环带来的脏名字不在赋值表里，也要并进来
+    base = tainted | early
+    base |= callback_taints(tokens, start, end, base)
+    base |= loop_taints(tokens, start, end, base)
+    return base
 
 
 def child_process_aliases(tokens):
@@ -351,12 +355,23 @@ def field_taints(tokens, start, end, params):
                         tainted.add(name)
                         grew = True
                         break
+                    if value[k].kind == 'template' and any(
+                            word in tainted or word in early
+                            for word in __import__('re').findall(r'[A-Za-z_$][\w$]*',
+                                                                 value[k].text)):
+                        tainted.add(name)
+                        grew = True
+                        break
                 if name in tainted:
                     break
         if not grew:
             break
-    # 解构绑出来的名字只在 early 里，得一起交出去
-    return tainted | early
+    # 解构绑出来的名字只在 early 里，得一起交出去；
+    # 回调与循环带来的脏名字不在赋值表里，也要并进来
+    base = tainted | early
+    base |= callback_taints(tokens, start, end, base)
+    base |= loop_taints(tokens, start, end, base)
+    return base
 
 
 def field_guarded(tokens, start, end, key):
