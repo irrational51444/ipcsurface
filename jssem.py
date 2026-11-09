@@ -219,6 +219,14 @@ def guard_neutralized(tokens, start, end, name):
             tail = tokens[min(close + 1, end - 1):min(close + 3, end)]
             if any(tok.text in ('return', 'throw') for tok in tail):
                 return True
+        # 函数式校验也算：if (!isSafe(payload)) return;
+        if name in names:
+            negated = any(tok.text == '!' for tok in cond)
+            called = any(tok.kind == 'ident' and cond[k + 1].text == '('
+                         for k, tok in enumerate(cond[:-1]))
+            tail = tokens[min(close + 1, end - 1):min(close + 3, end)]
+            if negated and called and any(tok.text in ('return', 'throw') for tok in tail):
+                return True
     return False
 
 def reachable_sinks(tokens, defs, roots, max_depth=3):
@@ -336,15 +344,31 @@ def field_guarded(tokens, start, end, key):
     for i in range(start, min(end, len(tokens) - 4)):
         if tokens[i].text != 'if' or tokens[i + 1].text != '(':
             continue
-        guard_key, after = field_key(tokens, i + 2, end)
+        # 跳过左括号与否定号：条件可能是 `!isSafe(x)`，也可能直接 `x !== 'y'`
+        start_at = i + 2
+        while start_at < end and tokens[start_at].text in ('(', '!'):
+            start_at += 1
+        guard_key, after = field_key(tokens, start_at, end)
+        if guard_key != key:
+            # 字段可能是包在调用参数里的：isSafe(payload.path)
+            inner = None
+            for k in range(i + 2, min(end, _close_paren(tokens, i + 1))):
+                if tokens[k].text == '(':
+                    inner, _ = field_key(tokens, k + 1, end)
+                    break
+            guard_key = inner
         if guard_key != key:
             continue
-        close = _end_of_statement(tokens, after, end)
-        cond = tokens[after:close]
-        has_literal = any(t.ok if hasattr(t, 'ok') else t.kind in ('string', 'number') for t in cond)
-        compares = any(t.text in ('!==', '!=', '===', '==') for t in cond)
-        tail = tokens[min(close + 1, end - 1):min(close + 3, end)]
-        if has_literal and compares and any(t.text in ('return', 'throw') for t in tail):
+        close_all = _close_paren(tokens, i + 1)
+        header = tokens[i + 2:close_all]
+        has_literal = any(t.kind in ('string', 'number') for t in header)
+        compares = any(t.text in ('!==', '!=', '===', '==') for t in header)
+        negated = any(t.text == '!' for t in header)
+        called = any(t.kind == 'ident' and header[k + 1].text == '('
+                     for k, t in enumerate(header[:-1]))
+        tail = tokens[min(close_all + 1, end - 1):min(close_all + 3, end)]
+        exits = any(t.text in ('return', 'throw') for t in tail)
+        if exits and ((has_literal and compares) or (negated and called)):
             return True
     return False
 

@@ -90,6 +90,24 @@ function h(event, payload) {
   }
 }
 """, 'danger'),
+    ('函数式校验后使用', """
+function h(event, payload) {
+  if (!isSafe(payload.path)) return;
+  fs.readFileSync(payload.path);
+}
+""", 'clean'),
+    ('数组白名单校验后使用', """
+function h(event, payload) {
+  if (!ALLOWED.includes(payload.path)) return;
+  fs.readFileSync(payload.path);
+}
+""", 'clean'),
+    ('校验 name 却用 path（该报）', """
+function h(event, payload) {
+  if (payload.name !== 'ok') return;
+  fs.readFileSync(payload.path);
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
