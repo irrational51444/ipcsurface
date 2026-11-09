@@ -455,6 +455,45 @@ def module_aliases(tokens):
             j -= 1
     return aliases
 
+def _close_paren(tokens, index):
+    """index 指向左括号，返回配对的右括号下标。找不到就返回末尾。"""
+    depth = 0
+    for i in range(index, len(tokens)):
+        if tokens[i].text in ('(', '[', '{'):
+            depth += 1
+        elif tokens[i].text in (')', ']', '}'):
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(tokens) - 1
+
+
+def loop_taints(tokens, start, end, tainted):
+    """循环变量也算脏：`for (const v of payload.list) { fs.read(v) }`。
+
+    只认 for...of 一种（枚举可迭代物），不认 for...in 和 while——
+    后者不保证「元素来自那个脏数组」，认了就是编。
+    """
+    extra = set()
+    for i in range(start, min(end, len(tokens) - 4)):
+        if tokens[i].text != 'for' or tokens[i + 1].text != '(':
+            continue
+        close = _close_paren(tokens, i + 1)
+        header = tokens[i + 2:close]
+        texts = [t.text for t in header]
+        if 'of' not in texts:
+            continue
+        of_at = texts.index('of')
+        # of 左边最后一个 ident 是循环变量
+        names = [t for t in header[:of_at] if t.kind == 'ident']
+        if not names:
+            continue
+        source = [t for t in header[of_at + 1:] if t.kind == 'ident']
+        if source and source[0].text in tainted:
+            extra.add(names[-1].text)
+    return extra
+
+
 def callback_taints(tokens, start, end, tainted):
     """回调里的形参也算脏：`payload.list.map(v => read(v))`。
 
@@ -500,6 +539,7 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     table = assignments(tokens, start, end, params)
     tainted = tainted_names(table)
     tainted |= callback_taints(tokens, start, end, tainted)
+    tainted |= loop_taints(tokens, start, end, tainted)
     aliases = aliases if aliases is not None else child_process_aliases(tokens)
     hits = []
     for i in range(start, min(end, len(tokens) - 1)):

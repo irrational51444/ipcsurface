@@ -68,6 +68,13 @@ function h(event, payload) {
   fs.readFileSync(payload.path);
 }
 """, 'clean'),
+    ('for of 循环变量', """
+function h(event, payload) {
+  for (const item of payload.list) {
+    fs.readFileSync(item);
+  }
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
