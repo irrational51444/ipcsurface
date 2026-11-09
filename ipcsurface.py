@@ -2414,6 +2414,51 @@ def fingerprint_of(target, channel_names, params=None):
     return payload
 
 
+
+def channel_sinks_map(files, main_rel=None):
+    """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一跳。
+
+    这是「能力可达性」，不是「能不能被滥用」。返回
+    {通道: [危险调用名...]}；分析器不在或不支持时返回 None，
+    报告里就写 null——不写空字典冒充「都没有」。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js')]
+    if not names:
+        return None
+    # 先找带 ipcMain 的那个文件——最大的 .js 往往是第三方库，里面一条通道都没有。
+    with_ipc = [rel for rel in names if files[rel] and b'ipcMain' in files[rel]]
+    if main_rel is None or (main_rel not in names) or (
+            with_ipc and main_rel not in with_ipc):
+        candidates = with_ipc or names
+        main_rel = max(candidates, key=lambda r: len(files[r] or b''))
+    blob = files[main_rel]
+    if blob is None:
+        return None
+    text = blob.decode('utf-8', 'ignore')
+    try:
+        tokens = jsparse.tokenize(text)
+        defs = jsparse.function_defs(tokens)
+        objects = parse_object_literals(text)
+        regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+    except Exception:
+        return None
+    out = {}
+    for reg in regs:
+        found = []
+        span = reg.get('span')
+        if span:
+            found += jssem.sinks_in_span(tokens, span[0], span[1])
+        for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
+            found += calls
+        out[reg['channel']] = sorted(set(found))
+    return out
+
+
 def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
@@ -2447,6 +2492,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'fingerprint': fingerprint_of(target, names),
         'sites': all_sites(facts),
         'archive_merkle': merkle,
+        # 每条通道能碰到什么；没算出来就是 null，不用空字典冒充「都没有」。
+        'channel_sinks': facts.get('channel_sinks'),
     }
     # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
     # 不会出现「漏了这个键」的两种形态。
@@ -2735,6 +2782,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
+    'channel_sinks',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
@@ -4254,6 +4302,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         facts['harvest_grades'] = grade_harvested(
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
+        facts['channel_sinks'] = channel_sinks_map(files)
         total = files.total_bytes()
         return facts, len(files), total
     finally:

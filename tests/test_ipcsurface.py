@@ -1943,6 +1943,29 @@ class GoldenScriptTests(unittest.TestCase):
                       '内容没变时必须说明 reason 未记录，否则「想改但没生效」会消失')
 
 
+class ChannelSinkTests(unittest.TestCase):
+    """报告里「每条通道能碰到什么」这一栏的契约。"""
+
+    def facts(self, extra=None):
+        files = {'app/main.js': b"ipcMain.handle('app:one', f)"}
+        base = ipc.scan_asar(files)
+        if extra:
+            base.update(extra)
+        return base
+
+    def test_report_carries_channel_sinks_key(self):
+        report = ipc.build_asar_report(
+            'x.asar', self.facts({'channel_sinks': {'app:one': ['readFileSync']}}),
+            1, 10, ['app:one'], {}, {}, None, None)
+        self.assertEqual(report['channel_sinks'], {'app:one': ['readFileSync']})
+
+    def test_missing_analysis_is_none_not_empty(self):
+        report = ipc.build_asar_report(
+            'x.asar', self.facts(), 1, 10, [], {}, {}, None, None)
+        # 没算过就写 null，不用空字典冒充「一条都没有」
+        self.assertIsNone(report['channel_sinks'])
+
+
 class ReportContractTests(unittest.TestCase):
     """报告 JSON 的顶层键是契约。多一个键就红，不靠人记得。"""
 
