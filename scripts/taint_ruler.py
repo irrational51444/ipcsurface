@@ -108,6 +108,17 @@ function h(event, payload) {
   fs.readFileSync(payload.path);
 }
 """, 'danger'),
+    ('解构赋值', """
+function h(event, payload) {
+  const { path: p } = payload;
+  fs.readFileSync(p);
+}
+""", 'danger'),
+    ('可选链', """
+function h(event, payload) {
+  fs.readFileSync(payload?.path);
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');

@@ -76,6 +76,7 @@ def assignments(tokens, start, end, params):
 
 def tainted_names(table, rounds=4):
     """谁身上带着外部输入。参数天生算，然后沿赋值传播，迭代到不动点。"""
+    early = set()   # 这个函数不用解构那套，占位而已
     tainted = {name for name, values in table.items() if any(v is None for v in values)}
     for _ in range(rounds):
         grew = False
@@ -96,7 +97,8 @@ def tainted_names(table, rounds=4):
                     break
         if not grew:
             break
-    return tainted
+    # 解构绑出来的名字只在 early 里，得一起交出去
+    return tainted | early
 
 
 def child_process_aliases(tokens):
@@ -282,7 +284,7 @@ def field_key(tokens, index, limit):
         return None, index
     parts = [tokens[index].text]
     j = index + 1
-    while j + 1 < limit and tokens[j].text == '.' and tokens[j + 1].kind == 'ident':
+    while j + 1 < limit and tokens[j].text in ('.', '?.') and tokens[j + 1].kind == 'ident':
         parts.append(tokens[j + 1].text)
         j += 2
     return '.'.join(parts), j
@@ -296,12 +298,32 @@ def field_taints(tokens, start, end, params):
     于是 `fs.read(name)` 这种真问题被中和掉。
     """
     table = {name: [None] for name in params}
+    early = set(params)   # 解析阶段就能确定的脏名字，解构用得上
     i = start
     while i < end:
         tok = tokens[i]
         name = None
         j = None
         if tok.text in DECL and i + 1 < end:
+            if tokens[i + 1].text in ('{', '['):
+                # 解构：const { path: p } = payload / const [a, b] = payload.list
+                # 右边脏就把绑出来的名字都算脏——字段级精度在这一层会让位给安全。
+                close = _close_paren(tokens, i + 1)
+                if close + 1 < end and tokens[close + 1].text == '=':
+                    stop = _end_of_statement(tokens, close + 2, end)
+                    rhs = tokens[close + 2:stop]
+                    dirty = False
+                    for k in range(len(rhs)):
+                        key, _n = field_key(rhs, k, len(rhs))
+                        if key and (key in early or key.split('.')[0] in early):
+                            dirty = True
+                            break
+                    if dirty:
+                        for k in range(i + 2, close):
+                            if tokens[k].kind == 'ident':
+                                early.add(tokens[k].text)
+                    i = max(stop, i + 1)
+                    continue
             name, j = field_key(tokens, i + 1, end)
         elif tok.kind == 'ident' and i + 1 < end and tokens[i + 1].text == '=':
             name, j = field_key(tokens, i, end)
@@ -333,7 +355,8 @@ def field_taints(tokens, start, end, params):
                     break
         if not grew:
             break
-    return tainted
+    # 解构绑出来的名字只在 early 里，得一起交出去
+    return tainted | early
 
 
 def field_guarded(tokens, start, end, key):
