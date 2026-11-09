@@ -162,3 +162,8 @@
 
 - 变了的字段：evidence, fingerprint, schema
 - 理由：0.79.0 升 schema 到 asar/14：evidence 新增 capability 字段
+
+## 2026-11-09 17:36
+
+- 变了的字段：fingerprint
+- 理由：0.80.0 版本号变了，金标准 version 跟着走

@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.79.0'
+__version__ = '0.80.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1046,6 +1046,48 @@ def describe_capability(body):
                           else 'high-capability-no-guard-seen')
 
 
+LOCAL_FUNC_DEF = re.compile(
+    r"(?:function\s+([A-Za-z_$][\w$]*)\s*\([^)]{0,200}\)\s*\{"
+    r"|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\([^)]{0,200}\)\s*=>\s*\{)")
+
+
+def local_function_bodies(text):
+    """同一个文件里，每个函数名对应的函数体。只跟一层用。"""
+    bodies = {}
+    for match in LOCAL_FUNC_DEF.finditer(text):
+        name = match.group(1) or match.group(2)
+        open_brace = text.find('{', match.end() - 1)
+        if open_brace == -1:
+            continue
+        end = _block_end(text, open_brace)
+        if end is None:
+            continue
+        bodies.setdefault(name, text[open_brace + 1:end])
+    return bodies
+
+
+def follow_one_hop(body, text, funcs=None):
+    """跟一层：处理函数里调到的本文件函数，把它们的身也扫一遍。
+
+    真项目里通道处理函数常常只是转发壳（`services.pick()` / `doThing(payload)`），
+    能力全在被调的那一层。只跟一层，是因为再往下就分不清是这次调用还是别处调用；
+    跟一层能把「什么都没看见」降下来一些，但跟不动服务层里的业务分支。
+    返回 (合并后的文本, 跟到的函数名列表)。
+    """
+    if body is None:
+        return None, []
+    funcs = funcs if funcs is not None else local_function_bodies(text)
+    seen, pieces = [], []
+    for name in re.findall(r'(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(', body):
+        inner = funcs.get(name)
+        if inner and name not in seen:
+            seen.append(name)
+            pieces.append(inner)
+        if len(seen) >= 12:
+            break
+    return body + '\n' + '\n'.join(pieces), seen
+
+
 def detect_obfuscation(blob, rel):
     """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
 
@@ -1292,7 +1334,8 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                     (handlers if kind == 'handle' else invokes).append((value, where))
                     if kind == 'handle':
                         body = bound_call_args(text, text.rfind('(', 0, match.start()) if False else match.start())
-                        caps, guards, level = describe_capability(body)
+                        followed, _via = follow_one_hop(body, text)
+                        caps, guards, level = describe_capability(followed)
                         if caps or level != 'unknown':
                             capability[value] = {'apis': caps, 'guards': guards,
                                                    'level': level, 'where': where}
