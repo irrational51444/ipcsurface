@@ -152,6 +152,19 @@ function h(event, payload) {
   fs.readFileSync(p);
 }
 """, 'danger'),
+    ('方括号取方法名', """
+function h(event, payload) {
+  fs['writeFileSync'](payload.path, 'x');
+}
+""", 'danger'),
+    ('四层 helper 传下去', """
+function h(event, payload) {
+  a1(payload.path);
+}
+function a1(p) { a2(p); }
+function a2(p) { a3(p); }
+function a3(p) { fs.readFileSync(p); }
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');

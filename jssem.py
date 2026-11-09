@@ -264,15 +264,39 @@ def reachable_sinks(tokens, defs, roots, max_depth=3):
     return out
 
 
+
+def danger_at(tokens, index, limit):
+    """这一串 token 是不是一次危险调用。返回 (名字, 左括号下标)，不是就 (None, None)。
+
+    认两种写法：fs.readFileSync(...) 和 fs['readFileSync'](...)。
+    后者在打包产物里很常见——按点号找会整片漏掉。
+    """
+    if index >= limit:
+        return None, None
+    tok = tokens[index]
+    if tok.kind != 'ident':
+        return None, None
+    if tok.text in DANGER and index + 1 < limit and tokens[index + 1].text == '(':
+        return tok.text, index + 1
+    if (index + 4 < limit and tokens[index + 1].text == '['
+            and tokens[index + 2].kind == 'string'
+            and tokens[index + 3].text == ']' and tokens[index + 4].text == '('):
+        name = tokens[index + 2].text.strip('\'"`')
+        if name in DANGER:
+            return name, index + 4
+    return None, None
+
+
 def sinks_in_span(tokens, start, end):
     """直接扫一段（比如内联处理函数体），看里面有没有危险调用，不看实参。"""
     found = []
     for i in range(start, min(end, len(tokens) - 1)):
-        tok = tokens[i]
-        if tok.kind == 'ident' and tok.text in DANGER and tokens[i + 1].text == '(':
-            if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
-                continue
-            found.append(tok.text)
+        name, _open = danger_at(tokens, i, end)
+        if not name:
+            continue
+        if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+            continue
+        found.append(name)
     return found
 
 
@@ -415,12 +439,13 @@ def field_hits(tokens, start, end, params):
     hits = []
     for i in range(start, min(end, len(tokens) - 1)):
         tok = tokens[i]
-        if tok.kind != 'ident' or tok.text not in DANGER or tokens[i + 1].text != '(':
+        name, open_at = danger_at(tokens, i, end)
+        if not name:
             continue
-        if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+        if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
             if tokens[i - 2].text not in aliases:
                 continue
-        stop = _end_of_statement(tokens, i + 2, end)
+        stop = _end_of_statement(tokens, open_at + 1, end)
         k = i + 2
         while k < stop:
             key, nxt = field_key(tokens, k, stop)
@@ -637,8 +662,6 @@ def callback_taints(tokens, start, end, tainted):
 
 def flows_into_danger(tokens, start, end, params, aliases=None):
     """函数体里，哪个危险调用吃到了外部输入。返回 [(调用名, 参数名, 行号)]。"""
-
-    """函数体里，哪个危险调用吃到了外部输入。返回 [(调用名, 参数名, 行号)]。"""
     table = assignments(tokens, start, end, params)
     tainted = tainted_names(table)
     tainted |= callback_taints(tokens, start, end, tainted)
@@ -647,19 +670,17 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     hits = []
     for i in range(start, min(end, len(tokens) - 1)):
         tok = tokens[i]
-        if tok.kind != 'ident' or tok.text not in DANGER:
-            continue
-        if tokens[i + 1].text != '(':
+        name, open_at = danger_at(tokens, i, end)
+        if not name:
             continue
         # 成员调用要认接收者：cp.exec(cmd) 算，re.exec(s) 不算
-        if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+        if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
             if tokens[i - 2].text not in aliases:
                 continue
-        stop = _end_of_statement(tokens, i + 2, end)
-        arg = tokens[i + 2:stop]
-        for other in arg:
+        stop = _end_of_statement(tokens, open_at + 1, end)
+        for other in tokens[open_at + 1:stop]:
             if other.kind == 'ident' and other.text in tainted:
-                hits.append((tok.text, other.text, tok.line + 1))
+                hits.append((name, other.text, tok.line + 1))
                 break
     return hits
 
