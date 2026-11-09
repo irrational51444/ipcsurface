@@ -158,7 +158,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **266 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **267 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限

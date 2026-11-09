@@ -2447,12 +2447,34 @@ def channel_sinks_map(files, main_rel=None):
         regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
     except Exception:
         return None
+    # 跨文件一跳要用到的其他文件：只解码 require 指向的那几个，
+    # 不能为了跨文件把整个包都解开——真实包里这一步很贵。
+    known = set(files.keys())
+    want = set()
+    for spec, _imported in jssem.module_aliases(tokens).values():
+        rel = jssem.resolve_spec(spec, main_rel, known)
+        if rel:
+            want.add(rel)
+    other_tokens = {}
+    for rel in want:
+        blob = files[rel]
+        if not blob:
+            continue
+        try:
+            other_tokens[rel] = jsparse.tokenize(blob.decode('utf-8', 'ignore'))
+        except Exception:
+            continue
+
     out = {}
     for reg in regs:
         found = []
         span = reg.get('span')
         if span:
             found += jssem.sinks_in_span(tokens, span[0], span[1])
+            if other_tokens:
+                for _rel, _name, sinks in jssem.cross_file_member_sinks(
+                        tokens, span[0], span[1], main_rel, other_tokens):
+                    found += sinks
         for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
             found += calls
         out[reg['channel']] = sorted(set(found))

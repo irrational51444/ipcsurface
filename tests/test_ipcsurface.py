@@ -1965,6 +1965,16 @@ class ChannelSinkTests(unittest.TestCase):
         # 没算过就写 null，不用空字典冒充「一条都没有」
         self.assertIsNone(report['channel_sinks'])
 
+    def test_sink_only_reachable_in_another_file(self):
+        """处理函数只是转发，真正碰文件的在另一个文件里——这一跳必须跟到。"""
+        files = {
+            'src/main.js': (b"const svc = require('./svc');\n"
+                            b"ipcMain.handle('x:1', (e, p) => svc.read(p.path));"),
+            'src/svc.js': b"module.exports = { read(p) { return fs.readFileSync(p); } };",
+        }
+        mapping = ipc.channel_sinks_map(files)
+        self.assertIn('readFileSync', mapping.get('x:1', []))
+
 
 class ReportContractTests(unittest.TestCase):
     """报告 JSON 的顶层键是契约。多一个键就红，不靠人记得。"""
