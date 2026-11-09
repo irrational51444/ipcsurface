@@ -75,6 +75,21 @@ function h(event, payload) {
   }
 }
 """, 'danger'),
+    ('把函数名当回调传（已知缺口）', """
+function handle(item) {
+  fs.readFileSync(item);
+}
+function h(event, payload) {
+  payload.list.map(handle);
+}
+""", 'danger'),
+    ('for-in 枚举（已知缺口）', """
+function h(event, payload) {
+  for (const key in payload.map) {
+    fs.readFileSync(payload.map[key]);
+  }
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
