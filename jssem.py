@@ -603,7 +603,8 @@ def callback_taints(tokens, start, end, tainted):
     后面紧跟箭头函数，箭头形参就当脏。别的形状（回调在别处定义、传函数名）
     一律不认——认不出来就少说，不猜。
     """
-    ITER = ('map', 'forEach', 'filter', 'find', 'findIndex', 'some', 'every', 'flatMap')
+    ITER = ('map', 'forEach', 'filter', 'find', 'findIndex', 'some', 'every', 'flatMap',
+            'reduce', 'reduceRight')
     extra = set()
     for i in range(start, min(end, len(tokens) - 3)):
         tok = tokens[i]

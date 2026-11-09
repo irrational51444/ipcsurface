@@ -119,6 +119,21 @@ function h(event, payload) {
   fs.readFileSync(payload?.path);
 }
 """, 'danger'),
+    ('reduce 累计器用到脏数组', """
+function h(event, payload) {
+  payload.list.reduce((acc, v) => fs.readFileSync(v), null);
+}
+""", 'danger'),
+    ('setTimeout 里用了外层脏变量', """
+function h(event, payload) {
+  setTimeout(() => { fs.readFileSync(payload.path); }, 0);
+}
+""", 'danger'),
+    ('事件回调里用了脏变量', """
+function h(event, payload) {
+  emitter.on('tick', () => fs.readFileSync(payload.path));
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
