@@ -137,3 +137,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：0.75.0 升 schema 到 asar/12（enumerated 强度分档 + enum_proof 字段）
+
+## 2026-11-09 16:08
+
+- 变了的字段：fingerprint
+- 理由：0.76.0 版本号变了，金标准里的 version 字段跟着更新

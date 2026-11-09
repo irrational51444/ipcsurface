@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.75.0'
+__version__ = '0.76.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -600,13 +600,110 @@ def _block_end(text, open_pos):
     return None
 
 
+SPLIT_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*"
+    r"""(['"])((?:\\.|(?!\2)[^\\]){0,400})\2\s*\.\s*split\s*\(\s*"""
+    r"""(['"])(.)\4\s*\)""")
+OBJ_KEYS_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*Object\s*\.\s*"
+    r"(keys|values)\s*\(\s*([A-Za-z_$][\w$]*)\s*\)")
+SPREAD_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\[\s*([^\[\]]{0,600})\s*\]")
+CONCAT_DEF = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\s*\.\s*"
+    r"concat\s*\(\s*\[([^\[\]]{0,600})\]\s*\)")
+
+
 def parse_array_literals(text):
-    """只收「全是字符串字面量」的数组常量：{名字: 取值元组}。"""
+    """收「取值集合完全由源码字面量决定」的数组常量。
+
+    不只是 `const OPS = ['a','b']` 这一种。真项目里更常见的是这几种，
+    它们同样能算出全部取值，所以一起收：
+
+    - `'a,b,c'.split(',')`（分隔符必须是单字符字面量）
+    - `Object.keys({a: 1, b: 2})` / `Object.values({...})`（对象字面量的字段）
+    - `[...A, ...B]` / `[...A, 'c']`（展开，元素都是已知集合）
+    - `A.concat(['c'])`
+
+    迭代到不再增长为止：B 依赖 A、C 依赖 B 这种链子也能展开。
+    """
     table = {}
     for match in ARRAY_LITERAL_DEF.finditer(text):
         values = tuple(value for _quote, value in STRING_ITEM.findall(match.group(2)))
         if values:
             table.setdefault(match.group(1), values)
+
+    objects = parse_object_literals(text)
+    splits = {}
+    for match in SPLIT_DEF.finditer(text):
+        source, sep = match.group(3), match.group(5)
+        if sep and source:
+            splits.setdefault(match.group(1), (source, sep))
+    spreads = {}
+    for match in SPREAD_DEF.finditer(text):
+        spreads.setdefault(match.group(1), match.group(2))
+    concats = {}
+    for match in CONCAT_DEF.finditer(text):
+        concats.setdefault(match.group(1), (match.group(2), match.group(3)))
+    keydefs = {}
+    for match in OBJ_KEYS_DEF.finditer(text):
+        keydefs.setdefault(match.group(1), (match.group(2), match.group(3)))
+
+    def expand_items(body):
+        """把 `[...A, 'x']` 这种元素串展开；有一个元素算不出就整条放弃。"""
+        parts = _split_top(body)
+        if parts is None:
+            return None
+        values = []
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
+            if part.startswith('...'):
+                name = part[3:].strip()
+                if name not in table:
+                    return None
+                values.extend(table[name])
+                continue
+            match = STRING_ITEM.fullmatch(part)
+            if not match:
+                return None
+            values.append(match.group(2))
+        return tuple(values) if values else None
+
+    for _round in range(4):
+        grew = False
+        for name, (source, sep) in splits.items():
+            if name in table:
+                continue
+            pieces = tuple(piece for piece in source.split(sep) if piece)
+            if pieces and len(pieces) <= ENUM_MAX_VALUES:
+                table[name] = pieces
+                grew = True
+        for name, (kind, target) in keydefs.items():
+            if name in table or target not in objects:
+                continue
+            fields = objects[target]
+            values = tuple(fields) if kind == 'keys' else tuple(fields.values())
+            if values:
+                table[name] = values
+                grew = True
+        for name, body in spreads.items():
+            if name in table:
+                continue
+            values = expand_items(body)
+            if values:
+                table[name] = values
+                grew = True
+        for name, (source, body) in concats.items():
+            if name in table or source not in table:
+                continue
+            extra = expand_items(body)
+            if extra:
+                table[name] = tuple(table[source]) + extra
+                grew = True
+        if not grew:
+            break
     return table
 
 
@@ -761,6 +858,19 @@ def _first_argument(text, open_paren):
     return None
 
 
+def array_def_spans(text):
+    """每种「取值集合由字面量决定」的数组定义各自的位置，用来把定义处排除掉。
+
+    排除是为了查「别处有没有改过它」：定义那一行本身就写着 `NAME = …`，
+    不排除的话每次都会误判成「被重新赋值」。
+    """
+    spans = {}
+    for pattern in (ARRAY_LITERAL_DEF, SPLIT_DEF, OBJ_KEYS_DEF, SPREAD_DEF, CONCAT_DEF):
+        for match in pattern.finditer(text):
+            spans.setdefault(match.group(1), (match.start(), match.end()))
+    return spans
+
+
 def _mask_span(text, start, end):
     """把一段替换成等长空格：行号不变，别处再扫就扫不到它。"""
     return text[:start] + ' ' * (end - start) + text[end:]
@@ -788,6 +898,8 @@ def _array_is_clean(text, name, def_span):
     动过的意思：`OPS.push(…)` 这类原地改、`OPS[0] = …` 改元素、`OPS = …` 重绑。
     被整个摊开（`[...OPS]`）不算动——取值还在。
     """
+    if def_span is None:
+        return False
     masked = _mask_span(text, def_span[0], def_span[1])
     name_re = re.escape(name)
     for mutator in ARRAY_MUTATORS:
@@ -821,8 +933,7 @@ def enumerate_computed_names(text, rel):
     if not loops:
         return []
     funcs = parse_simple_functions(text)
-    array_defs = {m.group(1): (m.start(), m.end())
-                  for m in ARRAY_LITERAL_DEF.finditer(text)}
+    array_defs = array_def_spans(text)
     consts = {name: frozenset([value])
               for name, _quote, value in CONST_DEF.findall(text)}
 
@@ -855,7 +966,7 @@ def enumerate_computed_names(text, rel):
         else:
             failed.append('loop_var_not_reassigned')
         source = loop[4]
-        if source.startswith('[') or _array_is_clean(text, source, array_defs[source]):
+        if source.startswith('[') or _array_is_clean(text, source, array_defs.get(source)):
             passed.append('array_not_mutated')
         else:
             failed.append('array_not_mutated')
@@ -1689,8 +1800,8 @@ def confidence_levels(facts, probe=None, poke=None):
             'strength': corroborated_strength,
             'can_prove': '静态和运行时各看见一次，两条路互不依赖',
             'cannot_prove': '对上的是名字，不是行为；门后逻辑仍然没审。'
-                            '另外：运行时那一侧现在不提供位置，所以 corroboration_level '
-                            '实际只会是 unknown——别的档位是等位置信息接上才有的，别当成已经在用',
+                            '另外：只有探针给出了位置（probe JSON 的 sites）才有 corroboration_level，'
+                            '没给位置就是 unknown——那说明这一档没算，不说明两条路不独立',
             'next_step': '优先看这几条，它们最不像我编的；但别把「对上了」当成「对上得有多实」',
         })
     levels.append({

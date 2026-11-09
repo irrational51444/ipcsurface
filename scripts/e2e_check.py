@@ -96,6 +96,25 @@ def main():
     b.pop('generated_at', None)
     check('同一份输入两次跑结果一致', a == b)
 
+    # 第二条独立证据：探针给 sites，交叉档位必须真的按两侧位置算，不是恒 unknown
+    probe_path = os.path.join(tmp, 'probe.json')
+    with open(probe_path, 'w', encoding='utf-8') as fh:
+        json.dump({'handlers': ['fs:read', 'fs:write'],
+                   'listeners': [],
+                   'sites': {'fs:read': 'src/main.js:1', 'fs:write': 'src/main.js:2'}}, fh)
+    probed = os.path.join(tmp, 'probed.json')
+    proc = run([REALISH, '--runtime', probe_path, '--format', 'json', '-o', probed])
+    check('带 sites 的探针能跑', proc.returncode == 0, (proc.stderr or '')[:120])
+    probed_data = json.loads(open(probed, encoding='utf-8').read())
+    levels = {name: item.get('corroboration_level')
+              for name, item in probed_data['evidence'].items()
+              if item.get('corroboration') == 'static_runtime'}
+    check('交叉档位真的算出了具体档，不是恒 unknown',
+          any(level and level != 'unknown' for level in levels.values()),
+          str(sorted(set(levels.values()))))
+    check('探针给了位置的名字都带档位',
+          all(level for level in levels.values()), str(levels))
+
     # 人工标注的 ground truth：把「我觉得准」变成召回/精确率
     gt = subprocess.run([sys.executable, os.path.join(ROOT, 'scripts', 'ground_truth_check.py')],
                         capture_output=True, text=True, encoding='utf-8', errors='replace')

@@ -535,6 +535,43 @@ class EnumerationTests(unittest.TestCase):
         self.assertLess(ipc.SOURCE_STRENGTH['enumerated'],
                         ipc.SOURCE_STRENGTH['literal'], '穷举不该和写死的同强度')
 
+    def test_value_set_can_come_from_five_more_shapes(self):
+        """取值集合不只来自数组字面量。
+
+        split / Object.keys / 展开 / concat / 链式依赖，这五种真项目里都常见，
+        取值同样完全由源码字面量决定，所以都收。
+        """
+        cases = {
+            'split': ("const OPS = 'a,b'.split(',');"
+                      " for (const op of OPS) { ipcMain.handle('l:' + op, () => {}); }",
+                      ['l:a', 'l:b']),
+            'keys': ("const MAP = { start: 'x', stop: 'y' };"
+                     " const OPS = Object.keys(MAP);"
+                     " for (const op of OPS) { ipcMain.handle('j:' + op, () => {}); }",
+                     ['j:start', 'j:stop']),
+            'spread': ("const A = ['a1']; const B = [...A, 'b1'];"
+                       " for (const op of B) { ipcMain.handle('s:' + op, () => {}); }",
+                       ['s:a1', 's:b1']),
+            'concat': ("const A = ['a1']; const B = A.concat(['b1']);"
+                       " for (const op of B) { ipcMain.handle('c:' + op, () => {}); }",
+                       ['c:a1', 'c:b1']),
+            'chain': ("const A = 'p,q'.split(','); const B = [...A, 'r'];"
+                      " for (const op of B) { ipcMain.handle('h:' + op, () => {}); }",
+                      ['h:p', 'h:q', 'h:r']),
+        }
+        for name, (source, expected) in cases.items():
+            with self.subTest(shape=name):
+                facts = self.scan(source)
+                self.assertEqual(sorted(n for n, _w in facts['handlers']), expected)
+
+    def test_non_literal_value_set_still_falls_back(self):
+        # 取值来自函数调用，不管哪种写法，一律算不出来
+        facts = self.scan("const OPS = loadFromConfig();"
+                          " for (const op of OPS) { ipcMain.handle('x:' + op, () => {}); }")
+        self.assertEqual(facts['handlers'], [])
+        self.assertEqual(len(facts['dynamic']), 1)
+
+
     def test_literal_wins_when_both_ways_see_it(self):
         source = """
         const OPS = ['add'];
@@ -545,6 +582,46 @@ class EnumerationTests(unittest.TestCase):
         self.assertIn('literal', item['sources'])
         self.assertIn('enumerated', item['sources'])
         self.assertEqual(item['strength'], 1.0, '有一处逐字写死，就不该按穷举降档')
+
+
+class ProbeSiteTests(unittest.TestCase):
+    """第二条证据接上之后，交叉档位到底算不算得出来。
+
+    这组盯的是「探针给位置 → 按两侧位置分档」这条路：
+    之前四档一直被说成触发不到，是因为没人从真实输入走一遍。
+    """
+
+    def build(self, probe):
+        blob = make_asar({'src/main.js': (b"ipcMain.handle('a:one', f)\n"
+                                         b"ipcMain.handle('a:two', f)\n"
+                                         b"ipcMain.handle('a:three', f)\n"),
+                          'src/other.js': b"ipcMain.handle('a:far', f)\n"})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        try:
+            facts, count, total = ipc.analyse_asar(path)
+            return ipc.channel_sources(facts, probe=probe)
+        finally:
+            os.unlink(path)
+
+    def test_rule_probe_sites_upgrade_corroboration_level(self):
+        probe = {'handlers': ['a:one', 'a:two', 'a:three', 'a:far'],
+                 'sites': {'a:one': 'src/main.js:1',      # 同文件同一行
+                           'a:two': 'src/main.js:3',      # 同文件相邻（静态在 2）
+                           'a:three': 'src/main.js:60',   # 同文件但隔得远
+                           'a:far': 'src/main.js:9'}}     # 静态在 other.js，运行时在 main.js
+        seen = self.build(probe)
+        self.assertEqual(seen['a:one']['corroboration_level'], 'weak-same-line')
+        self.assertEqual(seen['a:two']['corroboration_level'], 'weak-near-line')
+        self.assertEqual(seen['a:three']['corroboration_level'], 'medium')
+        self.assertEqual(seen['a:far']['corroboration_level'], 'strong')
+
+    def test_probe_without_sites_stays_unknown(self):
+        # 只报名字不报位置：这一档没算，不能说成「对上得实」
+        seen = self.build({'handlers': ['a:one']})
+        self.assertEqual(seen['a:one']['corroboration_level'], 'unknown')
+        self.assertIn('没给位置', seen['a:one']['corroboration_basis'])
 
 
 class SourcemapTests(unittest.TestCase):
@@ -1661,11 +1738,13 @@ class TrustworthinessTests(unittest.TestCase):
         self.assertEqual(item.get('corroboration_level'), 'unknown')
 
     def test_rule_report_says_where_positions_come_from(self):
-        # README 得写清：运行时目前不报位置，所以四档实际只会是 unknown，
-        # 否则读者会以为这四档已经在用。
+        # README 得写清：探针给 sites 才算档，不给就是 unknown（没算，不是没对上）。
+        # 以前这里断言的是「运行时目前不报位置」，0.76.0 用真实 CLI 跑通过四档之后改口，
+        # 所以断言跟着改成新的说法——旧句子留着就是过期文档。
         text = open(os.path.join(ROOT, 'README.md'), encoding='utf-8').read()
-        self.assertIn('运行时那一侧目前不报位置', text)
-        self.assertIn('只会是 `unknown`', text)
+        self.assertIn('探针在 probe JSON 里给 `sites`', text)
+        self.assertIn('探针只报名字、不报位置时才是 `unknown`', text)
+        self.assertNotIn('运行时那一侧目前不报位置', text, '旧说法不能再留着')
 
     def test_rule_near_line_says_what_it_cannot_tell(self):
         level, basis = ipc.corroboration_strength('a.js:10', 'a.js:12')

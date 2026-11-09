@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.75.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.76.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -99,7 +99,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 - **每层给样本，JSON 给全量**：md 每层抽两条 `名字 @ file:line`（按名字 sha1 选，谁的机器上都一样）；JSON 里 `sites` 给全部位置，`evidence[*].where_all` 给每个名字的所有位置。
 - **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，`scripts/ground_truth_check.py` 算召回 / 精确 / 总覆盖率。**当前平均总覆盖率 1.00**——四个靶场全对上了（`dyn` 那三条以前是「算不出来」，这一版才穷举出来）。**这个 1.00 只说明这四个靶场**：加起来 23 条通道、写法全是我自己写的，不代表真实应用；`known_unreachable` 这一栏现在是空的，空了才敢说满，但它跟着源码变。
 
-交叉强度的四档（`strong` / `medium` / `weak-same-line` / `weak-near-line`）也在代码和用例里，但**运行时那一侧目前不报位置，所以真实输出只会是 `unknown`**。这一条写明，不假装已经在用。
+交叉强度的四档（`strong` / `medium` / `weak-same-line` / `weak-near-line`）不是摆设：探针在 probe JSON 里给 `sites`（名字 → `file:line`），工具就按两侧位置算档。**探针只报名字、不报位置时才是 `unknown`**——那是没算，不是没对上。这四个档都用真实 CLI 跑出来过。
 
 ---
 
@@ -141,7 +141,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **243 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **247 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
