@@ -265,6 +265,114 @@ def sinks_in_span(tokens, start, end):
     return found
 
 
+def field_key(tokens, index, limit):
+    """从 index 起读一个「字段路径」：payload、payload.path、a.b.c。
+
+    返回 (键名, 结束位置)；读不出返回 (None, index)。
+    """
+    if index >= limit or tokens[index].kind != 'ident':
+        return None, index
+    parts = [tokens[index].text]
+    j = index + 1
+    while j + 1 < limit and tokens[j].text == '.' and tokens[j + 1].kind == 'ident':
+        parts.append(tokens[j + 1].text)
+        j += 2
+    return '.'.join(parts), j
+
+
+def field_taints(tokens, start, end, params):
+    """带字段的脏集合：{'payload', 'payload.path'}。
+
+    和基名版的区别就在这儿：`payload.path` 脏不等于 `payload.name` 脏。
+    没有它，`if (payload.path !== '/safe') return;` 会把整条 payload 都判成干净，
+    于是 `fs.read(name)` 这种真问题被中和掉。
+    """
+    table = {name: [None] for name in params}
+    i = start
+    while i < end:
+        tok = tokens[i]
+        name = None
+        j = None
+        if tok.text in DECL and i + 1 < end:
+            name, j = field_key(tokens, i + 1, end)
+        elif tok.kind == 'ident' and i + 1 < end and tokens[i + 1].text == '=':
+            name, j = field_key(tokens, i, end)
+        if name is None:
+            i += 1
+            continue
+        if j < end and tokens[j].text == '=':
+            stop = _end_of_statement(tokens, j + 1, end)
+            table.setdefault(name, []).append(tokens[j + 1:stop])
+            i = max(stop, i + 1)
+        else:
+            i = j + 1
+    tainted = {name for name, values in table.items() if any(v is None for v in values)}
+    for _ in range(4):
+        grew = False
+        for name, values in table.items():
+            if name in tainted:
+                continue
+            for value in values:
+                if value is None:
+                    continue
+                for k in range(len(value)):
+                    key, _end = field_key(value, k, len(value))
+                    if key and (key in tainted or key.split('.')[0] in tainted):
+                        tainted.add(name)
+                        grew = True
+                        break
+                if name in tainted:
+                    break
+        if not grew:
+            break
+    return tainted
+
+
+def field_guarded(tokens, start, end, key):
+    """这个字段是不是先被白名单校验过：`if (payload.path !== '字面量') return;`。
+
+    按字段判，不按基名判——校验了 path 不代表 name 干净，这正是字段敏感的意义。
+    """
+    for i in range(start, min(end, len(tokens) - 4)):
+        if tokens[i].text != 'if' or tokens[i + 1].text != '(':
+            continue
+        guard_key, after = field_key(tokens, i + 2, end)
+        if guard_key != key:
+            continue
+        close = _end_of_statement(tokens, after, end)
+        cond = tokens[after:close]
+        has_literal = any(t.ok if hasattr(t, 'ok') else t.kind in ('string', 'number') for t in cond)
+        compares = any(t.text in ('!==', '!=', '===', '==') for t in cond)
+        tail = tokens[min(close + 1, end - 1):min(close + 3, end)]
+        if has_literal and compares and any(t.text in ('return', 'throw') for t in tail):
+            return True
+    return False
+
+
+def field_hits(tokens, start, end, params):
+    """按字段路径判：哪个危险调用吃到了脏字段。返回 [(调用名, 字段, 行号)]。"""
+    tainted = field_taints(tokens, start, end, params)
+    aliases = child_process_aliases(tokens)
+    hits = []
+    for i in range(start, min(end, len(tokens) - 1)):
+        tok = tokens[i]
+        if tok.kind != 'ident' or tok.text not in DANGER or tokens[i + 1].text != '(':
+            continue
+        if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+            if tokens[i - 2].text not in aliases:
+                continue
+        stop = _end_of_statement(tokens, i + 2, end)
+        k = i + 2
+        while k < stop:
+            key, nxt = field_key(tokens, k, stop)
+            if key and (key in tainted or key.split('.')[0] in tainted):
+                if not field_guarded(tokens, start, end, key):
+                    hits.append((tok.text, key, tok.line + 1))
+                    break
+            k = max(nxt, k + 1)
+    return hits
+
+
 def module_aliases(tokens):
     """这个文件里，谁指向哪个模块：`const cp = require('child_process')`、
     `import { pick } from './svc'`、`const { pick } = require('./svc')`。
