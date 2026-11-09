@@ -667,6 +667,27 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     tainted |= callback_taints(tokens, start, end, tainted)
     tainted |= loop_taints(tokens, start, end, tainted)
     aliases = aliases if aliases is not None else child_process_aliases(tokens)
+    # 立即执行的匿名函数：(function (p) { fs.read(p) })(payload.path)
+    # 实参脏就把形参也算脏，否则这种写法整片漏掉。
+    for i in range(start, min(end, len(tokens) - 1)):
+        if tokens[i].text != 'function' or i < 1 or tokens[i - 1].text != '(':
+            continue
+        if tokens[i + 1].text != '(':
+            continue
+        p_open = i + 1
+        p_close = _close_paren(tokens, p_open)
+        if p_close + 1 >= end or tokens[p_close + 1].text != '{':
+            continue
+        b_close = _close_paren(tokens, p_close + 1)
+        if (b_close + 2 >= end or tokens[b_close + 1].text != ')'
+                or tokens[b_close + 2].text != '('):
+            continue
+        arg_end = _end_of_statement(tokens, b_close + 3, end)
+        args = tokens[b_close + 3:arg_end]
+        if any(a.kind == 'ident' and a.text in tainted for a in args):
+            for tok in tokens[p_open + 1:p_close]:
+                if tok.kind == 'ident':
+                    tainted.add(tok.text)
     hits = []
     for i in range(start, min(end, len(tokens) - 1)):
         tok = tokens[i]

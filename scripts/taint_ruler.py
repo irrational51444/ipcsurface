@@ -3,8 +3,8 @@
 期望值三档：
   danger    —— 外部输入确实流到了危险 API，必须报
   clean     —— 不该报
-  known-gap —— 明知现在会误报的（还没做中和分析）；单独计数，不算失败，
-               但必须出现在输出里——藏起来才是问题
+  known-gap —— 明知现在会误报的；单独计数，不算失败，但必须出现在输出里
+  unsupported —— 明知抓不到的（这条链路要求跨语句的抛出传播）；同样单独计数并列出
 """
 import os
 import sys
@@ -165,6 +165,21 @@ function a1(p) { a2(p); }
 function a2(p) { a3(p); }
 function a3(p) { fs.readFileSync(p); }
 """, 'danger'),
+    ('立即执行的函数传脏参', """
+function h(event, payload) {
+  (function (p) { fs.readFileSync(p); })(payload.path);
+}
+""", 'danger'),
+    ('catch 里用错误对象读文件', """
+function h(event, payload) {
+  try { work(); } catch (err) { fs.readFileSync(err.path); }
+}
+""", 'unsupported'),
+    ('数组下标取元素', """
+function h(event, payload) {
+  fs.readFileSync(payload.list[0]);
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
@@ -208,8 +223,9 @@ def analyse(source):
 
 
 def main():
-    caught = misses = false_alarms = known = broken = 0
+    caught = misses = false_alarms = known = broken = unsupported = 0
     failures = []
+    failures_unsupported = []
     for name, source, expect in CASES:
         try:
             reported = bool(analyse(source))
@@ -223,6 +239,12 @@ def main():
             else:
                 misses += 1
                 failures.append((name, '该报没报'))
+        elif expect == 'unsupported':
+            if reported:
+                caught += 1
+            else:
+                unsupported += 1
+                failures_unsupported.append(name)
         elif expect == 'known-gap':
             known += 1 if reported else 0
         else:
@@ -230,11 +252,14 @@ def main():
                 false_alarms += 1
                 failures.append((name, '不该报却报了'))
 
-    danger = sum(1 for _n, _s, e in CASES if e == 'danger')
+    danger = sum(1 for _n, _s, e in CASES if e in ('danger', 'unsupported'))
     clean = sum(1 for _n, _s, e in CASES if e == 'clean')
     print(f'正样本 {danger}：检出 {caught}，漏 {misses}，检出率 {caught / danger:.2f}')
     print(f'负样本 {clean}：误报 {false_alarms}，误报率 {false_alarms / clean:.2f}')
-    print(f'已知缺口（已校验后使用）：{known} 条，不计入误报')
+    print(f'已知缺口（会误报）：{known} 条，不计入误报')
+    print(f'暂不支持（会漏，已知）：{unsupported} 条')
+    for name in failures_unsupported:
+        print(f'  · {name}：没报（已知不支持）')
     if broken:
         print(f'解析失败：{broken} 条')
     for name, why in failures:
