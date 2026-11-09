@@ -373,6 +373,45 @@ def field_hits(tokens, start, end, params):
     return hits
 
 
+def resolve_spec(spec, from_rel, known):
+    """把 require('./svc') 解析成包内的真实路径。
+
+    spec 已经去掉引号。只处理相对路径（'./x'、'../x'）；node: / 包名一律返回 None
+    ——那些不在包里，跟不过去，就老实说跟不过去。
+    """
+    spec = spec.strip('\'"`')
+    if not spec.startswith('.'):
+        return None
+    base = from_rel.rsplit('/', 1)[0] if '/' in from_rel else ''
+    parts = base.split('/') if base else []
+    for piece in spec.split('/'):
+        if piece == '.' or piece == '':
+            continue
+        if piece == '..':
+            if parts:
+                parts.pop()
+            continue
+        parts.append(piece)
+    stem = '/'.join(parts)
+    for suffix in ('', '.js', '.cjs', '.mjs', '/index.js'):
+        candidate = stem + suffix
+        if candidate in known:
+            return candidate
+    return None
+
+
+def cross_file_targets(tokens, from_rel, known):
+    """这个文件里，`svc.read(...)` 的 svc 指向哪个文件、导出名是什么。
+
+    返回 {(本地别名, 导出名): 包内路径}。导出名是 None 表示整个模块对象。
+    """
+    out = {}
+    for local, (spec, imported) in module_aliases(tokens).items():
+        target = resolve_spec(spec, from_rel, known)
+        if target:
+            out[(local, imported)] = target
+    return out
+
 def module_aliases(tokens):
     """这个文件里，谁指向哪个模块：`const cp = require('child_process')`、
     `import { pick } from './svc'`、`const { pick } = require('./svc')`。
