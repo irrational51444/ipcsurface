@@ -4605,6 +4605,10 @@ def main(argv=None):
             if args.poke:
                 text += '\n'.join(render_poke(load_poke(args.poke)))
 
+    # 只有 -o 那条路会写盘，也就只有那条路算得出持久化状态；
+    # 不给 -o 也得有个值，不然下面读它直接崩（真包跑出来的）。
+    undurable = False
+    unknown = False
     if args.out:
         parent = os.path.dirname(os.path.abspath(args.out))
         if parent and not os.path.isdir(parent):

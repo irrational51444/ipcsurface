@@ -78,7 +78,9 @@ def tokenize(text):
                     i += 1
                     break
                 if text[i] == '\n':
-                    raise ParseError('字符串里出现换行')
+                    # 真包的打包产物里会出现这种：引号落单，字符串跨到下一行。
+                    # 整份文件因为一个字放弃不值得——就在这里断开，后面照常扫。
+                    break
                 i += 1
             else:
                 raise ParseError('字符串没有结尾')

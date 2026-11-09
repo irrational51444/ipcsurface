@@ -18,6 +18,21 @@ JSON 里是 `channel_sinks`，没算出来时写 `null`——不用空字典冒�
 现在 22 条检出、0 误报、1 条「暂不支持」（catch 里的错误对象，需要跨语句的抛出传播，写在
 `docs/known-wrong.md` 里，不装能抓）。
 
+**发版前拿四个真包跑了一遍，抓出两个自己的 bug**（都改了，也写在这儿）：
+1. 不给 `-o` 时程序会崩（`undurable` 未定义）——之前只在写文件的路径上测过。
+2. 打包产物里会有引号落单、字符串跨行的写法，词法器直接抛错，导致那份包的通道汇点整体算不出来
+   （Obsidian 就是这种）。现在遇到就在换行处断开、后面照常扫，不整份放弃。
+
+四个真包的实测（同一版 0.81.0）：
+- Obsidian（26.9 MB）：47 条通道，5 条能碰到危险 API——`print-to-pdf` 有 `writeFile`、
+  `register-cli` 有 `appendFileSync/readFileSync/unlinkSync/writeFileSync`、`sandbox` 有 `rmSync`；
+- 抖音桌面端（14.4 MB）：22 条通道，0 条；
+- bilibili 桌面端（64.5 MB）：1 条通道，0 条；
+- DeepSeek Harness（203 MB）：41 条通道，2 条（`clipboard-image-read` → `fetch`、
+  `locale-changed` → `writeFileSync`）。
+
+「0 条」不等于干净：那几家把活放在渲染进程或别的包里，静态只看主进程包看不到。
+
 ## 0.80.0 — 2026-11-09
 
 跟着调一层（`follow_one_hop`）：处理函数里调到的**本文件**函数，把它们的身子也扫一遍，再判能力。真项目里通道处理函数常是转发壳，能力在被调那一层。
