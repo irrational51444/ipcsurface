@@ -420,6 +420,49 @@ def field_hits(tokens, start, end, params):
     return hits
 
 
+def member_calls(tokens, start, end):
+    """一段代码里的 `x.y(` 形式的成员调用，返回 [(接收者, 成员名)]。"""
+    out = []
+    for i in range(start, min(end, len(tokens) - 3)):
+        if tokens[i].kind != 'ident' or tokens[i + 1].text not in ('.', '?.'):
+            continue
+        if tokens[i + 2].kind != 'ident' or tokens[i + 3].text != '(':
+            continue
+        out.append((tokens[i].text, tokens[i + 2].text))
+    return out
+
+
+def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens):
+    """跨文件一跳：handler 里调 `svc.read(...)`，svc 指向包内另一个文件，
+    就去看那个文件里 read 有没有碰危险 API。
+
+    files_tokens: {包内路径: 该文件的 token 列表}
+    返回 [(文件, 函数名, [危险调用名])]
+    """
+    known = set(files_tokens)
+    targets = cross_file_targets(tokens, from_rel, known)
+    out = []
+    for receiver, member in member_calls(tokens, start, end):
+        for (local, imported), rel in targets.items():
+            if local != receiver:
+                continue
+            if imported is not None and imported != member:
+                continue
+            other = files_tokens[rel]
+            defs = []
+            try:
+                import jsparse
+                defs = jsparse.function_defs(other)
+            except Exception:
+                continue
+            for item in defs:
+                if item['name'] != member:
+                    continue
+                sinks = sinks_in_span(other, item['body_start'], item['body_end'])
+                if sinks:
+                    out.append((rel, member, sinks))
+    return out
+
 def resolve_spec(spec, from_rel, known):
     """把 require('./svc') 解析成包内的真实路径。
 
