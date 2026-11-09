@@ -1144,6 +1144,89 @@ def capability_from_evidence(result):
     return out
 
 
+def runtime_diff(static_names, probe):
+    """静态名单和运行时观测的差集。
+
+    三堆东西，各有各的意思：
+      static_only —— 源码里写着，程序跑起来没注册（死代码、条件分支没走到、被拆走）
+      runtime_only—— 跑起来注册了，静态没看见（拼出来的名字、动态注册）
+      both        —— 两边都对上，这才是能当结论的
+    不合并、不覆盖，三堆都留着——合并就把「哪边缺了什么」这条信息抹掉了。
+    """
+    static = set(static_names or ())
+    runtime = set((probe or {}).get('handlers') or ()) | set((probe or {}).get('listeners') or ())
+    if (probe or {}).get('error'):
+        return {'static_only': sorted(static), 'runtime_only': [],
+                'both': [], 'note': '探针没跑通，差集算不出来'}
+    return {
+        'static_only': sorted(static - runtime),
+        'runtime_only': sorted(runtime - static),
+        'both': sorted(static & runtime),
+    }
+
+
+CROSS_VERDICTS = {
+    'confirmed': '静态看见能力、运行时也注册了',
+    'dead-or-conditional': '静态写着，运行时没注册——死代码、条件没走到，或者被拆走了',
+    'hidden-capability': '运行时注册了，静态没看见能力——能力藏在别处或名字是拼的',
+    'untested': '没有运行时观测，判不了',
+}
+
+
+def cross_capability_runtime(capability, static_names, probe):
+    """把能力面和运行时差集交叉起来，给每条通道一句判词。
+
+    这不是评级：'confirmed' 只说明这条通道在源码里能碰某个 API、并且程序确实
+    注册了它；能不能被滥用仍然要人看。
+    """
+    diff = runtime_diff(static_names, probe)
+    if diff.get('note'):
+        return {name: 'untested' for name in static_names or ()}
+    runtime = set((probe or {}).get('handlers') or ()) | set((probe or {}).get('listeners') or ())
+    out = {}
+    for name in set(static_names or ()) | runtime:
+        info = (capability or {}).get(name) or {}
+        has_cap = bool(info.get('apis'))
+        if not probe or probe.get('error'):
+            out[name] = 'untested'
+        elif name in runtime and has_cap:
+            out[name] = 'confirmed'
+        elif name in runtime:
+            out[name] = 'hidden-capability'
+        elif has_cap:
+            out[name] = 'dead-or-conditional'
+        else:
+            out[name] = 'untested'
+    return out
+POKE_STATES = {
+    'gated': '敲了一下，被拦下——只证明有门，门后逻辑没审',
+    'swallowed': '敲了一下，照收还回了结果——值得看一眼有没有校验',
+    'other-error': '抛了别的错，不提供门禁信息',
+    'untested': '没敲过',
+}
+
+
+def attach_poke(verdicts, gated=(), swallowed=(), other=()):
+    """把「敲没敲过」并到每条通道的判词旁边。
+
+    分开存两个字段，不压成一个结论：能力面说的是「它能碰什么」，
+    poke 说的是「被敲的时候它怎么反应」。两件事都对，但不能互相替代。
+    """
+    gated, swallowed, other = set(gated), set(swallowed), set(other)
+    out = {}
+    for name, verdict in (verdicts or {}).items():
+        if name in gated:
+            state = 'gated'
+        elif name in swallowed:
+            state = 'swallowed'
+        elif name in other:
+            state = 'other-error'
+        else:
+            state = 'untested'
+        out[name] = {'verdict': verdict, 'poke': state}
+    return out
+
+
 def detect_obfuscation(blob, rel):
     """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
 

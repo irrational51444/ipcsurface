@@ -38,6 +38,9 @@ fi
 echo "== 3/3 自查 =="
 python scripts/selfcheck.py || fail=1
 
+echo "== 4/4 污点尺子 =="
+python scripts/taint_ruler.py || fail=1
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "三道闸全绿。"
