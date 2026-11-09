@@ -624,6 +624,30 @@ class ProbeSiteTests(unittest.TestCase):
         self.assertIn('没给位置', seen['a:one']['corroboration_basis'])
 
 
+class HarvestGradeTests(unittest.TestCase):
+    """候选分档：这是「一堆线索」和「一张能看的清单」之间的分界。"""
+
+    def facts_for(self, files):
+        return ipc.scan_asar(files)
+
+    def test_rule_harvest_grades_use_only_checkable_facts(self):
+        files = {
+            'app/main.js': (b"ipcMain.handle('app:one', f)", b"ipcMain.handle('app:two', f)"),
+            'lib/other.js': b"'tool:a' 'tool:b' 'tool:c' 'lone:x'",
+        }
+        harvested = {'app:one': ('app/main.js:1', 'self'),
+                     'tool:a': ('lib/other.js:1', 'other'),
+                     'tool:b': ('lib/other.js:1', 'other'),
+                     'tool:c': ('lib/other.js:1', 'other'),
+                     'lone:x': ('lib/other.js:1', 'other')}
+        grades = ipc.grade_harvested(files, harvested, {'app:one'})
+        self.assertEqual(grades['app:one'], 'channel', '和通道名对上的不算线索')
+        self.assertEqual(grades['tool:a'], 'clustered')
+        self.assertEqual(grades['lone:x'], 'stray')
+        # 档位必须是登记过的那几种，不能随手加
+        self.assertEqual(set(grades.values()) - set(ipc.HARVEST_GRADES), set())
+
+
 class SourcemapTests(unittest.TestCase):
     def test_sources_content_is_recovered(self):
         blob = json.dumps({
@@ -820,7 +844,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/12')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/13')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))

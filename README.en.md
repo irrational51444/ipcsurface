@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.77.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.78.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -43,7 +43,16 @@ Statements in one report do not carry the same weight. From that real report:
 
 **Never sum the tiers.** One name can be both recovered and seen at runtime; both rows count it. The report is a map, not a verdict.
 
-**How good are those 221 candidates?** Numbers where numbers exist, unknown where they do not:
+**How good are those 221 candidates?** Grade first, then talk about precision. Grading uses only checkable facts (is it a channel name, does it live in an IPC-mentioning file, how many share its prefix) — no semantic guessing:
+
+| Grade | Real app | Meaning |
+| --- | --- | --- |
+| channel | 41 | matches a statically seen channel name; nothing left to guess |
+| near-ipc | 10 | sits in a file that mentions IPC, worth reading first |
+| clustered | 89 | looks like a name table (`tool`, `js` are the biggest prefixes) |
+| stray | 81 | appears only elsewhere; most likely noise |
+
+**Manual triage drops from 221 to 51** (top two grades); the other 170 are counted but collapsed until `--all`. Then precision:
 
 - **Fixtures** (python scripts/harvest_precision.py): 17 candidates, 17 are real channel names, precision **1.00** — but the fixtures are mine and tiny.
 - **The real app**: of 221 candidates, 41 are also statically seen channel names (same thing, two paths); the remaining **180 are lone**. Of those, only 12 appear in files that mention IPC, **0** sit next to a call (they live in name tables), 168 appear only elsewhere; 96 cluster by prefix (`tool=16`, `js=15`), 84 are scattered.
@@ -88,7 +97,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **2. Evidence records provenance, never a verdict.** Every channel carries where the name came from, how strong it is, and **what observations would refute it**. Strength orders review effort, not probability.
 
-**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/12`. If it does not match, stop.
+**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/13`. If it does not match, stop.
 
 ---
 
@@ -102,7 +111,7 @@ Six things someone else can verify without trusting the author:
 - **`fingerprint`** — input sha256 + version + schema + params + channel names. Same input must give the same value; unreadable input stays `null`.
 - **`refutes_if`** — per channel, what observation would prove the conclusion wrong, not what supports it.
 - **Samples** — md shows two per tier, picked by name sha1 so everyone sees the same two; JSON carries `sites` (all positions) and `evidence[*].where_all`.
-- **Hand-labelled ground truth** — `tests/golden/ground_truth.json`, scored by `scripts/ground_truth_check.py`. Current average coverage **1.00** — all four fixtures match, the three `dyn` names that used to be "cannot compute" are now enumerated (0.77.0). **That 1.00 covers four fixtures only**: 23 channels, every one written by me. `known_unreachable` is now empty; it stays honest only as long as it follows the source.
+- **Hand-labelled ground truth** — `tests/golden/ground_truth.json`, scored by `scripts/ground_truth_check.py`. Current average coverage **1.00** — all four fixtures match, the three `dyn` names that used to be "cannot compute" are now enumerated (0.78.0). **That 1.00 covers four fixtures only**: 23 channels, every one written by me. `known_unreachable` is now empty; it stays honest only as long as it follows the source.
 
 Corroboration levels (`strong` / `medium` / `weak-same-line` / `weak-near-line`) are not decoration: when the probe reports `sites` (name → `file:line`) in its JSON, the level is computed from both sides. **`unknown` only means the probe reported no position** — not computed, not "did not match". All four levels have been produced by the real CLI.
 
@@ -141,7 +150,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **247 test cases**, standard library only
+- **248 test cases**, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **End to end**: `python scripts/e2e_check.py` — installed CLI, schema, md/json agreement, exit codes, determinism, ground-truth scoring
 - **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list

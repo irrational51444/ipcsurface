@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.77.0'
+__version__ = '0.78.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1611,9 +1611,12 @@ def channel_sources(facts, probe=None):
             item['runtime_where'] = where
     for what, where in facts['dynamic']:
         add(what, 'computed', 0.3, where)
+    grades = facts.get('harvest_grades') or {}
     for name, value in (facts.get('harvested') or {}).items():
         where = value[0] if isinstance(value, tuple) and value else None
         add(name, 'harvested', 0.2, where)
+        if name in grades:
+            seen[name]['harvest_grade'] = grades[name]
 
     for name, item in seen.items():
         item['sources'] = sorted(item['sources'])
@@ -1897,6 +1900,9 @@ def confidence_levels(facts, probe=None, poke=None):
         'label': '打捞出来的候选',
         'count': len(harvested),
         'own_count': own,
+        'by_grade': {grade: sum(1 for name in harvested
+                              if (facts.get('harvest_grades') or {}).get(name) == grade)
+                     for grade in HARVEST_GRADES},
         'unit': '个',
         'strength': 0.2,
         'can_prove': '这些字符串长得像通道名',
@@ -2141,7 +2147,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/12',
+        'schema': 'ipcsurface/asar/13',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -2156,7 +2162,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/12',
+        'schema': 'ipcsurface/asar/13',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2325,27 +2331,42 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
 
     harvested = facts.get('harvested') or {}
     if harvested:
+        grades = facts.get('harvest_grades') or {}
         mine = {k: v for k, v in harvested.items() if v[1] == 'self'}
         others = {k: v for k, v in harvested.items() if v[1] != 'self'}
         out.append('## 长得像通道的字符串')
         out.append('')
         out.append(f'调用点认不出了，但名字本身还躺在字符串里。捞上来 {len(harvested)} 个，'
-                   f'其中 {len(mine)} 个是这个应用自己写的：')
+                   f'其中 {len(mine)} 个是这个应用自己写的。')
         out.append('')
-        for value in sorted(mine)[:20]:
-            out.append(f'- `{value}`  `{mine[value][0]}`')
-        if len(mine) > 20:
-            out.append(f'- 还有 {len(mine) - 20} 个自己的')
-        if others:
-            out.append('')
-            out.append(f'另外 {len(others)} 个在第三方库和测试里，噪音大，先折起来：')
-            out.append('')
-            for value in sorted(others)[:5]:
-                out.append(f'- `{value}`  `{others[value][0]}`')
-            if len(others) > 5:
-                out.append(f'- 还有 {len(others) - 5} 个，加 `--all` 看全')
+        # 一堆线索和一张能用的清单，差别就在这一步：先按能判的事实分档，再按档看。
+        by_grade = {grade: sorted(name for name in harvested if grades.get(name) == grade)
+                    for grade in HARVEST_GRADES}
+        out.append('| 档位 | 数量 | 这是什么 |')
+        out.append('| --- | --- | --- |')
+        out.append(f'| 就是通道 | {len(by_grade["channel"])} | 和静态看见的通道名对上了，不用再猜 |')
+        out.append(f'| 在含 IPC 的文件里 | {len(by_grade["near-ipc"])} | 名字躺在注册表或调用旁边，可疑度最高 |')
+        out.append(f'| 同前缀成簇 | {len(by_grade["clustered"])} | 同前缀 ≥3 个，像一张名字表 |')
+        out.append(f'| 零星 | {len(by_grade["stray"])} | 只在别处出现，最可能是噪音 |')
         out.append('')
-        out.append('> 这些只保证「长得像 `前缀:名字`」，不保证是通道。一个个去代码里搜，比从零翻快得多。')
+        for grade, title in (('channel', '对上的'), ('near-ipc', '在含 IPC 的文件里')):
+            if not by_grade[grade]:
+                continue
+            out.append(f'### {title}')
+            out.append('')
+            for value in by_grade[grade][:20]:
+                out.append(f'- `{value}`  `{harvested[value][0]}`')
+            if len(by_grade[grade]) > 20:
+                out.append(f'- 还有 {len(by_grade[grade]) - 20} 个')
+            out.append('')
+        noise = by_grade['clustered'] + by_grade['stray']
+        if noise:
+            out.append(f'另外 {len(noise)} 个是成簇或零星的候选（`tool`、`js` 这类前缀最多），'
+                       '噪音大，默认只报数量；要看全加 `--all`。')
+            out.append('')
+        out.append('> 前两档值得先看，后两档先当噪音。'
+                   '分档只用了能判的事实（是不是通道名、在不在含 IPC 的文件里、同前缀几个），'
+                   '没做语义猜测——猜错了比不分档更坏。')
         out.append('')
 
     out.append('## 没看清的地方')
@@ -3310,7 +3331,7 @@ EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
     'runtime_where', 'corroboration_level', 'corroboration_basis', 'where_all',
-    'refutes_if', 'enum_proof',
+    'refutes_if', 'enum_proof', 'harvest_grade',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
 
@@ -3891,6 +3912,43 @@ def harvest_strings(files):
     return seen
 
 
+# 打捞出来的候选分四档——这是「一堆线索」和「能用的清单」之间的那道分界。
+# 只有第一档是通道；后三档是线索，强度依次往下：
+#   channel  : 和静态看见的通道名对上了，不是线索，就是它本身
+#   near-ipc : 出现在提到 IPC 的文件里（离调用多远都算，名字常躺在表里）
+#   clustered: 同前缀 ≥3 个成簇出现，像一张名字表
+#   stray    : 零星、只在别的文件里出现，最可能是噪音
+HARVEST_GRADES = ('channel', 'near-ipc', 'clustered', 'stray')
+
+
+def grade_harvested(files, harvested, channel_names):
+    """给每个候选定一档。返回 {名字: 档位}。
+
+    只用能机械判的事实：是否与通道名相同、是否出现在含 IPC 的文件里、
+    同前缀的候选有几个。不做语义猜测——猜错了比不分档更坏。
+    """
+    ipc_files = set()
+    for rel, blob in files.items():
+        if rel.endswith(TEXT_EXT) and any(token in blob for token in
+                                         (b'ipcMain', b'ipcRenderer', b'contextBridge')):
+            ipc_files.add(rel)
+    counts = {}
+    for name in harvested:
+        prefix = name.split(':', 1)[0] if ':' in name else ''
+        counts[prefix] = counts.get(prefix, 0) + 1
+    grades = {}
+    for name, (where, _kind) in harvested.items():
+        if name in channel_names:
+            grades[name] = 'channel'
+            continue
+        if where.split(':', 1)[0] in ipc_files:
+            grades[name] = 'near-ipc'
+            continue
+        prefix = name.split(':', 1)[0] if ':' in name else ''
+        grades[name] = 'clustered' if counts.get(prefix, 0) >= 3 else 'stray'
+    return grades
+
+
 def analyse_asar(path, allow_eval=True, max_passes=1):
     header, files = read_asar(path)
     # 文件表是开着源文件按需切的，用完得自己关。Windows 上不关，
@@ -3906,6 +3964,8 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
             facts['scanned'] += extra['scanned']
         facts['recovered'] = sorted(recovered)
         facts['harvested'] = harvest_strings(files)
+        facts['harvest_grades'] = grade_harvested(
+            files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
         total = files.total_bytes()
         return facts, len(files), total

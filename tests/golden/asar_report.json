@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/12",
+  "schema": "ipcsurface/asar/13",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -47,6 +47,12 @@
       "label": "打捞出来的候选",
       "count": 0,
       "own_count": 0,
+      "by_grade": {
+        "channel": 0,
+        "near-ipc": 0,
+        "clustered": 0,
+        "stray": 0
+      },
       "unit": "个",
       "strength": 0.2,
       "can_prove": "这些字符串长得像通道名",
@@ -259,8 +265,8 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.77.0",
-    "schema": "ipcsurface/asar/12",
+    "version": "0.78.0",
+    "schema": "ipcsurface/asar/13",
     "params": {},
     "channels": [
       "a:b"

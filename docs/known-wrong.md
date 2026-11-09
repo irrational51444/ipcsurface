@@ -44,11 +44,11 @@
 
 `corroboration_level` 只有**探针给出位置**（probe JSON 里的 `sites`）才算得出来。不催不催：探针只报名字、不报位置时它是 `unknown`——那说明这一档没计算，不说明两条路不独立。
 
-0.77.0 起用真实 CLI 跑过一次带 `sites` 的探针输入（`dyn` 靶场）：`strong`（两个不同文件）、`weak-near-line`（同文件相隔 2 行）、`weak-same-line`（同一行）都真的出现了，不是摆设。`medium` 要同文件相隔 5 行以上才到，`unknown` 就是位置缺失。
+0.78.0 起用真实 CLI 跑过一次带 `sites` 的探针输入（`dyn` 靶场）：`strong`（两个不同文件）、`weak-near-line`（同文件相隔 2 行）、`weak-same-line`（同一行）都真的出现了，不是摆设。`medium` 要同文件相隔 5 行以上才到，`unknown` 就是位置缺失。
 
 ## 已知的扫不到（有数字）
 
-`tests/golden/ground_truth.json` 里 `dyn-asar` 那组：`ledger:add/list/remove` 是 `for (const op of OPS) ipcMain.handle(makeChannel(op))` 拼出来的。0.73.0 及以前静态扫不到，记在 `known_unreachable` 里，那组总覆盖率只有 0.50、平均 0.88；0.74.0 起能穷举（`OPS` 是字面量数组、`makeChannel` 是单表达式函数），这一栏空了，平均 1.00。0.77.0 补了三条证明，这三条名字的强度从 0.75 提到 0.9。
+`tests/golden/ground_truth.json` 里 `dyn-asar` 那组：`ledger:add/list/remove` 是 `for (const op of OPS) ipcMain.handle(makeChannel(op))` 拼出来的。0.73.0 及以前静态扫不到，记在 `known_unreachable` 里，那组总覆盖率只有 0.50、平均 0.88；0.74.0 起能穷举（`OPS` 是字面量数组、`makeChannel` 是单表达式函数），这一栏空了，平均 1.00。0.78.0 补了三条证明，这三条名字的强度从 0.75 提到 0.9。
 
 **别把 1.00 读成「扫得全」**：四个靶场一共 23 条通道，写法都是我自己写的，代表不了真实应用。真实应用里那 41 条通道，穷举出来的是 0 条。
 
@@ -67,7 +67,7 @@
 
 ## 版本锁
 
-版本：0.77.0
+版本：0.78.0
 
 这张表和版本一起走：`scripts/selfcheck.py` 会核对这里的版本号与当前版本一致，
 并对每类的最少条数、表格列名做断言。改版本号时如果没回来动这张表，自检会红——

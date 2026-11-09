@@ -412,7 +412,7 @@ def main():
     ok = check_referenced_paths(ok, readme)
 
     print('== 二、schema 与规则一致性 ==')
-    ok &= check('schema 版本号是 asar/10', 'ipcsurface/asar/12' in read('ipcsurface.py'))
+    ok &= check('schema 版本号是 asar/13', 'ipcsurface/asar/13' in read('ipcsurface.py'))
     rules = {r['id'] for r in t.RULES}
     tests = read('tests', 'test_ipcsurface.py')
     for rule in sorted(rules):
