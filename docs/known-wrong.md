@@ -46,19 +46,20 @@
 
 ## 已知的扫不到（有数字）
 
-`tests/golden/ground_truth.json` 里 `dyn-asar` 那组：`ledger:add/list/remove` 是 `for (const op of OPS) ipcMain.handle(makeChannel(op))` 拼出来的。0.73.0 及以前静态扫不到，记在 `known_unreachable` 里，那组总覆盖率只有 0.50、平均 0.88；0.74.0 起能穷举（`OPS` 是字面量数组、`makeChannel` 是单表达式函数），这一栏空了，平均 1.00。
+`tests/golden/ground_truth.json` 里 `dyn-asar` 那组：`ledger:add/list/remove` 是 `for (const op of OPS) ipcMain.handle(makeChannel(op))` 拼出来的。0.73.0 及以前静态扫不到，记在 `known_unreachable` 里，那组总覆盖率只有 0.50、平均 0.88；0.74.0 起能穷举（`OPS` 是字面量数组、`makeChannel` 是单表达式函数），这一栏空了，平均 1.00。0.75.0 补了三条证明，这三条名字的强度从 0.75 提到 0.9。
 
 **别把 1.00 读成「扫得全」**：四个靶场一共 23 条通道，写法都是我自己写的，代表不了真实应用。真实应用里那 41 条通道，穷举出来的是 0 条。
 
 ## 穷举这一档自己的边界
 
-- 证明不了「循环里没人改过这个变量」——静态看不到执行顺序。取值集合一旦在循环里被改，穷举出来的就不是全部。
+- 强度分两档，按三条检查定：0.9（三条全过）与 0.6（有一条没过）。哪条没过写在 `enum_proof.failed` 里。
+- 检查查的是「源码里没有那种写法」，不是「运行时只会取这几个值」：`eval`、`Object.defineProperty`、代理对象这些改写手法都不在检查范围。
 - 取值超过 64 个、展开超过 256 个名字，整处放弃，不截断交半份。
 - 拼装函数只跟三层，带分支/赋值/循环的不跟。
 
 ## 版本锁
 
-版本：0.74.0
+版本：0.75.0
 
 这张表和版本一起走：`scripts/selfcheck.py` 会核对这里的版本号与当前版本一致，
 并对每类的最少条数、表格列名做断言。改版本号时如果没回来动这张表，自检会红——

@@ -132,3 +132,8 @@
 
 - 变了的字段：fingerprint
 - 理由：这次内容其实没有变化，只是验证提示语
+
+## 2026-11-09 15:09
+
+- 变了的字段：fingerprint, schema
+- 理由：0.75.0 升 schema 到 asar/12（enumerated 强度分档 + enum_proof 字段）

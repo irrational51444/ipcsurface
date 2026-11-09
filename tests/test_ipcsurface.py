@@ -492,6 +492,49 @@ class EnumerationTests(unittest.TestCase):
         # 推翻它的判据要具体到「循环里有人改过变量」，不能含糊
         self.assertTrue(any('改过变量' in text for text in item['refutes_if']))
 
+    def test_rule_enumerated_requires_proof_for_high_strength(self):
+        """强度不是调上去的：三条证明查过才给 0.9，一条没过就降到 0.6。
+
+        三条检查各自对应一句「什么情况会让这次穷举算错」，
+        不是打分用的修辞——它们真能推翻结果。
+        """
+        clean = self.scan("""
+            const OPS = ['a', 'b'];
+            function ch(rest) { return 'ledger:' + rest; }
+            for (const op of OPS) { ipcMain.handle(ch(op), () => {}); }
+            """)
+        item = ipc.channel_sources(clean)['ledger:a']
+        self.assertEqual(item['strength'], ipc.ENUM_STRENGTH_PROVEN, 0.9)
+        self.assertEqual(item['enum_proof']['failed'], [])
+        self.assertEqual(sorted(item['enum_proof']['checked']),
+                         sorted(ipc.ENUM_CHECKS))
+        # 证据字段要登记，不然会被当成没登记的聚合字段报出来
+        self.assertEqual(ipc.unregistered_evidence_fields(item), [])
+
+        reassigned = self.scan("""
+            const OPS = ['a'];
+            for (let op of OPS) { op = op + 'X'; ipcMain.handle('ledger:' + op, () => {}); }
+            """)
+        item = ipc.channel_sources(reassigned)['ledger:a']
+        self.assertEqual(item['strength'], ipc.ENUM_STRENGTH_OPEN, 0.6)
+        self.assertIn('loop_var_not_reassigned', item['enum_proof']['failed'])
+
+        mutated = self.scan("""
+            const OPS = ['a'];
+            OPS.push('extra');
+            for (const op of OPS) { ipcMain.handle('ledger:' + op, () => {}); }
+            """)
+        item = ipc.channel_sources(mutated)['ledger:a']
+        self.assertEqual(item['strength'], ipc.ENUM_STRENGTH_OPEN, 0.6)
+        self.assertIn('array_not_mutated', item['enum_proof']['failed'])
+
+    def test_clean_enum_strength_matches_literal_resolved(self):
+        # 证明到位之后，穷举和「靠还原」同档：两条都要求回原文核一处
+        self.assertEqual(ipc.SOURCE_STRENGTH['enumerated'],
+                         ipc.SOURCE_STRENGTH['literal-resolved'])
+        self.assertLess(ipc.SOURCE_STRENGTH['enumerated'],
+                        ipc.SOURCE_STRENGTH['literal'], '穷举不该和写死的同强度')
+
     def test_literal_wins_when_both_ways_see_it(self):
         source = """
         const OPS = ['add'];
@@ -700,7 +743,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/11')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/12')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))

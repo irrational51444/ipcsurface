@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.74.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.75.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -43,7 +43,9 @@
 
 **这几层不可相加。**真实报告共 41 条通道、221 个候选。 同一个名字可能既被还原出来、又被运行时看到，两边都会算它。报告是地图，不是判决书。
 
-还有一层这张表里没有，因为**这个包 0 条**：穷举出来的名字（`enumerated`，强度 0.75）。取值集合是源码里的字面量数组、拼法是字面量加参数时，`for (const op of OPS) ipcMain.handle(makeChannel(op))` 这种能算成三个具体名字。靶场 `dyn` 里就是三条，真实应用很少这么写。
+还有一层这张表里没有，因为**这个包 0 条**：穷举出来的名字（`enumerated`）。取值集合是源码里的字面量数组、拼法是字面量加参数时，`for (const op of OPS) ipcMain.handle(makeChannel(op))` 这种能算成三个具体名字。靶场 `dyn` 里就是三条，真实应用很少这么写。
+
+这一层分两档，**强弱看证明，不看心情**：三条检查（循环里没改过循环变量、数组没被 push/splice 改过、拼装函数只有一个表达式）全过是 **0.9**，和「靠还原」同档；有一条没过降到 **0.6**，名字照给但别当准的用。哪条没过写在 `enum_proof.failed` 里。
 
 ---
 
@@ -81,7 +83,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、**哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/11`；对不上就停下，别按字段在不在猜。
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/12`；对不上就停下，别按字段在不在猜。
 
 ---
 
@@ -139,7 +141,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **241 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **243 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
@@ -164,7 +166,7 @@ CI 四个任务，缺一不可：
 
 ## 已知边界
 
-- 字符串级粗扫，不建语法树。拼出来的名字只有一种能算：取值集合是字面量数组、拼法是字面量加参数，那就穷举（`enumerated`，强度 0.75）；取值来自配置、函数返回值或循环累加的一律退回「算不出来」。要准的走 REA Evidence。
+- 字符串级粗扫，不建语法树。拼出来的名字只有一种能算：取值集合是字面量数组、拼法是字面量加参数，那就穷举（`enumerated`：证明齐 0.9，缺证明 0.6）；取值来自配置、函数返回值或循环累加的一律退回「算不出来」。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
 - Windows 上目录刷盘用 `ctypes` 调 `FlushFileBuffers`（句柄要带写权限，读权限会被拒）。只读卷和网络盘没实测过——那种情况下报 `durable=no`，不是 `unknown`。
 - `adv-asar.asar` 是对抗样本，没有生成脚本，只在本地有；其余靶场都能由 `examples/build.sh` 重造。

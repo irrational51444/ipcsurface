@@ -109,7 +109,7 @@ def check_output_contract(ok):
 TARGET_EXPECT = {
     # README 靶场表里写死的期望值，这里照抄一份。改坏还原逻辑这里会红。
     'static-asar.asar': 5,
-    'dyn-asar.asar': 6,      # 0.74.0 起 OPS 循环里的三条能穷举出来，3 → 6
+    'dyn-asar.asar': 6,      # 0.75.0 起 OPS 循环里的三条能穷举出来，3 → 6
     'obf-asar.asar': 0,
     'obf2-asar.asar': 4,
     'obf3-asar.asar': 2,
@@ -412,7 +412,7 @@ def main():
     ok = check_referenced_paths(ok, readme)
 
     print('== 二、schema 与规则一致性 ==')
-    ok &= check('schema 版本号是 asar/10', 'ipcsurface/asar/11' in read('ipcsurface.py'))
+    ok &= check('schema 版本号是 asar/10', 'ipcsurface/asar/12' in read('ipcsurface.py'))
     rules = {r['id'] for r in t.RULES}
     tests = read('tests', 'test_ipcsurface.py')
     for rule in sorted(rules):

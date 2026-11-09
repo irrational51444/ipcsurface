@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.74.0'
+__version__ = '0.75.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -515,6 +515,17 @@ ENUM_MAX_NAMES = 256        # 一个调用点最多展开这么多名字
 ENUM_MAX_DEPTH = 3          # 函数套函数最多跟三层
 ENUM_SCAN_LIMIT = 40000     # 找循环体大括号时最多往后看这么多字符
 
+# 穷举要提强度，得先补证明。三条都能在源码里查，查不了就不许挂高强度的名字。
+# 它们各自对应一句「什么情况会让这次穷举算错」——
+# 不是修辞，是这三条真的能推翻结果：
+#   1) 循环里改过循环变量 → 取值集合不是那三个；
+#   2) 数组在别处被 push/splice/改元素 → 集合不是字面量那三个；
+#   3) 拼装函数不是「一个字面量表达式」→ 拼法不成立。
+ENUM_CHECKS = ('loop_var_not_reassigned', 'array_not_mutated', 'helper_is_single_expression')
+
+ARRAY_MUTATORS = ('.push(', '.pop(', '.shift(', '.unshift(', '.splice(',
+                  '.sort(', '.reverse(', '.fill(', '.copyWithin(', '.sort (')
+
 ARRAY_LITERAL_DEF = re.compile(
     r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\[\s*"
     r"((?:['\"](?:\\.|[^'\"\\])*['\"]\s*,?\s*){1,%d})\s*\]" % ENUM_MAX_VALUES)
@@ -649,8 +660,12 @@ def parse_loops(text, arrays):
     return loops
 
 
-def _eval_atom(atom, env, funcs, depth):
-    """一个「加号之间」的片段能取哪些值。算不出返回 None。"""
+def _eval_atom(atom, env, funcs, depth, used=None):
+    """一个「加号之间」的片段能取哪些值。算不出返回 None。
+
+    used 记下这个表达式用到了哪些拼装函数——那些函数能不能撑住穷举，
+    要单独查（见 _helper_is_clean）。
+    """
     text = atom.strip()
     if not text:
         return None
@@ -660,7 +675,7 @@ def _eval_atom(atom, env, funcs, depth):
         match = STRING_ITEM.match(text)
         return frozenset([match.group(2)]) if match else None
     if text[:1] == '`':
-        return _eval_template(text, env, funcs, depth)
+        return _eval_template(text, env, funcs, depth, used)
     call = re.match(r'^([A-Za-z_$][\w$]*)\s*\((.*)\)$', text, re.S)
     if call:
         if depth >= ENUM_MAX_DEPTH:
@@ -668,23 +683,25 @@ def _eval_atom(atom, env, funcs, depth):
         entry = funcs.get(call.group(1))
         if not entry:
             return None
+        if used is not None and call.group(1) not in used:
+            used.append(call.group(1))
         params, body = entry
         args = _split_top(call.group(2)) if call.group(2).strip() else []
         if args is None or len(args) != len(params):
             return None
         inner = dict(env)
         for name, arg in zip(params, args):
-            value = _eval_value(arg, env, funcs, depth + 1)
+            value = _eval_value(arg, env, funcs, depth + 1, used)
             if value is None:
                 return None
             inner[name] = value
-        return _eval_value(body, inner, funcs, depth + 1)
+        return _eval_value(body, inner, funcs, depth + 1, used)
     if re.match(r'^[A-Za-z_$][\w$]*$', text):
         return env.get(text)
     return None
 
 
-def _eval_template(text, env, funcs, depth):
+def _eval_template(text, env, funcs, depth, used=None):
     """模板串：`ledger:${op}`。只支持 ${标识符} 和 ${'字面量'}。"""
     body = text[1:-1] if text.endswith('`') else text[1:]
     total = ['']
@@ -694,7 +711,7 @@ def _eval_template(text, env, funcs, depth):
             end = body.find('}', i)
             if end == -1:
                 return None
-            value = _eval_atom(body[i + 2:end], env, funcs, depth)
+            value = _eval_atom(body[i + 2:end], env, funcs, depth, used)
             if value is None:
                 return None
             total = [a + b for a in total for b in sorted(value)]
@@ -707,14 +724,14 @@ def _eval_template(text, env, funcs, depth):
     return frozenset(total)
 
 
-def _eval_value(expr, env, funcs, depth=0):
+def _eval_value(expr, env, funcs, depth=0, used=None):
     """把一个表达式算成「可能的取值集合」。算不出返回 None。"""
     parts = _split_top(expr, '+')
     if not parts:
         return None
     total = ['']
     for part in parts:
-        values = _eval_atom(part, env, funcs, depth)
+        values = _eval_atom(part, env, funcs, depth, used)
         if values is None:
             return None
         total = [a + b for a in total for b in sorted(values)]
@@ -744,11 +761,58 @@ def _first_argument(text, open_paren):
     return None
 
 
+def _mask_span(text, start, end):
+    """把一段替换成等长空格：行号不变，别处再扫就扫不到它。"""
+    return text[:start] + ' ' * (end - start) + text[end:]
+
+
+def _loop_var_is_clean(body, var):
+    """循环体里有没有改过循环变量。改过就说明取值集合不是那三个。
+
+    认这几种：`op = …`、`op += …`、`op++`、`[a, op] = …`、`({op} = …)`。
+    这里是「查不出问题才给高强度」，所以宁可漏认也不误认——
+    误认会让一条本来对的穷举降档，漏认会让一条错的穷举升档，后者更坏。
+    """
+    name = re.escape(var)
+    if re.search(r'(?<![\w$.])' + name + r'\s*(?:\+=|-=|\*=|/=|\+\+|--|=(?!=))', body):
+        return False
+    if re.search(r'(?:\[|\{)[^\]\}\)]{0,80}(?<![\w$.])' + name +
+                 r'(?![\w$])[^\]\}\)]{0,80}(?:\]|\})\s*=(?!=)', body):
+        return False
+    return True
+
+
+def _array_is_clean(text, name, def_span):
+    """数组常量除了那一处定义，别处有没有被动过。
+
+    动过的意思：`OPS.push(…)` 这类原地改、`OPS[0] = …` 改元素、`OPS = …` 重绑。
+    被整个摊开（`[...OPS]`）不算动——取值还在。
+    """
+    masked = _mask_span(text, def_span[0], def_span[1])
+    name_re = re.escape(name)
+    for mutator in ARRAY_MUTATORS:
+        if re.search(r'(?<![\w$.])' + name_re + re.escape(mutator.rstrip()), masked):
+            return False
+    if re.search(r'(?<![\w$.])' + name_re + r'\s*\[[^\]]{0,60}\]\s*=(?!=)', masked):
+        return False
+    if re.search(r'(?<![\w$.])' + name_re + r'\s*=(?!=)', masked):
+        return False
+    return True
+
+
+def _helper_is_clean(params, body):
+    """拼装函数是不是「单一字面量表达式」。带展开参数就算不成立。"""
+    if any('...' in param for param in params):
+        return False
+    return bool(body) and '=>' not in body
+
+
 def enumerate_computed_names(text, rel):
     """把「有限取值 × 字面量拼装」的调用点穷举成具体名字。
 
-    返回 [(kind, name, where, basis)]。算不出来的一律不返回——
-    那种留给 dynamic 那一档照实报「名字是算的」。
+    返回 [(kind, name, where, basis, 通过的检查, 没通过的检查)]。
+    算不出来的一律不返回——那种留给 dynamic 那一档照实报「名字是算的」。
+    检查没全过的仍然返回，但强度低一档，并把没过的检查写在证据里。
     """
     if 'for' not in text and 'forEach' not in text:
         return []
@@ -757,6 +821,8 @@ def enumerate_computed_names(text, rel):
     if not loops:
         return []
     funcs = parse_simple_functions(text)
+    array_defs = {m.group(1): (m.start(), m.end())
+                  for m in ARRAY_LITERAL_DEF.finditer(text)}
     consts = {name: frozenset([value])
               for name, _quote, value in CONST_DEF.findall(text)}
 
@@ -776,14 +842,34 @@ def enumerate_computed_names(text, rel):
             continue
         env = dict(consts)
         env[loop[2]] = frozenset(loop[3])
-        values = _eval_value(expr, env, funcs)
+        used = []
+        values = _eval_value(expr, env, funcs, used=used)
         if not values:
             continue
+
+        # 三条证明，各自对应一句「什么情况会让这次穷举算错」
+        passed, failed = [], []
+        body = text[loop[0]:loop[1] + 1]
+        if _loop_var_is_clean(body, loop[2]):
+            passed.append('loop_var_not_reassigned')
+        else:
+            failed.append('loop_var_not_reassigned')
+        source = loop[4]
+        if source.startswith('[') or _array_is_clean(text, source, array_defs[source]):
+            passed.append('array_not_mutated')
+        else:
+            failed.append('array_not_mutated')
+        dirty = [name for name in used if not _helper_is_clean(*funcs[name])]
+        if dirty:
+            failed.append('helper_is_single_expression')
+        elif used:
+            passed.append('helper_is_single_expression')
+
         kind = 'handle' if text.startswith('ipcMain', head.start()) else 'invoke'
         where = f'{rel}:{line_of(text, head.start())}'
         basis = f'{loop[2]} 在 {loop[4]} 里取 {len(loop[3])} 个值，拼法 {expr}'
         for name in sorted(values):
-            found.append((kind, name, where, basis))
+            found.append((kind, name, where, basis, tuple(passed), tuple(failed)))
     return found
 
 
@@ -1044,9 +1130,9 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         # 只认 `for(` / `for (` / `forEach`：光找 `for` 会撞上 information 这类词。
         has_loop = (b'for(' in blob or b'for (' in blob or b'forEach' in blob)
         if has_loop:
-            for kind, name, where, basis in enumerate_computed_names(text, rel):
+            for kind, name, where, basis, passed, failed in enumerate_computed_names(text, rel):
                 (handlers if kind == 'handle' else invokes).append((name, where))
-                enumerated.append((name, where, basis))
+                enumerated.append((name, where, basis, passed, failed))
                 enumerated_sites.add(where)
 
     # 已经穷举出来的调用点不再算「名字是算的」——那处现在有名字了。
@@ -1345,10 +1431,16 @@ SOURCE_STRENGTH = {
     'literal': 1.0,
     'literal-resolved': 0.9,
     'runtime': 0.8,
-    'enumerated': 0.75,
+    'enumerated': 0.9,
     'computed': 0.3,
     'harvested': 0.2,
 }
+
+# 穷举那条分两档，按三条检查的结果定，不是统一调上去：
+# 三条全过 → 0.9（和「靠还原」同档：证据链完整，逐条能复核）；
+# 有一条没过 → 0.6（名字照给，但别当准的用）。
+ENUM_STRENGTH_PROVEN = 0.9
+ENUM_STRENGTH_OPEN = 0.6
 
 
 def channel_sources(facts, probe=None):
@@ -1358,6 +1450,7 @@ def channel_sources(facts, probe=None):
     有的只在运行时见过，混在一起就会互相借光。这条函数按名字拆开记来源。
     """
     seen = {}
+    actual = {}      # (名字, 来源) → 这一处实际的强度：穷举那条按检查结果分档
 
     def add(name, source, strength, where=None):
         item = seen.setdefault(name, {'sources': [], 'strength': 0.0,
@@ -1366,23 +1459,33 @@ def channel_sources(facts, probe=None):
             item['sources'].append(source)
         if strength > item['strength']:
             item['strength'] = strength
+        key = (name, source)
+        if strength > actual.get(key, -1.0):
+            actual[key] = strength
         if where:
             if not item['where']:
                 item['where'] = where
             if where not in item['where_all']:
                 item['where_all'].append(where)
 
-    enumerated_names = {name for name, _w, _b in (facts.get('enumerated') or ())}
-    enumerated_sites = {(name, where) for name, where, _b in (facts.get('enumerated') or ())}
+    enum_proof = {}   # (名字, 位置) → {'checked': [...], 'failed': [...], 'basis': ...}
+    enumerated_sites = set()
+    for name, where, basis, passed, failed in (facts.get('enumerated') or ()):
+        enumerated_sites.add((name, where))
+        enum_proof[(name, where)] = {'basis': basis,
+                                     'checked': list(passed),
+                                     'failed': list(failed)}
     for name, where in facts['handlers'] + facts['invokes'] + facts['exposes']:
         if name in facts.get('resolved', ()):
             # 名字是靠还原推出来的，不是逐字写在那儿，强度低一档
             add(name, 'literal-resolved', 0.9, where)
         elif (name, where) in enumerated_sites:
-            # 穷举出来的：取值集合和拼法都在源码里，但「循环里没人改过这个变量」
-            # 这一条静态证明不了，所以排在写死的和还原的后面。
-            # 按「这一处」判，不按名字判：同一个名字在别处逐字写着，就该按写死的算。
-            add(name, 'enumerated', 0.75, where)
+            # 穷举出来的：检查全过才算「证明到位」，0.9，和靠还原的同档；
+            # 有一条没过就降到 0.6——名字照给，但别拿它当准的用。
+            # 按「这一处」判，不按名字判：同一个名字在别处逐字写着，就按写死的算。
+            failed = enum_proof[(name, where)]['failed']
+            add(name, 'enumerated', ENUM_STRENGTH_PROVEN if not failed
+                else ENUM_STRENGTH_OPEN, where)
         else:
             add(name, 'literal', 1.0, where)
     if probe and not probe.get('error'):
@@ -1401,7 +1504,7 @@ def channel_sources(facts, probe=None):
         where = value[0] if isinstance(value, tuple) and value else None
         add(name, 'harvested', 0.2, where)
 
-    for item in seen.values():
+    for name, item in seen.items():
         item['sources'] = sorted(item['sources'])
         # 一个名字可能有多个来源，动作按最严格的那个给，别让人猜听谁的
         actions = [ACTION_BY_SOURCE[s] for s in item['sources'] if s in ACTION_BY_SOURCE]
@@ -1422,7 +1525,9 @@ def channel_sources(facts, probe=None):
         item['corroborated'] = item['corroboration'] == 'static_runtime'
         # 「对上」只说明两条路互不依赖，不说明两条路都硬。
         # 把每一侧的硬度也带上，免得一个布尔把差异盖掉。
-        item['strength_by_source'] = {s: SOURCE_STRENGTH.get(s, 0.0) for s in item['sources']}
+        # 实际强度按这一处算：穷举那条同是 enumerated 来源，可能是 0.9 也可能是 0.6。
+        item['strength_by_source'] = {
+            s: actual.get((name, s), SOURCE_STRENGTH.get(s, 0.0)) for s in item['sources']}
         # 最弱可能不止一个，用列表；字段名要是单数，读的人会以为只有一个
         lowest = min(item['strength_by_source'].values())
         item['weakest_sources'] = sorted(s for s, v in item['strength_by_source'].items()
@@ -1430,6 +1535,9 @@ def channel_sources(facts, probe=None):
         item['weakest_strength'] = lowest
         item['independent_pairs'] = ['%s+%s' % (a, b) for a, b in pairs if independent(a, b)]
         item['refutes_if'] = refutes_if(item['sources'])
+        proofs = [enum_proof[key] for key in enum_proof if key[0] == name]
+        if proofs:
+            item['enum_proof'] = proofs[0] if len(proofs) == 1 else proofs
         if item['corroboration'] == 'static_runtime':
             level, basis = corroboration_strength(item.get('where'),
                                                   item.get('runtime_where'))
@@ -1526,7 +1634,7 @@ def sample_sites(facts, limit=2, only_resolved=False, only_enumerated=False):
     有样本才叫「你能查」，没样本就只能「你信我」。
     """
     resolved = set(facts.get('resolved') or ())
-    enumerated = {name for name, _w, _b in (facts.get('enumerated') or ())}
+    enumerated = {item[0] for item in (facts.get('enumerated') or ())}
     candidates = []
     seen = set()
     for name, where in (facts['handlers'] + facts['invokes'] + facts['exposes']):
@@ -1555,7 +1663,7 @@ def confidence_levels(facts, probe=None, poke=None):
     """
     literal = len(facts['handlers']) + len(facts['invokes']) + len(facts['exposes'])
     resolved_names = set(facts.get('resolved') or ())
-    enumerated_sites = {(name, where) for name, where, _b in (facts.get('enumerated') or ())}
+    enumerated_sites = {(item[0], item[1]) for item in (facts.get('enumerated') or ())}
     occurrences = facts['handlers'] + facts['invokes'] + facts['exposes']
     literal_resolved = sum(1 for name, _where in occurrences if name in resolved_names)
     enumerated_count = sum(
@@ -1616,12 +1724,15 @@ def confidence_levels(facts, probe=None, poke=None):
             'count': enumerated_count,
             'samples': sample_sites(facts, limit=2, only_enumerated=True),
             'unit': '条',
-            'strength': 0.75,
-            'can_prove': '取值集合是源码里的字面量数组、拼法是字面量加参数，'
-                         '穷举出来的就是全部可能',
-            'cannot_prove': '证明不了「循环里没人改过这个变量」——静态看不到执行顺序；'
-                            '取值集合一旦来自配置或返回值，这一档就退回「算不出来」',
-            'next_step': '回原文看那个循环和拼装函数；条件对得上就能直接引用这些名字',
+            'strength': ENUM_STRENGTH_PROVEN,
+            'weaker_strength': ENUM_STRENGTH_OPEN,
+            'can_prove': '取值集合是源码里的字面量数组、拼法是字面量加参数，这几条都查过：'
+                         '循环里没改过循环变量、数组没被 push/splice 改过、拼装函数只有一个表达式。'
+                         f'三条全过的强度 {ENUM_STRENGTH_PROVEN}，和「靠还原」同档',
+            'cannot_prove': '查的是「源码里没有那种写法」，不是「运行时一定只取这几个值」；'
+                            f'有一条没过就降到 {ENUM_STRENGTH_OPEN}，名字照给但别当准的用。'
+                            '每条名字的 enum_proof 里写着查了哪几条、哪条没过',
+            'next_step': '看 enum_proof.failed：空的可以直接引用，非空的回原文看那个循环和拼装函数',
         })
 
     if probe and not probe.get('error'):
@@ -1919,7 +2030,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/11',
+        'schema': 'ipcsurface/asar/12',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -1934,7 +2045,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/11',
+        'schema': 'ipcsurface/asar/12',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -3088,7 +3199,7 @@ EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
     'runtime_where', 'corroboration_level', 'corroboration_basis', 'where_all',
-    'refutes_if',
+    'refutes_if', 'enum_proof',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
 
