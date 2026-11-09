@@ -1088,6 +1088,62 @@ def follow_one_hop(body, text, funcs=None):
     return body + '\n' + '\n'.join(pieces), seen
 
 
+def _offset_of(text, line, column):
+    """把「第几行第几列」换成字符偏移。行和列都从 0 起算（REA 的约定）。"""
+    offset = 0
+    for _ in range(line):
+        nxt = text.find('\n', offset)
+        if nxt == -1:
+            return len(text)
+        offset = nxt + 1
+    return min(len(text), offset + column)
+
+
+def capability_from_evidence(result):
+    """有 Evidence 时：用它给的行列回原文切出处理函数体，再判能力。
+
+    REA 的 `ipc-handler` 节点带 `handler_location`（source + start/end 行列），
+    比自己拿括号配对硬切准得多。它不给函数体、也不连边，所以切完还是用同一套
+    API 字样去判——变的只是「切得准」，不是「猜得更狠」。
+    """
+    path = (result or {}).get('input_path')
+    graph = (result or {}).get('graph') or {}
+    if not path or not os.path.exists(path) or not graph.get('nodes'):
+        return {}
+    try:
+        header, files = read_asar(path)
+    except (OSError, ValueError):
+        return {}
+    texts, out = {}, {}
+    try:
+        for node in graph['nodes']:
+            if node.get('kind') != 'ipc-handler':
+                continue
+            for obs in node.get('observations') or []:
+                props = obs.get('properties') or {}
+                name = props.get('channel')
+                where = ((obs.get('evidence') or {}).get('location') or {}).get('value') or {}
+                if not name or where.get('kind') != 'source-range':
+                    continue
+                source = where.get('source')
+                if source not in texts:
+                    blob = files.get(source) if source in files else None
+                    texts[source] = blob.decode('utf-8', 'ignore') if blob else ''
+                text = texts[source]
+                start = _offset_of(text, where['start']['line'], where['start']['column'])
+                end = _offset_of(text, where['end']['line'], where['end']['column'])
+                body = text[start:end] if end > start else None
+                caps, guards, level = describe_capability(body)
+                out[name] = {'apis': caps, 'guards': guards, 'level': level,
+                             'where': f"{source}:{where['start']['line'] + 1}",
+                             'from': 'ast'}
+    except (KeyError, TypeError):
+        return out
+    finally:
+        files.close()
+    return out
+
+
 def detect_obfuscation(blob, rel):
     """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
 
