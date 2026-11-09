@@ -99,10 +99,7 @@ def tainted_names(table, rounds=4):
             break
     # 解构绑出来的名字只在 early 里，得一起交出去；
     # 回调与循环带来的脏名字不在赋值表里，也要并进来
-    base = tainted | early
-    base |= callback_taints(tokens, start, end, base)
-    base |= loop_taints(tokens, start, end, base)
-    return base
+    return tainted
 
 
 def child_process_aliases(tokens):
