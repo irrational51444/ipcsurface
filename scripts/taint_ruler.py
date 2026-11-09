@@ -45,6 +45,29 @@ function writeIt(p) {
   fs.writeFileSync(p, 'x');
 }
 """, 'danger'),
+    ('回调里的形参', """
+function h(event, payload) {
+  return payload.list.map(v => fs.readFileSync(v));
+}
+""", 'danger'),
+    ('模板串拼进命令', """
+function h(event, payload) {
+  const cmd = `ls ${payload.dir}`;
+  execSync(cmd);
+}
+""", 'danger'),
+    ('只校验 path，name 仍进危险调用', """
+function h(event, payload) {
+  if (payload.path !== '/safe') return;
+  fs.readFileSync(payload.name);
+}
+""", 'danger'),
+    ('校验 path 且只用 path', """
+function h(event, payload) {
+  if (payload.path !== '/safe') return;
+  fs.readFileSync(payload.path);
+}
+""", 'clean'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
@@ -61,19 +84,30 @@ function h(event, payload) {
   return { ok: true, size: payload.length };
 }
 """, 'clean'),
-    ('已校验后再用（已知缺口，会误报）', """
+    ('已校验后再用（中和，不该报）', """
 function h(event, payload) {
   if (payload.path !== '/safe') return;
   fs.readFileSync(payload.path);
 }
-""", 'known-gap'),
+""", 'clean'),
 ]
 
 
 def analyse(source):
+    """两种口径都跑：基名污点 + 字段敏感污点，取并集。
+
+    为什么并集：字段敏感是更细的那一层，基名版会把「校验了 path」推广成
+    「整个 payload 都干净」，反而漏报。两条都留着，谁抓到就报——宁可多报也不静默漏。
+    """
     tokens = jsparse.tokenize(source)
     defs = jsparse.function_defs(tokens)
-    return jssem.interprocedural_hits(tokens, defs)
+    hits = dict(jssem.interprocedural_hits(tokens, defs))
+    for item in defs:
+        field = jssem.field_hits(tokens, item['body_start'], item['body_end'],
+                                 item['params'])
+        if field and item['name'] not in hits:
+            hits[item['name']] = field
+    return hits
 
 
 def main():
