@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/13",
+  "schema": "ipcsurface/asar/14",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -233,6 +233,12 @@
       "where_all": [
         "src/app.js:1"
       ],
+      "capability": {
+        "apis": [],
+        "guards": [],
+        "level": "no-capability-seen",
+        "where": "src/app.js:1"
+      },
       "actions": [
         "cite"
       ],
@@ -265,8 +271,8 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.78.0",
-    "schema": "ipcsurface/asar/13",
+    "version": "0.79.0",
+    "schema": "ipcsurface/asar/14",
     "params": {},
     "channels": [
       "a:b"

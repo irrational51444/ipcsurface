@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.78.0'
+__version__ = '0.79.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -984,6 +984,68 @@ def enumerate_computed_names(text, rel):
     return found
 
 
+# 一条通道「能碰到什么」——这是能力面，不是风险评级。
+# 只扫处理函数体内看得见的 API 名和校验字样：
+#   看见 child_process 只说明这里能执行命令，不说明它会被滥用；
+#   看见 senderFrame 只说明有人写了校验，不说明校验有效（门禁存在 ≠ 门后安全）。
+CAPABILITY_PATTERNS = [
+    ('命令执行', re.compile(r'\b(?:child_process|execSync|execFile|execFileSync|spawn|spawnSync)\b')),
+    ('文件写', re.compile(r'\b(?:writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream'
+                        r'|unlink|unlinkSync|rmSync|rename|renameSync|mkdir|mkdirSync)\b')),
+    ('文件读', re.compile(r'\b(?:readFile|readFileSync|readdir|readdirSync|createReadStream'
+                        r'|readJson|readFileSync)\b')),
+    ('网络', re.compile(r'\b(?:fetch|http\.request|https\.request|net\.connect|axios)\b')),
+    ('动态求值', re.compile(r'\b(?:eval|new Function|vm\.runIn)\b')),
+    ('剪贴板', re.compile(r'\b(?:clipboard\.(?:readText|writeText|readImage))\b')),
+]
+GUARD_PATTERNS = [
+    ('来源校验字样', re.compile(r'\b(?:senderFrame|validateSender|checkSender|isTrusted'
+                          r'|sender\.getURL|event\.sender\b)')),
+    ('参数校验字样', re.compile(r'\b(?:typeof\s+\w+|instanceof|Object\.keys\(\w+\)\.length'
+                          r'|Array\.isArray|Number\.isInteger)\b')),
+]
+CAPABILITY_LEVELS = ('high-capability-no-guard-seen', 'high-capability-guard-seen',
+                     'no-capability-seen', 'unknown')
+HIGH_CAPABILITIES = ('命令执行', '文件写', '文件读', '动态求值')
+
+
+def bound_call_args(text, start):
+    """从调用括号往后，取到配对的右括号。取不到返回 None。"""
+    depth, i, limit = 0, start, min(len(text), start + 8000)
+    while i < limit:
+        char = text[i]
+        if char in '\'"`':
+            i = _skip_string(text, i)
+            continue
+        if char in '([{':
+            depth += 1
+        elif char in ')]}':
+            depth -= 1
+            if depth == 0:
+                return text[start + 1:i]
+        i += 1
+    return None
+
+
+def describe_capability(body):
+    """一条处理函数体能碰到什么、有没有看见校验字样。
+
+    返回 (能力列表, 校验列表, 等级)。等级名里带 `seen`——它说的是「看见了什么」，
+    不是「这通道风险高」。看不见处理函数体（压缩成一处、或被拆走）就是 unknown。
+    """
+    if body is None:
+        return [], [], 'unknown'
+    caps = [name for name, pattern in CAPABILITY_PATTERNS if pattern.search(body)]
+    guards = [name for name, pattern in GUARD_PATTERNS if pattern.search(body)]
+    if not caps:
+        return [], guards, 'no-capability-seen'
+    high = [name for name in caps if name in HIGH_CAPABILITIES]
+    if not high:
+        return caps, guards, 'no-capability-seen'
+    return caps, guards, ('high-capability-guard-seen' if guards
+                          else 'high-capability-no-guard-seen')
+
+
 def detect_obfuscation(blob, rel):
     """在字节上找混淆特征。这几条全是 ASCII，不必先解码。
 
@@ -1173,6 +1235,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     dynamic, prefs, preloads = [], {}, []
     obfuscation = []
     resolved = set()   # 靠还原才认出名字的那些，强度低一档
+    capability = {}    # 通道名 → 处理函数体能碰到什么（能力面，不是风险评级）
     enumerated = []    # 穷举出来的名字，(名字, 位置, 依据)
     enumerated_sites = set()
     scanned = 0
@@ -1227,6 +1290,12 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                     if value not in literal_names:
                         resolved.add(value)
                     (handlers if kind == 'handle' else invokes).append((value, where))
+                    if kind == 'handle':
+                        body = bound_call_args(text, text.rfind('(', 0, match.start()) if False else match.start())
+                        caps, guards, level = describe_capability(body)
+                        if caps or level != 'unknown':
+                            capability[value] = {'apis': caps, 'guards': guards,
+                                                   'level': level, 'where': where}
                 elif kind in ('dynamic_handle', 'dynamic_invoke'):
                     if not value.startswith(("'", '"')):
                         dynamic.append((f'{kind.split("_")[1]}: {value}', where))
@@ -1255,6 +1324,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'handlers': sorted(set(handlers)),
         'invokes': sorted(set(invokes)),
         'dynamic': sorted(set(dynamic)),
+        'capability': capability,
         'enumerated': sorted(set(enumerated)),
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
@@ -1617,6 +1687,10 @@ def channel_sources(facts, probe=None):
         add(name, 'harvested', 0.2, where)
         if name in grades:
             seen[name]['harvest_grade'] = grades[name]
+    caps = facts.get('capability') or {}
+    for name, info in caps.items():
+        if name in seen:
+            seen[name]['capability'] = info
 
     for name, item in seen.items():
         item['sources'] = sorted(item['sources'])
@@ -2147,7 +2221,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/13',
+        'schema': 'ipcsurface/asar/14',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -2162,7 +2236,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/13',
+        'schema': 'ipcsurface/asar/14',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2327,6 +2401,31 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             groups[re.split(r'[:/.]', name)[0] or name] += 1
         out.append('按前缀分组：' + '，'.join(f'`{k}` {v} 条' for k, v in
                                             sorted(groups.items(), key=lambda kv: -kv[1])[:8]))
+        out.append('')
+
+    caps = facts.get('capability') or {}
+    if caps:
+        flagged = sorted(name for name, info in caps.items()
+                         if info['level'] == 'high-capability-no-guard-seen')
+        guarded = sorted(name for name, info in caps.items()
+                         if info['level'] == 'high-capability-guard-seen')
+        quiet = len(caps) - len(flagged) - len(guarded)
+        out.append('## 每条通道能碰到什么')
+        out.append('')
+        out.append('这是能力面，不是风险评级：看见 `fs.writeFile` 只说明这里能写文件，'
+                   '不说明它会被滥用；看见 `senderFrame` 只说明有人写了校验，不说明校验有效。')
+        out.append('')
+        out.append(f'- 看见高危能力（命令执行 / 文件读写 / 动态求值）、**没看见**校验字样：{len(flagged)} 条')
+        for name in flagged[:15]:
+            out.append(f"  - `{name}`：{'、'.join(caps[name]['apis'])}  `{caps[name]['where']}`")
+        out.append(f'- 看见高危能力、也看见校验字样：{len(guarded)} 条')
+        for name in guarded[:10]:
+            out.append(f"  - `{name}`：{'、'.join(caps[name]['apis'])} + {'、'.join(caps[name]['guards'])}")
+        out.append(f'- 处理函数体里什么都没看见：{quiet} 条'
+                   '——多半是转发壳，真干活在服务层，字符串级跳不过去')
+        out.append('')
+        out.append('> 只扫注册处那一个函数体，不跟调用链。所以「没看见」不等于「没有」，'
+                   '更别把它读成「这条通道安全」。')
         out.append('')
 
     harvested = facts.get('harvested') or {}
@@ -3331,7 +3430,7 @@ EVIDENCE_FIELDS = {
     'sources', 'strength', 'where', 'actions', 'primary_action',
     'corroboration', 'corroborated', 'independent_pairs',
     'runtime_where', 'corroboration_level', 'corroboration_basis', 'where_all',
-    'refutes_if', 'enum_proof', 'harvest_grade',
+    'refutes_if', 'enum_proof', 'harvest_grade', 'capability',
     'strength_by_source', 'weakest_sources', 'weakest_strength',
 }
 
