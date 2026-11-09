@@ -134,6 +134,24 @@ function h(event, payload) {
   emitter.on('tick', () => fs.readFileSync(payload.path));
 }
 """, 'danger'),
+    ('Set 白名单校验后使用', """
+function h(event, payload) {
+  if (!ALLOWED_SET.has(payload.path)) return;
+  fs.readFileSync(payload.path);
+}
+""", 'clean'),
+    ('正则校验后使用', """
+function h(event, payload) {
+  if (!/^\\/safe\\//.test(payload.path)) return;
+  fs.readFileSync(payload.path);
+}
+""", 'clean'),
+    ('空值合并右侧', """
+function h(event, payload) {
+  const p = payload.path ?? '/tmp/a';
+  fs.readFileSync(p);
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
