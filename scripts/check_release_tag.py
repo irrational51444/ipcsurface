@@ -46,11 +46,20 @@ def evaluate(runs):
 
     区分三件事：
     - 没有任何 check：查不到结果（2），不是红
-    - 有 check 但都不是成功/跳过：红（1）
+    - 有 check 还没跑完（status 不是 completed）：查不到结果（2），不是红
+    - 有 check 跑完了但结论不是成功/跳过：红（1）
     - 全部成功或跳过：绿（0）
+
+    第三和第四条以前会混：`conclusion` 在跑完前是 null，被当成「不是成功」
+    就报红了。刚推完标签去查，必然撞上这个——那不是代码红，是还没跑完。
     """
     if not runs:
         return EXIT_UNKNOWN, '查不到这个提交的 CI 结果（可能还没跑；不是 CI 红）'
+    pending = [r.get('name', '?') for r in runs
+               if r.get('status', 'completed') != 'completed']
+    if pending:
+        return EXIT_UNKNOWN, ('这些检查还没跑完：' + '、'.join(pending)
+                              + '（等它结束再查一次，不是 CI 红）')
     bad = [r.get('name', '?') for r in runs
            if r.get('conclusion') not in ('success', 'skipped')]
     if bad:

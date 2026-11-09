@@ -1,11 +1,11 @@
-# ipcsurface
+﻿# ipcsurface
 
 [![version](docs/badges/version.svg)](https://github.com/irrational51444/ipcsurface/releases)
 [![tests](docs/badges/tests.svg)](tests/test_ipcsurface.py)
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.72.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.73.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -88,7 +88,8 @@ python ipcsurface.py build/static-asar.asar -o report.md
 不是靠形容词，靠六件能被别人自己核对的事：
 
 - **报告自指纹 `content_digest`**：报告正文（去掉时间戳和它自己）的 sha256。谁拿到都能重算——对得上，说明没被改过、也不是别的版本生成的。
-- **包级 Merkle 根 `archive_merkle`**：包内每个文件的 `路径:sha256` 排序聚合，确认「我们说的是同一份包」。它不是安全评级。
+- **包级 Merkle 根 `archive_merkle`**：包内每个文件的 `路径:sha256` 排序聚合，确认「我们说的是同一份包」。
+- **完整性凭证都带 `claim` 字段**：`proves` 是「同一份东西、生成后没被改过」，`does_not_prove` 明写不是 `safety`、不是 `absence_of_backdoor`，`security_rating` 恒为 `false`。以前「这不是安全评级」只写在说明里，现在它是报告里的一格，读的人绕不过去。
 - **输入指纹 `fingerprint`**：输入 sha256 + 版本 + schema + 参数 + 通道名，一起算。同输入重跑必须同值；输入读不到就是 `null`，不编。
 - **每条结论配「推翻它的判据」**：`evidence[*].refutes_if` 写的是「什么观察能驳倒这条」，不是「什么能支持它」。
 - **每层给样本，JSON 给全量**：md 每层抽两条 `名字 @ file:line`（按名字 sha1 选，谁的机器上都一样）；JSON 里 `sites` 给全部位置，`evidence[*].where_all` 给每个名字的所有位置。
@@ -116,7 +117,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 报告「要么完整、要么不动」：先写同目录临时文件、`fsync`、核字节数，再 `os.replace` 原子换上去。任何时刻从约定路径读到的都是完整报告。
 
-- **目录 fsync 失败**不等于写失败，内容已替换，只是崩溃后可能回退。`durable` 是三态：`yes` / `no` / `unknown`；`unknown` 出现在 Windows，退出码仍是 0。
+- **目录 fsync 失败**不等于写失败，内容已替换，只是崩溃后可能回退。`durable` 是三态：`yes` / `no` / `unknown`；`unknown` 只在「这套系统根本没有刷目录的办法」时出现，退出码仍是 0。
 - **替换被占用**报 `replace_failed`，这次的正文留在 `.failed` 里当现场，原报告不动。
 - **崩在中间**会留下 `.bak` / `.failed`，用 `--recover` 看：
 
@@ -136,7 +137,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **226 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **232 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
@@ -145,11 +146,11 @@ python ipcsurface.py --recover out.md
 CI 四个任务，缺一不可：
 
 - `check`（Linux）：装包、造示例包、三道闸
-- `windows`：同一套三道闸，外加 Windows 专属断言（目录 fsync 不可用、`durable` 必须 `unknown`、替换被占用报 `replace_failed`、263 字符长路径写得出来）
+- `windows`：同一套三道闸，外加 Windows 专属断言（目录刷盘走 `FlushFileBuffers` 且 `durable` 必须是 `yes`、替换被占用报 `replace_failed`、263 字符长路径写得出来）
 - `signal`：干净包退 0、有问题的包退 2、SARIF 能上传
 - `e2e`：装成包 → 对可复现靶场跑 → 校准 schema 与口径 → 人工标注对账
 
-发布也不靠记性：`check_release_tag.py` 查标签指向的提交是否 CI 全绿（`0` 绿 / `1` 红 / `2` 查不到），`make_release.py` 先过守卫再发（`3` 是脚本自己出错）。两张脚本自己都有用例。
+发布也不靠记性：`check_release_tag.py` 查标签指向的提交是否 CI 全绿（`0` 绿 / `1` 红 / `2` 查不到，**还没跑完也算查不到**），`make_release.py` 先过守卫再发（`3` 是脚本自己出错）。两张脚本自己都有用例。
 
 ---
 
@@ -163,7 +164,7 @@ CI 四个任务，缺一不可：
 
 - 字符串级粗扫，不建语法树；拼出来的、算出来的名字看不见。要准的走 REA Evidence。
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
-- Windows 上目录 fsync 不可用，`durable` 只能是 `unknown`——由 CI 的 `windows` 任务断言。只读目录仍是盲区。
+- Windows 上目录刷盘用 `ctypes` 调 `FlushFileBuffers`（句柄要带写权限，读权限会被拒）。只读卷和网络盘没实测过——那种情况下报 `durable=no`，不是 `unknown`。
 - `adv-asar.asar` 是对抗样本，没有生成脚本，只在本地有；其余靶场都能由 `examples/build.sh` 重造。
 - 规模与性能的断言跑在可复现的 `realish.asar`（3042 个文件、12 条通道、< 8 秒）上，**不是**作者本机那个 441 MB 的应用——后者仍只在本机验。
 

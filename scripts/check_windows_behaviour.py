@@ -25,11 +25,15 @@ if os.name != 'nt':
 workdir = tempfile.mkdtemp()
 target = os.path.join(workdir, 'report.md')
 
-# 1) 目录 fsync 在这套系统上不可用：durable 必须是 unknown，不能报 yes
+# 1) 目录 fsync 现在真的走 FlushFileBuffers：成功就该报 OK / durable=yes，
+#    不能再拿「这套系统没有这个能力」当挡箭牌
+fsync_state = t._fsync_dir(workdir)
+check('目录 fsync 报 OK', fsync_state is t.FsyncResult.OK, repr(fsync_state))
 result = t.write_output(target, 'x\n')
-check('目录 fsync 报 UNSUPPORTED', t._fsync_dir(workdir) is t.FsyncResult.UNSUPPORTED)
-check('durable 是 unknown，不是 yes',
-      result.durable == t.DURABLE_UNKNOWN, result.durable)
+check('durable 是 yes', result.durable == t.DURABLE_YES, result.durable)
+# 刷一个不存在的目录：有能力但没刷成，必须是 FAILED，不能退化成 UNSUPPORTED
+missing = os.path.join(workdir, 'no-such-dir')
+check('不存在的目录报 FAILED', t._fsync_dir(missing) is t.FsyncResult.FAILED)
 
 # 2) 符号链接路径：建不了链接时跳过，能建就必须拒绝写
 link = os.path.join(workdir, 'link.md')

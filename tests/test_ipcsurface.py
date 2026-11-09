@@ -1194,6 +1194,24 @@ class OutputSideTests(unittest.TestCase):
         # empty-allowed: 验的是状态与警告，不涉及集合
         self.assertTrue(any('fsync' in note for note in result.warnings), '这个状态必须能被观察到')
 
+    def test_rule_real_dir_fsync_succeeds_on_this_platform(self):
+        """真刷一次，不 mock。
+
+        以前 Windows 上这里恒 UNSUPPORTED，durable 只能 unknown。现在两个平台
+        都走真刷盘：内核明确回了成功，就不该继续报「这套系统没有这个能力」。
+        """
+        self.assertIs(ipc._fsync_dir(self.dir), ipc.FsyncResult.OK)
+        result = ipc.write_output(self.path, '新的\n')
+        self.assertEqual(result.durable, ipc.DURABLE_YES)
+
+    def test_rule_missing_dir_is_failed_not_unsupported(self):
+        """目录不存在是「有这能力但没刷成」，不是「没这能力」。
+
+        这两件事下游要分开处理：FAILED 会让 durable=no，UNSUPPORTED 只报 unknown。
+        """
+        missing = os.path.join(self.dir, 'no-such-dir')
+        self.assertIs(ipc._fsync_dir(missing), ipc.FsyncResult.FAILED)
+
     def test_rule_replace_failure_keeps_the_intended_content(self):
         ipc.write_output(self.path, '旧的\n')
         target = os.path.abspath(self.path)
@@ -1354,11 +1372,26 @@ class ReleaseGuardTests(unittest.TestCase):
         self.assertEqual(self.guard.evaluate(runs)[0], self.guard.EXIT_OK)
 
     def test_rule_release_guard_red_exits_one(self):
-        runs = [{'name': 'check', 'conclusion': 'success'},
-                {'name': 'windows', 'conclusion': 'failure'}]
+        runs = [{'name': 'check', 'status': 'completed', 'conclusion': 'success'},
+                {'name': 'windows', 'status': 'completed', 'conclusion': 'failure'}]
         code, why = self.guard.evaluate(runs)
         self.assertEqual(code, self.guard.EXIT_RED)
         self.assertIn('windows', why)
+
+    def test_rule_release_guard_in_progress_is_unknown_not_red(self):
+        # 真踩到的：刚推完标签就去查，check/windows 还是 in_progress，
+        # conclusion 是 None，被当成「不是成功」报成 CI 红。
+        # 没结论就是没结论，那是 2，不是 1。
+        runs = [{'name': 'check', 'status': 'in_progress', 'conclusion': None},
+                {'name': 'windows', 'status': 'in_progress', 'conclusion': None},
+                {'name': 'e2e', 'status': 'completed', 'conclusion': 'success'}]
+        code, why = self.guard.evaluate(runs)
+        self.assertEqual(code, self.guard.EXIT_UNKNOWN, why)
+        self.assertIn('还没跑完', why)
+        self.assertNotIn('不是绿', why)
+        # 排队的也算没跑完
+        queued = [{'name': 'check', 'status': 'queued', 'conclusion': None}]
+        self.assertEqual(self.guard.evaluate(queued)[0], self.guard.EXIT_UNKNOWN)
 
     def test_rule_release_guard_unknown_exits_two(self):
         # 三种「没拿到结果」都要归 2，不能归 1
@@ -1722,6 +1755,41 @@ class ReportContractTests(unittest.TestCase):
         report['durable'] = 'yes'
         extra, _missing = ipc.check_report_keys(report)
         self.assertEqual(extra, ['durable'])
+
+    def test_rule_whitelist_has_no_duplicate_entries(self):
+        """frozenset 会悄悄吃掉重复项，所以另留一份有序清单来盯。
+
+        真发生过：'sites'、'archive_merkle'、'content_digest' 各写了两遍，
+        白名单照样能过，谁也没发现。
+        """
+        listed = list(ipc.REPORT_TOP_LEVEL_KEY_LIST)
+        repeated = sorted({k for k in listed if listed.count(k) > 1})
+        self.assertEqual(repeated, [], f'白名单里重复登记了：{repeated}')
+
+    def test_rule_integrity_claim_says_not_a_security_rating(self):
+        """「Merkle 根不是安全评级」得是字段，不能只是文档里的一句话。"""
+        report = self.build()
+        claim = report['content_digest']['claim']
+        self.assertIs(claim['security_rating'], False,
+                      '完整性凭证不能被读成安全评级，这个值必须是 False')
+        self.assertIn('identity', claim['proves'])
+        self.assertIn('safety', claim['does_not_prove'])
+        # 包级 Merkle 根也得带同一份声明
+        merkle = ipc.archive_merkle({'a.js': b'x'})
+        self.assertEqual(merkle['claim'], claim, '两份凭证的声明必须是同一份，不能各写一套')
+
+    def test_rule_no_safety_verdict_field_anywhere(self):
+        """报告里不许出现安全性结论字段——包括长得像结论的。"""
+        report = self.build()
+        banned = {'safe', 'verdict', 'risk', 'risk_level', 'clean', 'malware',
+                  'security_rating', 'trusted'}
+        found = sorted(banned & set(report))
+        self.assertEqual(found, [], f'报告顶层出现了安全性结论字段：{found}')
+        for section in ('content_digest', 'archive_merkle'):
+            body = report.get(section)
+            if isinstance(body, dict):
+                self.assertEqual(sorted(banned & set(body)), [],
+                                 f'{section} 里出现了安全性结论字段')
 
 
 class GuardTests(unittest.TestCase):

@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.72.0'
+__version__ = '0.73.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -1508,6 +1508,17 @@ def render_baseline(delta):
     return out
 
 
+# 完整性凭证能证明什么、不能证明什么——写成字段，不再只是文档里的一句话。
+# 以前「Merkle 根不是安全评级」只活在 README 和代码注释里，谁都能顺手把它
+# 读成「这包干净」。现在它跟着凭证一起出现在报告里，读的人绕不过去。
+INTEGRITY_CLAIM = {
+    'proves': ['identity', 'unchanged_since_digest'],
+    'does_not_prove': ['safety', 'absence_of_backdoor', 'behaviour_reviewed'],
+    'security_rating': False,
+    'read_as': '能对上只说明是同一份东西、生成后没被改过；不说明这包安全',
+}
+
+
 def archive_merkle(files):
     """包内文件的 Merkle 根：路径 + 每个文件内容的 sha256，按路径排序后聚合。
 
@@ -1519,7 +1530,8 @@ def archive_merkle(files):
         entries.append(f'{name}:{digest}')
     blob = '\n'.join(entries).encode('utf-8')
     return {'files': len(entries), 'root': hashlib.sha256(blob).hexdigest(),
-            'algorithm': 'sha256(sorted(path:sha256) joined by newline)'}
+            'algorithm': 'sha256(sorted(path:sha256) joined by newline)',
+            'claim': dict(INTEGRITY_CLAIM)}
 
 
 def content_digest(report):
@@ -1536,7 +1548,8 @@ def content_digest(report):
     blob = json.dumps(body, ensure_ascii=False, sort_keys=True,
                       separators=(',', ':')).encode('utf-8')
     return {'algorithm': 'sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)',
-            'digest': hashlib.sha256(blob).hexdigest()}
+            'digest': hashlib.sha256(blob).hexdigest(),
+            'claim': dict(INTEGRITY_CLAIM)}
 
 
 def input_sha256(path):
@@ -1836,17 +1849,18 @@ def loc(evidence):
     return '?'
 
 
-# 输入的坏法是有类别的，不只是「读不动」。
-# 下游要决定「重试还是放弃」，得看类别，不能去解析中文文案。
 # 报告 JSON 的顶层键白名单。多一个键就红——「别把 durable 写进报告」这条
 # 纪律不能只写在 README 里，得有个东西替我们盯着。
-REPORT_TOP_LEVEL_KEYS = frozenset({
+# 先留一份有序的清单再转 frozenset：frozenset 会把重复项吃掉，之前白名单里
+# 'sites'/'archive_merkle'/'content_digest' 就各写了两遍，谁也没发现。
+REPORT_TOP_LEVEL_KEY_LIST = (
     'schema', 'version', 'mode', 'subject', 'files', 'bytes',
     'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
-    'fingerprint', 'sites', 'archive_merkle', 'content_digest','sites', 'archive_merkle', 'content_digest',
-})
+    'fingerprint', 'sites', 'archive_merkle', 'content_digest',
+)
+REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
 
 def numbered_sections(headings):
@@ -1970,13 +1984,103 @@ class FsyncResult(enum.Enum):
     """目录刷盘这件事，有三种可能，不是两种。"""
 
     OK = 'ok'
-    UNSUPPORTED = 'unsupported'   # 这套系统没有这个能力（Windows）
+    UNSUPPORTED = 'unsupported'   # 这个内核根本没这条路（拿不到刷新目录的办法）
     FAILED = 'failed'
 
 
 DURABLE_YES = 'yes'
 DURABLE_NO = 'no'
 DURABLE_UNKNOWN = 'unknown'
+
+
+# Windows 不给目录开普通文件句柄，但带 FILE_FLAG_BACKUP_SEMANTICS 能拿到目录句柄，
+# FlushFileBuffers 接受目录句柄。这是 Win32 自己的语义，不需要装 pywin32——
+# ctypes 就在标准库里。以前这里直接返回 UNSUPPORTED，等于把一个能做到的事
+# 记成「这套系统没有这个能力」，让 durable 永远停在 unknown。
+_WIN_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+# 开目录句柄要 GENERIC_WRITE，不是 GENERIC_READ：FlushFileBuffers 要求句柄带写权限，
+# 拿读权限去刷会被直接拒（实测 ERROR_ACCESS_DENIED = 5，不是刷不动，是不许你刷）。
+# 能有这权限是因为同一目录里刚建过临时文件——没这个权限的目录，写那一步就已经失败了。
+_WIN_GENERIC_WRITE = 0x40000000
+_WIN_SHARE_ALL = 0x00000001 | 0x00000002 | 0x00000004
+_WIN_OPEN_EXISTING = 3
+_win_fsync_api = None
+
+
+def _windows_dir_flusher():
+    """取出 kernel32 里的三个函数，取不到就返回 None（那才是真的 UNSUPPORTED）。"""
+    global _win_fsync_api
+    if _win_fsync_api is not None:
+        return _win_fsync_api or None
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except (ImportError, ValueError):     # 标准库里没有 ctypes
+        _win_fsync_api = False
+        return None
+    try:
+        kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        create, flush, close = (kernel32.CreateFileW,
+                                kernel32.FlushFileBuffers,
+                                kernel32.CloseHandle)
+    except (AttributeError, OSError):     # 不是 NT 内核
+        _win_fsync_api = False
+        return None
+
+    create.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD,
+                       wintypes.HANDLE]
+    create.restype = wintypes.HANDLE
+    flush.argtypes = [wintypes.HANDLE]
+    flush.restype = wintypes.BOOL
+    close.argtypes = [wintypes.HANDLE]
+    close.restype = wintypes.BOOL
+
+    _win_fsync_api = (create, flush, close, ctypes.c_void_p(-1).value)
+    return _win_fsync_api
+
+
+def _fsync_dir_windows(directory):
+    """Windows 上刷目录。返回 FsyncResult。
+
+    OK 只说明内核收下了这批目录元数据——硬件缓存、磁盘自己的写缓存都不在
+    承诺里；POSIX 上的 fsync 也只管到这一层，两边的保证同宽，所以这里
+    敢报 yes。
+    """
+    api = _windows_dir_flusher()
+    if api is None:
+        return FsyncResult.UNSUPPORTED
+    create, flush, close, invalid = api
+    handle = create(directory, _WIN_GENERIC_WRITE, _WIN_SHARE_ALL, None,
+                    _WIN_OPEN_EXISTING, _WIN_FILE_FLAG_BACKUP_SEMANTICS, None)
+    if not handle or handle == invalid:
+        # 句柄开不出来（权限、只读卷、被占用）：有能力但没成，不是没有能力。
+        return FsyncResult.FAILED
+    try:
+        return FsyncResult.OK if flush(handle) else FsyncResult.FAILED
+    finally:
+        close(handle)
+
+
+def _fsync_dir(directory):
+    """替换之后刷一次目录，让 rename 真正落到盘上。返回 FsyncResult。
+
+    UNSUPPORTED 不等于 FAILED：前者是「这套系统没这个能力」，后者是「有这能力但没成功」。
+    混成一个 None/falsy，调用方迟早把未知当失败，或者把未知当成功。
+    """
+    if os.name == 'nt':
+        return _fsync_dir_windows(directory)
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except OSError:
+        return FsyncResult.FAILED
+    try:
+        os.fsync(fd)
+        return FsyncResult.OK
+    except OSError:
+        return FsyncResult.FAILED
+    finally:
+        os.close(fd)
 
 
 class WriteResult:
@@ -1998,27 +2102,6 @@ class WriteResult:
 
     def __repr__(self):
         return f'WriteResult(path={self.path!r}, durable={self.durable!r}, warnings={self.warnings})'
-
-
-def _fsync_dir(directory):
-    """替换之后刷一次目录，让 rename 真正落到盘上。返回 FsyncResult。
-
-    UNSUPPORTED 不等于 FAILED：前者是「这套系统没这个能力」，后者是「有这能力但没成功」。
-    混成一个 None/falsy，调用方迟早把未知当失败，或者把未知当成功。
-    """
-    if os.name == 'nt':
-        return FsyncResult.UNSUPPORTED
-    try:
-        fd = os.open(directory, os.O_RDONLY)
-    except OSError:
-        return FsyncResult.FAILED
-    try:
-        os.fsync(fd)
-        return FsyncResult.OK
-    except OSError:
-        return FsyncResult.FAILED
-    finally:
-        os.close(fd)
 
 
 def _backup_stamp(name):
@@ -2326,9 +2409,9 @@ def write_output(path, text, expect_json=False):
             durable = DURABLE_NO
             warnings.append('内容已经替换，但目录 fsync 没成功：崩溃后这份报告可能回退到旧版。')
         elif fsync_state is FsyncResult.UNSUPPORTED:
-            # 这套系统没法确认是不是落盘了。报 unknown：不阻塞，也不冒充知道。
+            # 这台机器上根本没有刷目录的办法。报 unknown：不阻塞，也不冒充知道。
             durable = DURABLE_UNKNOWN
-            warnings.append('本平台不支持刷目录，无法确认持久性：文件已是新版，'
+            warnings.append('这台机器上拿不到刷目录的办法，无法确认持久性：文件已是新版，'
                             '崩溃后是否回退取决于文件系统。')
 
         else:
@@ -2336,7 +2419,7 @@ def write_output(path, text, expect_json=False):
 
         if os.name == 'nt' and not _windows_hint_shown:
             globals()['_windows_hint_shown'] = True
-            warnings.append('Windows 上还有一条路径未经验证：只读目录；'
+            warnings.append('Windows 上目录刷盘走 FlushFileBuffers；只读卷和网络盘没实测过，'
                             '真踩到问题请按 replace_failed 的提示处理。')
     except OutputError:
         raise

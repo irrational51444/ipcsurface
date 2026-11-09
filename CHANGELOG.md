@@ -2,6 +2,20 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.73.0 — 2026-11-09
+
+有人把四条已知边界摆在我面前问「哪条能优化」。查了代码：两条是真限制，两条是我自己偷懒记成限制的。这一版补那两条。
+
+1. **完整性凭证带 `claim` 字段**：`content_digest` 和 `archive_merkle` 现在都带 `proves` / `does_not_prove` / `security_rating: false`。「Merkle 根不是安全评级」以前只写在 README 和注释里，谁都能顺手把这包读成「干净」；现在它是报告里的一格，读的人绕不过去。加了两条用例：`security_rating` 必须是 `false`（不是 `0`、不是缺省），两份凭证的声明必须是同一份（不许各写一套）。
+2. **Windows 上目录刷盘真做了**：以前 `os.name == 'nt'` 直接返回 `UNSUPPORTED`，于是 `durable` 永远是 `unknown`，文档还把这句写进「已知边界」。现在用 `ctypes` 调 `CreateFileW`（带 `FILE_FLAG_BACKUP_SEMANTICS`）拿目录句柄再 `FlushFileBuffers`，零依赖，标准库够。
+   **实测踩到的坑写进注释了**：句柄必须是 `GENERIC_WRITE`，用 `GENERIC_READ` 会被拒，`GetLastError` 是 5（`ERROR_ACCESS_DENIED`）——那不是「刷不动」，是「不许你刷」。照抄别人的片段很容易踩这个，然后得出「Windows 做不到」的错误结论。
+3. **`durable` 三态的含义变了，文档全部跟着改**：`unknown` 不再是「Windows 就是 unknown」，而是「这台机器上根本没有刷目录的办法」（拿不到 `kernel32` 才算）。没刷成（目录不存在、开不了句柄）是 `FAILED` → `durable=no`，两者在退出码上分得开。CI 的 `windows` 断言从「必须 `unknown`」改成「必须 `yes`」，还加了一条「不存在的目录必须是 `FAILED` 而不是 `UNSUPPORTED`」。
+4. **白名单里重复登记，谁也没发现**：`REPORT_TOP_LEVEL_KEYS` 是 `frozenset`，`'sites'`、`'archive_merkle'`、`'content_digest'` 各写了两遍，集合照样能过。改成先留一份有序清单 `REPORT_TOP_LEVEL_KEY_LIST` 再转 `frozenset`，加一条「清单里不许有重复项」的用例。
+5. **发布守卫把「还没跑完」当成 CI 红**：这一版自己撞上的。刚推完标签就去查，`check` / `windows` 还是 `in_progress`、`conclusion` 是 `null`，`evaluate()` 把它归进「不是成功」→ 退 `1`（红）。没结论就是没结论，该退 `2`。现在按 `status != completed` 先分出去，`queued` 也一样；加了用例，并写清「刚推完查不到是正常的，等一会儿再查」。
+6. 顺手删了一处贴错位置的孤儿注释（「输入的坏法是有类别的…」），它挂在白名单上方，讲的是别的事；同一份内容规则表里已经有。
+
+**这一版还是那句话**：静态那道边界（拼出来的名字看不见）和运行时位置那道（探针不报位置就算不出交叉强度）是真限制，不装作能填。
+
 ## 0.72.0 — 2026-11-09
 
 README 全面重写，先真跑，再动笔。要求跟上次一样：真实案例、图、中英双语。

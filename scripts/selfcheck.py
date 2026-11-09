@@ -328,12 +328,13 @@ def check_output_side(ok):
         ok &= check('正常写得出完整报告', os.path.getsize(target) > 0)
         ok &= check('写完不留临时文件或副本',
                     [n for n in os.listdir(folder) if n != 'r.md'] == [])
-        # Windows 上「不支持刷目录」不算失败：durable 为真、不报警；POSIX 上必须真持久化
+        # 两个平台现在都真刷目录：成功的定义一样，durable 必须真的是 yes，
+        # 不能再靠「Windows 没这能力」把 unknown 说成不算失败
+        ok &= check('写成功即持久化（durable=yes）',
+                    result.durable == t.DURABLE_YES, result.durable)
         if os.name == 'nt':
-            ok &= check('Windows 上不支持刷目录不算失败', bool(result.durable))
-            ok &= check('Windows 上不拿这条刷警告', not any('fsync' in w for w in result.warnings))
-        else:
-            ok &= check('POSIX 上写成功即持久化', bool(result.durable))
+            ok &= check('Windows 上目录刷盘真的做了',
+                        t._fsync_dir(folder) is t.FsyncResult.OK)
         for kind in ('disk_full', 'permission_denied', 'short_write',
                      'replace_failed', 'symlink_target', 'write_failed'):
             ok &= check(f'输出错误类别 {kind} 登记了', kind in t.OUTPUT_ERROR_KINDS)

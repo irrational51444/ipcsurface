@@ -1,11 +1,11 @@
-# ipcsurface
+﻿# ipcsurface
 
 [![version](docs/badges/version.svg)](https://github.com/irrational51444/ipcsurface/releases)
 [![tests](docs/badges/tests.svg)](tests/test_ipcsurface.py)
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.72.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.73.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -87,7 +87,8 @@ python ipcsurface.py build/static-asar.asar -o report.md
 Six things someone else can verify without trusting the author:
 
 - **`content_digest`** — sha256 of the report body (minus timestamp and itself). Recompute it; a match means the report was not edited and came from this version.
-- **`archive_merkle`** — per-file `path:sha256`, sorted and aggregated, so two parties can agree they analysed the same archive. Not a security rating.
+- **`archive_merkle`** — per-file `path:sha256`, sorted and aggregated, so two parties can agree they analysed the same archive.
+- **Both integrity digests carry a `claim` block** — `proves` is "same thing, unchanged since the digest"; `does_not_prove` says outright not `safety`, not `absence_of_backdoor`; `security_rating` is `false`. "This is not a security rating" used to live only in prose; now it is a field, and readers cannot walk past it.
 - **`fingerprint`** — input sha256 + version + schema + params + channel names. Same input must give the same value; unreadable input stays `null`.
 - **`refutes_if`** — per channel, what observation would prove the conclusion wrong, not what supports it.
 - **Samples** — md shows two per tier, picked by name sha1 so everyone sees the same two; JSON carries `sites` (all positions) and `evidence[*].where_all`.
@@ -115,7 +116,7 @@ The release scripts use their own set: `0` ok, `1` guard red or release exists, 
 
 Reports are all-or-nothing: temp file in the same directory, `fsync`, byte check, then `os.replace`. What you read at the agreed path is always a complete report.
 
-- Directory fsync failure is not a write failure; `durable` is tri-state (`yes` / `no` / `unknown`), `unknown` on Windows, exit 0.
+- Directory fsync failure is not a write failure; `durable` is tri-state (`yes` / `no` / `unknown`). `unknown` appears only when the platform has no way to flush a directory at all; exit 0.
 - Replace-under-lock reports `replace_failed`, keeps the payload in `.failed`, leaves the old report alone.
 - Leftovers from a crash are inspected with `python ipcsurface.py --recover out.md`, which reports facts only: no automatic restore. When the target is missing the comparison table degrades into a copy list rather than a half table.
 - The "over a year" threshold for clock-forward is a heuristic; normal old files land there too.
@@ -130,7 +131,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **226 test cases**, standard library only
+- **232 test cases**, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **End to end**: `python scripts/e2e_check.py` — installed CLI, schema, md/json agreement, exit codes, determinism, ground-truth scoring
 - **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list
@@ -138,7 +139,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 CI runs four jobs: `check` (Linux), `windows` (same gates plus Windows-specific assertions), `signal` (exit-code contract and SARIF), `e2e` (install and reconcile).
 
-Releases are scripted: `check_release_tag.py` verifies the tagged commit is CI-green (`0` green / `1` red / `2` unknown) and `make_release.py` publishes only after the guard passes (`3` means the script itself failed). Both scripts have their own tests.
+Releases are scripted: `check_release_tag.py` verifies the tagged commit is CI-green (`0` green / `1` red / `2` unknown — **checks still running count as unknown**) and `make_release.py` publishes only after the guard passes (`3` means the script itself failed). Both scripts have their own tests.
 
 ---
 
@@ -152,7 +153,7 @@ The list has mechanical lower bounds (fixed columns, at least eight symptoms, ve
 
 - String-level scan, no syntax tree; concatenated or computed names stay invisible. Use REA Evidence for precision.
 - Sandboxes, native modules, runtime-wired channels are invisible statically.
-- Windows directory fsync is unavailable, `durable` can only be `unknown` — asserted by the `windows` job. Read-only volumes remain untested.
+- Windows directory flush goes through `ctypes` + `FlushFileBuffers` (the handle needs write access; read-only handles are refused). Read-only volumes and network shares are untested — there it reports `durable=no`, not `unknown`.
 - `adv-asar.asar` is a hand-made adversarial fixture with no build script; every other fixture is reproducible.
 - Scale and performance assertions run on the reproducible `realish.asar` (3042 files, 12 channels, < 8 s), not on the author's 441 MB app.
 

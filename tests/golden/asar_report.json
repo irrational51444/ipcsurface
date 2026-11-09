@@ -253,7 +253,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.72.0",
+    "version": "0.73.0",
     "schema": "ipcsurface/asar/10",
     "params": {},
     "channels": [
@@ -270,6 +270,19 @@
   "archive_merkle": null,
   "content_digest": {
     "algorithm": "sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)",
-    "digest": "<content-digest>"
+    "digest": "<content-digest>",
+    "claim": {
+      "proves": [
+        "identity",
+        "unchanged_since_digest"
+      ],
+      "does_not_prove": [
+        "safety",
+        "absence_of_backdoor",
+        "behaviour_reviewed"
+      ],
+      "security_rating": false,
+      "read_as": "能对上只说明是同一份东西、生成后没被改过；不说明这包安全"
+    }
   }
 }
