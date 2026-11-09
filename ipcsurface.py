@@ -2415,6 +2415,25 @@ def fingerprint_of(target, channel_names, params=None):
 
 
 
+
+DANGER_KIND_MAP = {
+    '文件写': ('writeFile', 'writeFileSync', 'appendFile', 'appendFileSync',
+             'createWriteStream', 'unlink', 'unlinkSync', 'rmSync', 'rename', 'renameSync'),
+    '文件读': ('readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync'),
+    '命令执行': ('exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync'),
+    '网络': ('fetch', 'request'),
+    '动态求值': ('eval', 'Function'),
+}
+
+
+def danger_kind_of(api):
+    """这个危险 API 属于哪一类。读文件和执行命令不是一回事，混着说等于没说。"""
+    for kind, names in DANGER_KIND_MAP.items():
+        if api in names:
+            return kind
+    return '其它'
+
+
 def channel_sinks_map(files, main_rel=None):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一跳。
 
@@ -2678,6 +2697,25 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('> 只扫注册处那一个函数体，不跟调用链。所以「没看见」不等于「没有」，'
                    '更别把它读成「这条通道安全」。')
         out.append('')
+
+    # 跟了调用链之后的结果（词法+调用图，含跨文件一到两跳）。
+    # 和上面那节口径不同：上面是字符串级只看注册函数体，这里是真跟到函数和图里。
+    sinks = facts.get('channel_sinks')
+    if sinks is not None:
+        hit = {name: apis for name, apis in sinks.items() if apis}
+        out.append('## 跟了调用链之后')
+        out.append('')
+        out.append(f'顺着处理函数往下走（含同文件调用链和跨文件一跳、两跳），{len(hit)} 条通道能碰到危险 API。')
+        for name in sorted(hit):
+            kinds = sorted({danger_kind_of(api) for api in hit[name]})
+            out.append(f"  - `{name}`：{'、'.join(sorted(hit[name]))}（{'、'.join(kinds)}）")
+        if not hit:
+            out.append('  - 一条都没有。这不等于干净：可能是转发壳，也可能名字是拼出来的。')
+        out.append('')
+        out.append('> 这条只说明「能碰到」，不说明「能被滥用」。参数从哪来、校验拦不拦得住，'
+                   '要另一套分析，本报告不下结论。')
+        out.append('')
+
 
     harvested = facts.get('harvested') or {}
     if harvested:
