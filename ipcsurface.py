@@ -2491,15 +2491,20 @@ def count_unattributed(files, max_files=12):
         return 0
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
     total = 0
+    samples = []
     for rel in with_ipc[:max_files]:
         text = files[rel].decode('utf-8', 'ignore')
         try:
             tokens = jsparse.tokenize(text)
             objects = parse_object_literals(text)
-            total += jsparse.unattributed_registrations(tokens, objects)
+            found = jsparse.unattributed_registrations(tokens, objects)
         except Exception:
             continue
-    return total
+        total += len(found)
+        for line, expr in found:
+            if len(samples) < 8:
+                samples.append(f'{rel}:{line} {expr}')
+    return {'count': total, 'samples': samples}
 
 
 def channel_sinks_map(files, main_rel=None, max_files=12):
@@ -2614,6 +2619,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sinks': facts.get('channel_sinks'),
         # 名字没解出来的注册点数：这是空档，不是零
         'channel_unattributed': facts.get('channel_unattributed'),
+        # 卡在什么形状上：几行样例，够人判断该不该往下钻
+        'channel_unattributed_samples': facts.get('channel_unattributed_samples'),
     }
     # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
     # 不会出现「漏了这个键」的两种形态。
@@ -2927,7 +2934,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks', 'channel_unattributed',
+    'channel_sinks', 'channel_unattributed', 'channel_unattributed_samples',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
@@ -4448,7 +4455,9 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
         facts['channel_sinks'] = channel_sinks_map(files)
-        facts['channel_unattributed'] = count_unattributed(files)
+        unattr = count_unattributed(files)
+        facts['channel_unattributed'] = None if unattr is None else unattr['count']
+        facts['channel_unattributed_samples'] = None if unattr is None else unattr['samples']
         total = files.total_bytes()
         return facts, len(files), total
     finally:

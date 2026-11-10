@@ -379,14 +379,14 @@ def _string_of(token):
 
 
 
-def unattributed_registrations(tokens, objects=None):
-    """数一数「注册了但名字不是字面量、我也解不出来」的注册点。
+def unattributed_registrations(tokens, objects=None, samples=20):
+    """列出「注册了但名字不是字面量、也解不出来」的注册点。
 
-    这不算失败，是个必须报出来的空档：抖音桌面端就是这样，
-    `ipcMain.handle(x.channel, …)` 的名字在运行时才成形，静态拿不到。
-    有数字，读报告的人才知道「41 条」是全部还是残的。
+    不只是个数：把卡住的那串表达式也带回来（this.channel、e.type…），
+    这样报告能说「卡在什么形状上」，而不是只有一句「还有一些」。
+    返回 [(行号, 表达式文本)]，最多 samples 条；总条数由调用方按 len 统计。
     """
-    count = 0
+    out = []
     for i, tok in enumerate(tokens):
         if tok.text not in ('handle', 'handleOnce', 'on', 'once', 'send', 'invoke'):
             continue
@@ -399,16 +399,32 @@ def unattributed_registrations(tokens, objects=None):
         first = tokens[i + 2]
         if first.kind == 'string':
             continue
-        # obj.KEY 这种能从常量对象表解出来的，不算归不到
         resolved = False
         if first.kind == 'ident' and i + 4 < len(tokens) and tokens[i + 3].text in ('.', '?.'):
             owner, key = first.text, tokens[i + 4].text
             if objects and key in (objects.get(owner) or {}):
                 resolved = True
-        if not resolved:
-            count += 1
-    return count
-
+        if resolved:
+            continue
+        # 取到第一个逗号为止，当作卡住的那段表达式
+        expr = []
+        depth = 0
+        j = i + 2
+        while j < len(tokens):
+            text = tokens[j].text
+            if text in ('(', '[', '{'):
+                depth += 1
+            elif text in (')', ']', '}'):
+                if depth == 0:
+                    break
+                depth -= 1
+            elif text == ',' and depth == 0:
+                break
+            expr.append(text)
+            j += 1
+        if len(out) < samples:
+            out.append((tok.line + 1, ''.join(expr)))
+    return out
 
 def ipc_registrations(tokens, objects=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
