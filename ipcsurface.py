@@ -2476,6 +2476,32 @@ def pick_main_js(files):
     return sorted(candidates, key=score)[0]
 
 
+
+def count_unattributed(files, max_files=12):
+    """整个包里有多少注册点的通道名我没解出来。数字，不是形容。"""
+    try:
+        import jsparse
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    if not names:
+        return None
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return 0
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    total = 0
+    for rel in with_ipc[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+            objects = parse_object_literals(text)
+            total += jsparse.unattributed_registrations(tokens, objects)
+        except Exception:
+            continue
+    return total
+
+
 def channel_sinks_map(files, main_rel=None, max_files=12):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
 
@@ -2586,6 +2612,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'archive_merkle': merkle,
         # 每条通道能碰到什么；没算出来就是 null，不用空字典冒充「都没有」。
         'channel_sinks': facts.get('channel_sinks'),
+        # 名字没解出来的注册点数：这是空档，不是零
+        'channel_unattributed': facts.get('channel_unattributed'),
     }
     # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
     # 不会出现「漏了这个键」的两种形态。
@@ -2749,6 +2777,12 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                    '更别把它读成「这条通道安全」。')
         out.append('')
 
+    unattributed = facts.get('channel_unattributed')
+    if unattributed:
+        out.append(f'- 还有 **{unattributed} 处注册点**的名字是运行时才成形的，静态解不出来——'
+                   '这些通道没进上面的清单，别把上面的数当全集。')
+        out.append('')
+
     # 跟了调用链之后的结果（词法+调用图，含跨文件一到两跳）。
     # 和上面那节口径不同：上面是字符串级只看注册函数体，这里是真跟到函数和图里。
     sinks = facts.get('channel_sinks')
@@ -2893,7 +2927,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks',
+    'channel_sinks', 'channel_unattributed',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
@@ -4414,6 +4448,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
         facts['channel_sinks'] = channel_sinks_map(files)
+        facts['channel_unattributed'] = count_unattributed(files)
         total = files.total_bytes()
         return facts, len(files), total
     finally:

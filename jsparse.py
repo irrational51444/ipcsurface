@@ -378,6 +378,38 @@ def _string_of(token):
     return body.encode('utf-8').decode('unicode_escape') if '\\' in body else body
 
 
+
+def unattributed_registrations(tokens, objects=None):
+    """数一数「注册了但名字不是字面量、我也解不出来」的注册点。
+
+    这不算失败，是个必须报出来的空档：抖音桌面端就是这样，
+    `ipcMain.handle(x.channel, …)` 的名字在运行时才成形，静态拿不到。
+    有数字，读报告的人才知道「41 条」是全部还是残的。
+    """
+    count = 0
+    for i, tok in enumerate(tokens):
+        if tok.text not in ('handle', 'handleOnce', 'on', 'once', 'send', 'invoke'):
+            continue
+        if i < 2 or tokens[i - 1].text not in ('.', '?.'):
+            continue
+        if tokens[i - 2].text not in ('ipcMain', 'ipcRenderer', 'webContents'):
+            continue
+        if i + 2 >= len(tokens) or tokens[i + 1].text != '(':
+            continue
+        first = tokens[i + 2]
+        if first.kind == 'string':
+            continue
+        # obj.KEY 这种能从常量对象表解出来的，不算归不到
+        resolved = False
+        if first.kind == 'ident' and i + 4 < len(tokens) and tokens[i + 3].text in ('.', '?.'):
+            owner, key = first.text, tokens[i + 4].text
+            if objects and key in (objects.get(owner) or {}):
+                resolved = True
+        if not resolved:
+            count += 1
+    return count
+
+
 def ipc_registrations(tokens, objects=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
 

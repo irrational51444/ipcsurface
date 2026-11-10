@@ -177,3 +177,8 @@
 
 - 变了的字段：channel_sinks
 - 理由：这次内容其实没有变化，只是验证提示语
+
+## 2026-11-10 13:48
+
+- 变了的字段：channel_unattributed
+- 理由：报告新增 channel_unattributed：把解不出来的注册点数报出来，空档要有数字

@@ -287,6 +287,7 @@
   },
   "archive_merkle": null,
   "channel_sinks": {},
+  "channel_unattributed": 0,
   "content_digest": {
     "algorithm": "sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)",
     "digest": "<content-digest>",
