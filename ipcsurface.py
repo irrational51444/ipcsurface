@@ -2649,6 +2649,56 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
 
     return {name: sorted(apis) for name, apis in out.items()}
 
+
+def sibling_asar_paths(path, limit=12):
+    """同一个安装目录里还有哪些 .asar。
+
+    真包踩过：抖音的渲染进程、小组件、托盘各是一个包，主进程包里的 22 条
+    只是它自己那一份。只看一个包，等于只看了一栋楼的一层。
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    out = []
+    try:
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith('.asar'):
+                continue
+            candidate = os.path.join(folder, name)
+            if os.path.abspath(candidate) == os.path.abspath(path):
+                continue
+            out.append(candidate)
+    except OSError:
+        return []
+    return out[:limit]
+
+
+def analyse_bundle(path, with_siblings=True):
+    """把一个安装位置上的所有 asar 一起扫，通道取并集。
+
+    返回 {'main': 主包报告, 'others': [(路径, 通道数)], 'channels': 并集}。
+    没有别的包时 others 为空，行为和单包一致——不改变原有口径，只是多扫几层。
+    """
+    facts, file_count, total = analyse_asar(path)
+    channels = set(facts.get('channels') or [])
+    others = []
+    if with_siblings:
+        for other in sibling_asar_paths(path):
+            try:
+                other_facts, _n, _b = analyse_asar(other)
+            except Exception:
+                continue
+            other_channels = set(other_facts.get('channels') or [])
+            others.append((other, len(other_channels)))
+            channels |= other_channels
+    return {
+        'main': path,
+        'main_channels': len(facts.get('channels') or []),
+        'others': others,
+        'channels': sorted(channels),
+        'file_count': file_count,
+        'bytes': total,
+    }
+
+
 def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
