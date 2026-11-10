@@ -19,14 +19,20 @@ GOLD = os.path.join(ROOT, 'tests', 'golden', 'real_packages.json')
 def main():
     with open(GOLD, encoding='utf-8') as fh:
         gold = json.load(fh)
-    total_hit = total_miss = total_extra = 0
+    total_hit = total_miss = total_extra = total_skip = 0
     for name, spec in gold['packages'].items():
         path = spec['asar']
         if not os.path.exists(path):
+            total_skip += 1
             print(f'{name}: 本机没有这个包，跳过（不算通过）')
             continue
         facts, _n, _b = t.analyse_asar(path)
-        got = {k: set(v) for k, v in (facts.get('channel_sinks') or {}).items() if v}
+        sinks = facts.get('channel_sinks')
+        if sinks is None:
+            total_skip += 1
+            print(f'{name}: 汇点分析没跑出来（channel_sinks 是 null），这次不算')
+            continue
+        got = {k: set(v) for k, v in sinks.items() if v}
         for channel, apis in spec['verified'].items():
             have = got.get(channel, set())
             hit = have & set(apis)
@@ -45,6 +51,14 @@ def main():
         print(f'{name}: 已核对 {len(spec["verified"])} 条，'
               f'工具报出 {len(got)} 条（其中 {len(spec["unverified"])} 条还没人读）')
     print(f'\n合计：命中 {total_hit}，漏报 {total_miss}，没人确认却被报 {total_extra}')
+    if total_skip:
+        # 一个包都没在本机跑成，这个 0 漏报什么都证明不了——按「没查清」退出，
+        # 别让 CI 把它读成通过。
+        print(f'有 {total_skip} 个包不在本机，标准答案没跑成：这不是通过，是没测')
+        return 2
+    if total_hit == 0:
+        print('一条都没核对上：标准答案或工具至少有一边是空的，先别当通过')
+        return 2
     return 0 if total_miss == 0 else 1
 
 
