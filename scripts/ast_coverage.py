@@ -28,7 +28,7 @@ PKGS = [
 ]
 
 
-def measure(path, max_files=60, max_bytes=48 * 1024 * 1024):
+def measure(path, max_files=60, max_bytes=48 * 1024 * 1024, everything=False):
     hdr, files = t.read_asar(path)
     try:
         names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
@@ -36,7 +36,7 @@ def measure(path, max_files=60, max_bytes=48 * 1024 * 1024):
         picked, budget = [], 0
         for rel in names:
             size = len(files[rel])
-            if len(picked) >= max_files or budget + size > max_bytes:
+            if not everything and (len(picked) >= max_files or budget + size > max_bytes):
                 break
             picked.append(rel)
             budget += size
@@ -81,7 +81,7 @@ def main():
         if not os.path.exists(path):
             print('%s: 本机没有，跳过' % label)
             continue
-        data = measure(path)
+        data = measure(path, everything=bool(os.environ.get('AST_ALL')))
         rate = 100.0 * data['unknown'] / max(data['nodes'], 1)
         speed = (data['kb'] / 1024.0) / max(data['seconds'], 1e-6)
         rows.append((label, data, rate, speed))

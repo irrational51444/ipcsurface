@@ -86,15 +86,7 @@ class Parser(object):
             self.take()
             return self.parse_function(declaration=True)
         if word == 'class':
-            self.take()
-            name = self.text()
-            if name and name not in ('{',):
-                self.take()
-            while self.peek() is not None and self.text() != '{':
-                self.take()
-            if self.text() == '{':
-                return self.parse_block()
-            return Node('Class', value=name)
+            return self.parse_class()
         if word == 'if':
             self.take()
             cond = self.parse_paren_expression()
@@ -219,6 +211,61 @@ class Parser(object):
         if not parts:
             return None
         return parts[0] if len(parts) == 1 else Node('Sequence', parts)
+
+    def parse_class(self):
+        """类体：方法、字段、静态块。
+
+        早先整段当一个 Block 走，字段初始化器（`#x = 1`、`static y = f()`）里的
+        调用全丢了——抖音那 1.58% 的脱轨里有一部分就是它。
+        """
+        self.take()  # class
+        name = None
+        if self.peek() is not None and self.peek().kind == 'ident' and self.text() != 'extends':
+            name = self.text()
+            self.take()
+        while self.peek() is not None and self.text() != '{':
+            self.take()  # extends 子句，不解析
+        if self.text() != '{':
+            return Node('Class', value=name)
+        self.take()
+        members = []
+        while self.peek() is not None and self.text() != '}':
+            word = self.text()
+            if word == ';':
+                self.take()
+                continue
+            if word == 'static' and self.text(1) == '{':
+                self.take()
+                block = self.parse_block()
+                if block:
+                    members.append(block)
+                continue
+            if word in ('static', 'async', 'get', 'set'):
+                self.take()
+                continue
+            member_name = None
+            if self.peek() is not None and self.peek().kind in ('ident', 'string', 'number'):
+                member_name = self.text()
+                self.take()
+            elif word in ('[', '*'):
+                self.take()
+                continue
+            if self.text() == '(':
+                params = self.parse_params()
+                body = self.parse_block()
+                members.append(Node('Function', [body] if body else [],
+                                    value={'name': member_name, 'params': params,
+                                           'kind': 'method'}))
+                continue
+            if self.text() == '=':
+                self.take()
+                init = self.parse_assign()
+                if init is not None:
+                    members.append(Node('ExprStatement', [init]))
+                continue
+            self.take()
+        self.eat('}')
+        return Node('Class', members, value=name)
 
     def parse_var(self):
         self.take()
