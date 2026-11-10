@@ -2650,26 +2650,33 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
     return {name: sorted(apis) for name, apis in out.items()}
 
 
-def sibling_asar_paths(path, limit=12):
-    """同一个安装目录里还有哪些 .asar。
+def sibling_asar_paths(path, limit=12, depth=3):
+    """同一个安装位置里还有哪些 .asar。
 
-    真包踩过：抖音的渲染进程、小组件、托盘各是一个包，主进程包里的 22 条
-    只是它自己那一份。只看一个包，等于只看了一栋楼的一层。
+    真包踩过：抖音的渲染进程、小组件、托盘各是一个包，而且不在同一个目录
+    （8.8.0/resources、8.8.0/tray/resources、8.8.0/game_desktop_widget/resources）。
+    只看一个包，等于只看了一栋楼的一层——所以从版本目录往下走三层去找。
+    上限 12 个，别在大安装目录上跑太久。
     """
-    folder = os.path.dirname(os.path.abspath(path))
-    out = []
-    try:
-        for name in sorted(os.listdir(folder)):
+    resources = os.path.dirname(os.path.abspath(path))
+    root = os.path.dirname(resources)
+    found = []
+    seen = {os.path.abspath(path)}
+    for current, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in ('node_modules', 'locales', 'swiftshader')]
+        if current.count(os.sep) - root.count(os.sep) >= depth:
+            dirs[:] = []
+        for name in sorted(names):
             if not name.endswith('.asar'):
                 continue
-            candidate = os.path.join(folder, name)
-            if os.path.abspath(candidate) == os.path.abspath(path):
+            candidate = os.path.abspath(os.path.join(current, name))
+            if candidate in seen:
                 continue
-            out.append(candidate)
-    except OSError:
-        return []
-    return out[:limit]
-
+            seen.add(candidate)
+            found.append(candidate)
+            if len(found) >= limit:
+                return found
+    return found
 
 def analyse_bundle(path, with_siblings=True):
     """把一个安装位置上的所有 asar 一起扫，通道取并集。
