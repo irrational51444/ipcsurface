@@ -1,0 +1,43 @@
+{
+  "说明": "人工读过源码确认的通道与它真能碰到的危险 API。只写确认过的；没读完的放在 unverified，不参与算分。",
+  "版本锁": "0.81.0",
+  "packages": {
+    "obsidian": {
+      "asar": "C:\\Users\\irrational\\AppData\\Local\\Programs\\Obsidian\\resources\\obsidian.asar",
+      "verified": {
+        "print-to-pdf": [
+          "writeFile"
+        ],
+        "vault-move": [
+          "renameSync"
+        ]
+      },
+      "依据": {
+        "print-to-pdf": "ipcMain.on(\"print-to-pdf\") 里 m.promises.writeFile(d, b)，d 来自入参 filepath",
+        "vault-move": "ipcMain.on(\"vault-move\") 里 m.renameSync(i, c)，i、c 都是入参"
+      },
+      "unverified": [
+        "sandbox",
+        "set-icon",
+        "register-cli"
+      ]
+    },
+    "dsh": {
+      "asar": "C:\\Users\\irrational\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar",
+      "verified": {
+        "dsh-desktop:clipboard-image-read": [
+          "fetch"
+        ]
+      },
+      "依据": {
+        "clipboard-image-read": "ipcMain.handle(DESKTOP_IPC.clipboardImageRead) 里先 assertOwner + URL 校验，然后 fetch(checkedUrl)"
+      },
+      "unverified": [
+        "dsh-desktop:locale-changed"
+      ]
+    }
+  },
+  "没读的包": {
+    "为什么": "抖音桌面端、bilibili 桌面端都报 0 条。零发现分不清是「真没有」还是「我看不见」，没读完不敢当标准答案。"
+  }
+}
