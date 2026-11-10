@@ -2625,6 +2625,86 @@ def count_unattributed(files, max_files=12):
     return {'count': total, 'samples': samples, 'dependency': dependency}
 
 
+
+
+def handler_params(tokens, start, end):
+    """从处理函数开头取形参名。
+
+    箭头函数 (event, value) => 或 function (event, value) {} 都认。
+    取不到就返回空列表——空列表意味着「不假设任何形参脏」，
+    比硬塞一个 payload 进去老实。
+    """
+    i = start
+    while i < end and tokens[i].text not in ('(', '{'):
+        i += 1
+    if i >= end or tokens[i].text != '(':
+        return []
+    names = []
+    depth = 0
+    for j in range(i, min(end, len(tokens))):
+        text = tokens[j].text
+        if text == '(':
+            depth += 1
+            continue
+        if text == ')':
+            depth -= 1
+            if depth == 0:
+                break
+            continue
+        if tokens[j].kind == 'ident' and depth == 1:
+            names.append(text)
+    return names
+
+
+def channel_taint_map(files, max_files=12):
+    """第二条口径：外部输入能不能走到危险参数。
+
+    和 channel_sinks（可达性）不是一回事：
+      可达性说「这条通道能碰到写文件」——自己拼的路径也算，所以面宽；
+      污点说「请求里的东西能到那个参数」——这才是要动手修的那批。
+    两个都报，读的人不用猜我到底在说什么。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    if not names:
+        return None
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return None
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in with_ipc[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+            objects = parse_object_literals(text)
+            defs = jsparse.function_defs(tokens)
+            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+        except Exception:
+            continue
+        for reg in regs:
+            span = reg.get('span')
+            if not span and reg.get('target'):
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
+            if not span:
+                continue
+            try:
+                params = handler_params(tokens, span[0], span[1])
+                flows = jssem.flows_into_danger(tokens, span[0], span[1], params)
+            except Exception:
+                continue
+            if flows:
+                out.setdefault(reg['channel'], set()).update(flows)
+    return {name: sorted(set(v)) for name, v in out.items()}
+
+
 def channel_sinks_map(files, main_rel=None, max_files=12):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
 
@@ -2706,7 +2786,8 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
                     for _rel, _name, sinks in jssem.cross_file_member_sinks(
                             tokens, span[0], span[1], rel, other_tokens):
                         found.update(sinks)
-            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
+            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls']),
+                                              anchors={'line': reg.get('line') or 0}).values():
                 found.update(calls)
             if found:
                 out.setdefault(reg['channel'], set()).update(found)
@@ -2805,6 +2886,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'archive_merkle': merkle,
         # 每条通道能碰到什么；没算出来就是 null，不用空字典冒充「都没有」。
         'channel_sinks': facts.get('channel_sinks'),
+        # 第二条口径：外部输入能到危险参数的通道
+        'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
         'channel_unattributed': facts.get('channel_unattributed'),
         # 卡在什么形状上：几行样例，够人判断该不该往下钻
@@ -3126,7 +3209,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
@@ -4648,6 +4731,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
         facts['channel_sinks'] = channel_sinks_map(files)
+        facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']
         facts['channel_unattributed_samples'] = None if unattr is None else unattr['samples']

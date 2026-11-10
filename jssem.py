@@ -232,7 +232,7 @@ def guard_neutralized(tokens, start, end, name):
                 return True
     return False
 
-def reachable_sinks(tokens, defs, roots, max_depth=4):
+def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None):
     """可达性口径：从 roots 出发能调到哪些函数，其中哪些函数里有危险 API。
 
     和污点分析是两个问题，别混：
@@ -240,12 +240,30 @@ def reachable_sinks(tokens, defs, roots, max_depth=4):
       污点问「外部输入能不能到达危险参数」——那才需要看数据流。
     用污点去算可达性，会把「自己拼路径再写文件」的通道全判成 0，实测就是这样。
     """
-    # 同名函数可能有好几份（压缩产物里 f/y/m/_ 都是重名的）。取「最后一个」
-    # 会跟错身子——sandbox 那条通道就是这么把 rmSync 弄丢的。这里对同名的
-    # **全部**都跟一遍：宁可多说一句「可能碰到」，也别把真能碰到的说成没有。
+    # 同名函数可能有好几份（压缩产物里 f/y/m/_ 都是重名的）。
+    # 全跟一遍会把「附近任何一个 f 都算上」，口径立刻变宽（实测多报五十多条）。
+    # 改按**离调用点最近**来挑：先找前面最近的一份，没有再找后面最近的一份。
+    # 这是压缩产物能给出的最好近似——不做作用域分析，但也不会把所有同名都算。
+    near = anchors.get('line') if isinstance(anchors, dict) else None
     by_name = {}
     for item in defs:
-        by_name.setdefault(item['name'], []).append(item)
+        bucket = by_name.setdefault(item['name'], [])
+        bucket.append(item)
+    if near is not None:
+        picked = {}
+        for name, items in by_name.items():
+            before = [d for d in items if (d.get('line') or 0) <= near]
+            after = [d for d in items if (d.get('line') or 0) > near]
+            # 优先挑「身子里真有危险调用」的那一份：同类候选里它才可能是
+            # 真正被调到的那个（压缩产物里同名函数常是不同模块的同名工具）。
+            hot = [d for d in items if _body_has_danger(tokens, d)
+                   and (d['body_end'] - d['body_start']) <= 200]
+            if hot:
+                chosen = hot[0]
+            else:
+                chosen = before[-1] if before else (after[0] if after else items[0])
+            picked[name] = [chosen]
+        by_name = picked
     out = {}
     seen, frontier, depth = set(), list(roots), 0
     while frontier and depth < max_depth:
@@ -264,6 +282,18 @@ def reachable_sinks(tokens, defs, roots, max_depth=4):
             nxt.extend(callees)
         frontier, depth = nxt, depth + 1
     return out
+
+
+
+def _body_has_danger(tokens, body):
+    """这个函数体里有没有直接的危险调用（不往下追）。"""
+    for i in range(body['body_start'], min(body['body_end'], len(tokens) - 1)):
+        tok = tokens[i]
+        if tok.kind == 'ident' and tok.text in DANGER and tokens[i + 1].text == '(':
+            if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+                continue
+            return True
+    return False
 
 
 def _scan_body(tokens, body):
