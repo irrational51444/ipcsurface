@@ -2434,71 +2434,122 @@ def danger_kind_of(api):
     return '其它'
 
 
-def channel_sinks_map(files, main_rel=None):
-    """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一跳。
 
-    这是「能力可达性」，不是「能不能被滥用」。返回
-    {通道: [危险调用名...]}；分析器不在或不支持时返回 None，
-    报告里就写 null——不写空字典冒充「都没有」。
+def pick_main_js(files):
+    """挑「这个应用自己的主进程入口」，别挑 node_modules 里的。
+
+    真包踩过一次：抖音和 bilibili 的包里 npm 依赖也带 ipcMain，
+    按「最大 + 含 ipcMain」挑会挑到 node_modules/@annie/... 去，
+    于是这两家报 0 条通道——那不是它们干净，是我看错了文件。
+    顺序：package.json 的 main 字段 → 不在 node_modules 的、带 ipcMain 的、
+    路径最浅的、最大的。
+    """
+    names = [rel for rel in files.keys() if rel.endswith('.js')]
+
+    manifest = None
+    for rel in files.keys():
+        if rel.endswith('package.json') and rel.count('/') <= 1:
+            blob = files[rel]
+            if not blob:
+                continue
+            try:
+                manifest = json.loads(blob.decode('utf-8', 'ignore'))
+                base = rel[:-len('package.json')]
+            except ValueError:
+                continue
+            break
+    if manifest and isinstance(manifest.get('main'), str):
+        target = base + manifest['main'].lstrip('./')
+        for candidate in (target, target + '.js', target + '/index.js'):
+            if candidate in files:
+                return candidate
+
+    def score(rel):
+        depth = rel.count('/')
+        inside_deps = 'node_modules/' in rel
+        has_ipc = bool(files[rel]) and b'ipcMain' in files[rel]
+        return (inside_deps, depth, 0 if has_ipc else 1, -len(files[rel] or b''))
+
+    candidates = [rel for rel in names if files[rel]]
+    if not candidates:
+        return None
+    return sorted(candidates, key=score)[0]
+
+
+def channel_sinks_map(files, main_rel=None, max_files=12):
+    """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
+
+    真包踩过两次坑，都记在这儿：
+    1. 按「最大的 js」挑主文件会挑到 node_modules；抖音的注册点全在
+       node_modules/@annie/electron 里，那是它自己的框架，挑它其实没错，
+       错在只看一个文件——注册点本来就会分散在好几个文件里。
+    2. 所以这里扫「所有含 ipcMain 的 js」，每个文件各自算，再按通道合并。
+       文件数封顶 max_files（按大小从大到小），免得在超大包里跑太久。
+
+    返回 {通道: [危险调用名...]}；分析器不在或一个注册点都没找到时返回 None，
+    报告里写 null——不写空字典冒充「都没有」。
     """
     try:
         import jsparse
         import jssem
     except ImportError:
         return None
+
     names = [rel for rel in files.keys() if rel.endswith('.js')]
     if not names:
         return None
-    # 先找带 ipcMain 的那个文件——最大的 .js 往往是第三方库，里面一条通道都没有。
-    with_ipc = [rel for rel in names if files[rel] and b'ipcMain' in files[rel]]
-    if main_rel is None or (main_rel not in names) or (
-            with_ipc and main_rel not in with_ipc):
-        candidates = with_ipc or names
-        main_rel = max(candidates, key=lambda r: len(files[r] or b''))
-    blob = files[main_rel]
-    if blob is None:
-        return None
-    text = blob.decode('utf-8', 'ignore')
-    try:
-        tokens = jsparse.tokenize(text)
-        defs = jsparse.function_defs(tokens)
-        objects = parse_object_literals(text)
-        regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
-    except Exception:
-        return None
-    # 跨文件一跳要用到的其他文件：只解码 require 指向的那几个，
-    # 不能为了跨文件把整个包都解开——真实包里这一步很贵。
+    if main_rel is not None and main_rel in names:
+        targets = [main_rel]
+    else:
+        with_ipc = [rel for rel in names if files[rel] and b'ipcMain' in files[rel]]
+        if not with_ipc:
+            return None
+        with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+        targets = with_ipc[:max_files]
+
     known = set(files.keys())
-    want = set()
-    for spec, _imported in jssem.module_aliases(tokens).values():
-        rel = jssem.resolve_spec(spec, main_rel, known)
-        if rel:
-            want.add(rel)
-    other_tokens = {}
-    for rel in want:
+    out = {}
+    for rel in targets:
         blob = files[rel]
         if not blob:
             continue
+        text = blob.decode('utf-8', 'ignore')
         try:
-            other_tokens[rel] = jsparse.tokenize(blob.decode('utf-8', 'ignore'))
+            tokens = jsparse.tokenize(text)
+            defs = jsparse.function_defs(tokens)
+            objects = parse_object_literals(text)
+            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
         except Exception:
             continue
+        if not regs:
+            continue
 
-    out = {}
-    for reg in regs:
-        found = []
-        span = reg.get('span')
-        if span:
-            found += jssem.sinks_in_span(tokens, span[0], span[1])
-            if other_tokens:
-                for _rel, _name, sinks in jssem.cross_file_member_sinks(
-                        tokens, span[0], span[1], main_rel, other_tokens):
-                    found += sinks
-        for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
-            found += calls
-        out[reg['channel']] = sorted(set(found))
-    return out
+        # 这个文件 require 到的本地文件，用于跨文件一跳
+        other_tokens = {}
+        for spec, _imported in jssem.module_aliases(tokens).values():
+            target = jssem.resolve_spec(spec, rel, known)
+            if not target or target not in files or not files[target]:
+                continue
+            try:
+                other_tokens[target] = jsparse.tokenize(files[target].decode('utf-8', 'ignore'))
+            except Exception:
+                continue
 
+        for reg in regs:
+            found = set()
+            span = reg.get('span')
+            if span:
+                found.update(jssem.sinks_in_span(tokens, span[0], span[1]))
+                if other_tokens:
+                    for _rel, _name, sinks in jssem.cross_file_member_sinks(
+                            tokens, span[0], span[1], rel, other_tokens):
+                        found.update(sinks)
+            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
+                found.update(calls)
+            if found:
+                out.setdefault(reg['channel'], set()).update(found)
+
+    return {name: sorted(apis) for name, apis in out.items()}
 
 def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
