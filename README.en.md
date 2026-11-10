@@ -97,7 +97,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **2. Evidence records provenance, never a verdict.** Every channel carries where the name came from, how strong it is, and **what observations would refute it**. Strength orders review effort, not probability.
 
-**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/14`. If it does not match, stop.
+**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/16`. If it does not match, stop.
 
 ---
 
