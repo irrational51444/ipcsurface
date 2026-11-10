@@ -11,6 +11,7 @@
   作用域只做到「函数级 + 参数 + var 提升」，块级 let 不单独建作用域（会少认一点，不会多认）。
 """
 import jsparse
+from jsparse import match_brace
 
 KEYWORDS_STMT = {'if', 'for', 'while', 'do', 'switch', 'try', 'return', 'throw',
                  'break', 'continue', 'var', 'let', 'const', 'function', 'class',
@@ -175,11 +176,49 @@ class Parser(object):
         return Node('Block', body)
 
     def parse_paren_expression(self):
-        if not self.eat('('):
+        """括号里的东西：可能是一条表达式，也可能是 for 的三段式头部。
+
+        for (var i = 0, n = 2; i < n; i++) 这种写法里，分号不是语句结束，
+        而是头部分隔符。早先把它当语句分号处理，尾巴的 ')' 就变成了未知节点。
+        这里的做法是按分号切段、每段单独解析——够用，且不会把外层结构带歪。
+        """
+        if self.text() != '(':
             return None
-        expr = self.parse_expression()
-        self.eat(')')
-        return expr
+        open_index = self.pos
+        try:
+            close_index = match_brace(self.tokens, open_index)
+        except Exception:
+            self.take()
+            return None
+        inner = self.tokens[open_index + 1:close_index]
+        self.pos = close_index + 1
+
+        segments, current, depth = [], [], 0
+        for token in inner:
+            if token.text in ('(', '[', '{'):
+                depth += 1
+            elif token.text in (')', ']', '}'):
+                depth -= 1
+            if token.text == ';' and depth == 0:
+                segments.append(current)
+                current = []
+                continue
+            current.append(token)
+        segments.append(current)
+
+        parts = []
+        for segment in segments:
+            if not segment:
+                continue
+            sub = Parser(segment)
+            if sub.text() in ('var', 'let', 'const'):
+                parts.append(sub.parse_var())
+            else:
+                parts.append(sub.parse_expression())
+        parts = [item for item in parts if item is not None]
+        if not parts:
+            return None
+        return parts[0] if len(parts) == 1 else Node('Sequence', parts)
 
     def parse_var(self):
         self.take()
@@ -236,7 +275,16 @@ class Parser(object):
 
     # --- 表达式 ---
     def parse_expression(self):
-        return self.parse_assign()
+        # 逗号表达式：return a, b, c 和 for(i=0,j=0;…) 里到处都是。
+        # 早先只解析第一个，后面的逗号全变成未知节点——抖音那五万个逗号就是这么来的。
+        first = self.parse_assign()
+        if self.text() != ',':
+            return first
+        items = [first]
+        while self.text() == ',':
+            self.take()
+            items.append(self.parse_assign())
+        return Node('Sequence', [x for x in items if x])
 
     def parse_assign(self):
         left = self.parse_conditional()
@@ -304,6 +352,11 @@ class Parser(object):
                 index = self.parse_expression()
                 self.eat(']')
                 expr = Node('Index', [x for x in (expr, index) if x])
+                continue
+            if word in ('++', '--'):
+                # 后缀自增/自减：for (r = 0; r < n; r++) 这种遍地都是
+                self.take()
+                expr = Node('Unary', [expr] if expr else [], value='post' + word)
                 continue
             if word == '`' or (self.peek() is not None and self.peek().kind == 'template'):
                 self.take()

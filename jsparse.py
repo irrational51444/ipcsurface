@@ -220,7 +220,7 @@ def tokenize(text):
                 elif text[i] == '/' and not in_class:
                     i += 1
                     break
-                elif text[i] == ';' or (text[i] == '\n' and not in_class):
+                elif (text[i] == ';' and not in_class) or (text[i] == '\n' and not in_class):
                     looks_like_code = True
                     break
                 i += 1
