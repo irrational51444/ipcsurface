@@ -2705,7 +2705,7 @@ def channel_taint_map(files, max_files=12):
     return {name: sorted(set(v)) for name, v in out.items()}
 
 
-def channel_sinks_map(files, main_rel=None, max_files=12):
+def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
 
     真包踩过两次坑，都记在这儿：
@@ -2739,6 +2739,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
     known = set(files.keys())
     const_strings = package_const_strings(files)
     out = {}
+    paths = {}
     for rel in targets:
         blob = files[rel]
         if not blob:
@@ -2786,13 +2787,21 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
                     for _rel, _name, sinks in jssem.cross_file_member_sinks(
                             tokens, span[0], span[1], rel, other_tokens):
                         found.update(sinks)
-            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls']),
-                                              anchors={'line': reg.get('line') or 0}).values():
+            reach, hops, vias = jssem.reachable_sinks(
+                tokens, defs, list(reg['calls']),
+                anchors={'line': reg.get('line') or 0}, with_hops=True)
+            for calls in reach.values():
                 found.update(calls)
+            for api, count in hops.items():
+                paths.setdefault(reg['channel'], {})[api] = {
+                    'hops': count, 'via': vias.get(api, '')}
             if found:
                 out.setdefault(reg['channel'], set()).update(found)
 
-    return {name: sorted(apis) for name, apis in out.items()}
+    sinks = {name: sorted(apis) for name, apis in out.items()}
+    if with_paths:
+        return sinks, paths
+    return sinks
 
 
 def sibling_asar_paths(path, limit=12, depth=3):
@@ -2886,6 +2895,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'archive_merkle': merkle,
         # 每条通道能碰到什么；没算出来就是 null，不用空字典冒充「都没有」。
         'channel_sinks': facts.get('channel_sinks'),
+        # 每条危险调用是怎么摸到的：处理函数 → 谁 → 谁 → 危险 API
+        'channel_sink_paths': facts.get('channel_sink_paths'),
         # 第二条口径：外部输入能到危险参数的通道
         'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
@@ -3209,7 +3220,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks', 'channel_sink_paths', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
@@ -4730,7 +4741,9 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         facts['harvest_grades'] = grade_harvested(
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
-        facts['channel_sinks'] = channel_sinks_map(files)
+        sinks, sink_paths = channel_sinks_map(files, with_paths=True)
+        facts['channel_sinks'] = sinks
+        facts['channel_sink_paths'] = sink_paths
         facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']

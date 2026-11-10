@@ -202,3 +202,8 @@
 
 - 变了的字段：channel_tainted
 - 理由：新增 channel_tainted：第二条口径，外部输入能到危险参数
+
+## 2026-11-10 16:22
+
+- 变了的字段：channel_sink_paths
+- 理由：新增 channel_sink_paths：每条危险调用的来路写清楚，少让人回原文找

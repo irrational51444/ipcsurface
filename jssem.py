@@ -232,7 +232,7 @@ def guard_neutralized(tokens, start, end, name):
                 return True
     return False
 
-def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None):
+def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None, with_hops=False):
     """可达性口径：从 roots 出发能调到哪些函数，其中哪些函数里有危险 API。
 
     和污点分析是两个问题，别混：
@@ -265,10 +265,12 @@ def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None):
             picked[name] = [chosen]
         by_name = picked
     out = {}
-    seen, frontier, depth = set(), list(roots), 0
+    hops = {}
+    vias = {}
+    seen, frontier, depth = set(), [(name, [name]) for name in roots], 0
     while frontier and depth < max_depth:
         nxt = []
-        for name in frontier:
+        for name, path in frontier:
             if name in seen or name not in by_name:
                 continue
             seen.add(name)
@@ -279,8 +281,14 @@ def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None):
                 callees.extend(self_callees)
             if calls:
                 out[name] = sorted(set(calls))
-            nxt.extend(callees)
+                for api in calls:
+                    hops.setdefault(api, depth + 1)
+                    vias.setdefault(api, '→'.join(path))
+            for callee in callees:
+                nxt.append((callee, path + [callee]))
         frontier, depth = nxt, depth + 1
+    if with_hops:
+        return out, hops, vias
     return out
 
 
