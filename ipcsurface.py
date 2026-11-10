@@ -961,6 +961,10 @@ LOCAL_FUNC_DEF = re.compile(
 
 def local_function_bodies(text):
     """同一个文件里，每个函数名对应的函数体。只跟一层用。"""
+    # 常数时间预筛：没有 function 也没有箭头函数，就不必跑那条正则。
+    # 压缩包里绝大多数文件都过不了这道筛，省下来的是整份文本的扫描。
+    if 'function' not in text and '=>' not in text:
+        return {}
     bodies = {}
     for match in LOCAL_FUNC_DEF.finditer(text):
         name = match.group(1) or match.group(2)
@@ -984,9 +988,20 @@ def follow_one_hop(body, text, funcs=None):
     """
     if body is None:
         return None, []
-    funcs = funcs if funcs is not None else local_function_bodies(text)
+    # 先看这段身里到底调没调东西：一个调用都没有，就不必为它建整份文件的函数表。
+    # 真包里大量处理函数是 (...args)=>win.webContents.send(...) 这种，直接就没得跟。
+    calls = re.findall(r'(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(', body)
+    if not calls:
+        return body, []
+    if isinstance(funcs, dict):
+        table = funcs.get('table')
+        if table is None:
+            table = funcs['table'] = local_function_bodies(text)
+    else:
+        table = funcs if funcs is not None else local_function_bodies(text)
+    funcs = table
     seen, pieces = [], []
-    for name in re.findall(r'(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(', body):
+    for name in calls:
         inner = funcs.get(name)
         if inner and name not in seen:
             seen.append(name)
@@ -1366,7 +1381,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         scanned += 1
         # 本文件的函数体只建一次：一个文件里常有几十条通道，
         # 以前每条都重扫一遍整份文本找函数定义，是这轮最贵的一笔。
-        local_funcs = None
+        local_funcs = {}   # 一份缓存：真要跟的时候才建函数表
         for kind, pattern in PATTERNS:
             for match in pattern.finditer(text):
                 where = f'{rel}:{line_of(text, match.start())}'
@@ -1384,8 +1399,6 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                     (handlers if kind == 'handle' else invokes).append((value, where))
                     if kind == 'handle':
                         body = bound_call_args(text, match.start())
-                        if local_funcs is None:
-                            local_funcs = local_function_bodies(text)
                         followed, _via = follow_one_hop(body, text, local_funcs)
                         caps, guards, level = describe_capability(followed)
                         if caps or level != 'unknown':
