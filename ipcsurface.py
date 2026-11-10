@@ -2544,10 +2544,11 @@ def count_unattributed(files, max_files=12):
         return None
     with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
     if not with_ipc:
-        return {'count': 0, 'samples': []}
+        return {'count': 0, 'samples': [], 'dependency': []}
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
     total = 0
     samples = []
+    dependency = []
     const_strings = package_const_strings(files)
     for rel in with_ipc[:max_files]:
         text = files[rel].decode('utf-8', 'ignore')
@@ -2558,11 +2559,17 @@ def count_unattributed(files, max_files=12):
                                                       const_strings=const_strings)
         except Exception:
             continue
-        total += len(found)
         for line, expr in found:
+            # 第三方依赖里的动态注册（electron-log 那种 `ipcMain.on(channel, …)`，
+            # channel 是形参）跟应用自己的空档不是一回事：前者静态永远拿不到，
+            # 后者是我该补的。分开计数，别混成一坨吓人。
+            if 'node_modules/' in rel:
+                dependency.append(f'{rel}:{line} {expr}')
+                continue
+            total += 1
             if len(samples) < 40:
                 samples.append(f'{rel}:{line} {expr}')
-    return {'count': total, 'samples': samples}
+    return {'count': total, 'samples': samples, 'dependency': dependency}
 
 
 def channel_sinks_map(files, main_rel=None, max_files=12):
@@ -2683,6 +2690,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_unattributed_samples': facts.get('channel_unattributed_samples'),
         # 试过一次常量反推的结果：唯一的才补，多个值的一律列出来不猜
         'channel_names_recovered': facts.get('channel_names_recovered'),
+        # 第三方依赖里的动态注册：静态拿不到，跟「我该补的空档」分开
+        'channel_dynamic_in_deps': facts.get('channel_dynamic_in_deps'),
     }
     # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
     # 不会出现「漏了这个键」的两种形态。
@@ -2997,7 +3006,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_unattributed', 'channel_unattributed_samples',
-    'channel_names_recovered',
+    'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
@@ -4521,6 +4530,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']
         facts['channel_unattributed_samples'] = None if unattr is None else unattr['samples']
+        facts['channel_dynamic_in_deps'] = None if unattr is None else len(unattr['dependency'])
         recovered = None if unattr is None else recover_const_channels(files, unattr['samples'])
         facts['channel_names_recovered'] = recovered
         total = files.total_bytes()

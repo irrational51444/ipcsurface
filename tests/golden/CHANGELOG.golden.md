@@ -192,3 +192,8 @@
 
 - 变了的字段：channel_names_recovered
 - 理由：新增 channel_names_recovered：常量键反推的结果，唯一才补、多值列歧义
+
+## 2026-11-10 14:13
+
+- 变了的字段：channel_dynamic_in_deps
+- 理由：把第三方依赖里的动态注册单独计一档，和应用自己的空档分开

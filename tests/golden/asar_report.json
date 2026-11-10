@@ -293,6 +293,7 @@
     "recovered": [],
     "ambiguous": []
   },
+  "channel_dynamic_in_deps": 0,
   "content_digest": {
     "algorithm": "sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)",
     "digest": "<content-digest>",
