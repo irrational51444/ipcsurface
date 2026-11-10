@@ -187,7 +187,7 @@ CI 四个任务，缺一不可：
 - 沙箱、原生模块、运行时才装配的通道，静态看不到。
 - Windows 上目录刷盘用 `ctypes` 调 `FlushFileBuffers`（句柄要带写权限，读权限会被拒）。只读卷和网络盘没实测过——那种情况下报 `durable=no`，不是 `unknown`。
 - `adv-asar.asar` 是对抗样本，没有生成脚本，只在本地有；其余靶场都能由 `examples/build.sh` 重造。
-- 规模与性能的断言跑在可复现的 `realish.asar`（3042 个文件、12 条通道、< 8 秒）上，**不是**作者本机那个 441 MB 的应用——后者仍只在本机验。
+- 规模与性能的断言可以**由外部复现**：`python scripts/make_scale_asar.py out.asar --files 22102 --mb 441` 按固定种子造出同量级的包（22,103 个文件 / 448.7 MB），再跑 `python ipcsurface.py out.asar --format json`。本机实测 **70.5 秒**、44,204 条通道结论。作者本机那个 441 MB 的应用是另一份样本，两个数字不要混着引用。
 
 ---
 
