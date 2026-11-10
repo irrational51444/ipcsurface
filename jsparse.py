@@ -43,6 +43,27 @@ class Token:
 
 
 
+
+UNSEEN_CHARS = []
+UNTERMINATED = []
+MAX_UNSEEN = 500
+
+
+def tokenize_with_stats(text):
+    """切词，并把「认不出的字符」带回来。
+
+    返回 (tokens, {'unseen': [字符…]})。认不出不是错误，是覆盖率的一部分；
+    但必须能查——不然又是「出事了才知道」。
+    """
+    del UNSEEN_CHARS[:]
+    del UNTERMINATED[:]
+    tokens = tokenize(text)
+    stats = {'unseen': list(UNSEEN_CHARS), 'unterminated': list(UNTERMINATED)}
+    del UNSEEN_CHARS[:]
+    del UNTERMINATED[:]
+    return tokens, stats
+
+
 def _matching_interp(text, start):
     """从 ${ 之后开始，找到配对的 }。字符串和嵌套模板都跳过。"""
     n = len(text)
@@ -104,7 +125,9 @@ def tokenize(text):
         if text.startswith('/*', i):
             end = text.find('*/', i + 2)
             if end == -1:
-                raise ParseError('注释没有结尾')
+                UNTERMINATED.append('comment')
+                i = n
+                continue
             line += text.count('\n', i, end)
             i = end + 2
             continue
@@ -124,7 +147,9 @@ def tokenize(text):
                     break
                 i += 1
             else:
-                raise ParseError('字符串没有结尾')
+                # 打包产物里真会出现没有结尾的字符串（截断、拼接、奇怪编码）。
+                # 到文件尾就收尾，不炸整份分析——这和「引号落单就断开」是同一条原则。
+                UNTERMINATED.append('string')
             tokens.append(Token('string', text[start:i], start_line, start, i))
             continue
         if ch == '`':
@@ -156,7 +181,7 @@ def tokenize(text):
                     line += 1
                 i += 1
             else:
-                raise ParseError('模板串没有结尾')
+                UNTERMINATED.append('template')
             tokens.append(Token('template', text[start:i], start_line, start, i))
             continue
         if ch in IDENT_START:
@@ -217,7 +242,13 @@ def tokenize(text):
             tokens.append(Token('punct', '\\', line, i, i + 1))
             i += 1
             continue
-        raise ParseError(f'没见过的字符 {ch!r}（第 {line + 1} 行、第 {i - text.rfind(chr(10), 0, i)} 列）')
+        # 真包踩过：DeepSeek Harness 的一个文件里有 U+2026（…），词法器当场抛错，
+        # 整个包的分析全废。认不出的字符不该炸掉整份分析——记下来、当标点跳过，
+        # 让「覆盖率」是可读的数字，而不是一次崩溃。
+        UNSEEN_CHARS.append(ch)
+        tokens.append(Token('punct', ch, line, i, i + 1))
+        i += 1
+        continue
     return tokens
 
 
