@@ -36,6 +36,10 @@ class AsarFiles:
         for name in self.spans:
             yield name, self.read(name)
 
+    def get(self, name, default=None):
+        data = self.read(name)
+        return default if data is None else data
+
     def __getitem__(self, name):
         data = self.read(name)
         if data is None:
