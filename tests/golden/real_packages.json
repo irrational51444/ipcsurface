@@ -68,6 +68,9 @@
         ],
         "request-url": [
           "request"
+        ],
+        "open-url": [
+          "writeFileSync"
         ]
       },
       "依据": {
@@ -90,7 +93,8 @@
         "vault-message": "Lt() → se() → ee()，同上读配置",
         "vault-open": "ipcMain.on(\"vault-open\") 里 m.existsSync(i) 后 m.mkdirSync(i, {recursive:true})",
         "copy-asar": "ipcMain.on(\"copy-asar\") 里 mo.copyFileSync(i, b)，b 由 basename 拼出",
-        "request-url": "ipcMain.on(\"request-url\") 里 l.net.request({url: d, …})，d 来自入参"
+        "request-url": "ipcMain.on(\"request-url\") 里 l.net.request({url: d, …})，d 来自入参",
+        "open-url": "ipcMain.on(\"open-url\", (o,i)=>{let c=BrowserWindow.fromWebContents(o.sender); c&&typeof i==\"string\"&&H(c,i)})；H 负责打开路径，链上有 H→_→ae 写配置"
       },
       "unverified": [],
       "false_positive": {
@@ -104,23 +108,6 @@
           "readdirSync",
           "rmSync",
           "rmdirSync",
-          "writeFileSync"
-        ],
-        "open-url": [
-          "appendFileSync",
-          "createReadStream",
-          "exec",
-          "fetch",
-          "readFile",
-          "readFileSync",
-          "readdir",
-          "readdirSync",
-          "rename",
-          "renameSync",
-          "request",
-          "rmSync",
-          "unlinkSync",
-          "writeFile",
           "writeFileSync"
         ],
         "help": [
@@ -146,8 +133,7 @@
       },
       "false_positive_依据": {
         "copy-asar": "处理函数里只有 copyFileSync，exec 是从同名/相似名借来的（可达性口径的已知副作用）",
-        "set-menu": "kt(i) 只构建菜单；报告里的 rmSync 等来自 kt→f 这条同名多义链，不是真的删文件",
-        "open-url": "这是 app.on(\"open-url\") 的应用事件，不是 ipcMain 通道；工具把它当通道抓了，还借 H→_→ae 那条链报了一堆。",
+        "set-menu": "处理函数只做 kt(template) 建菜单；报出来的文件操作全部经 kt→f 这条同名多义链借来的",
         "help": "处理函数只调 xt()/ye()：那俩只是新建/聚焦一个 BrowserWindow 并 loadURL，没有文件操作；报出来的写文件来自共用建窗函数 Tt 的链",
         "starter": "处理函数只调 xt()/ye()：那俩只是新建/聚焦一个 BrowserWindow 并 loadURL，没有文件操作；报出来的写文件来自共用建窗函数 Tt 的链"
       },

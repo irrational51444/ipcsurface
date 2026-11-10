@@ -323,6 +323,12 @@ def _body_has_danger(tokens, body):
     return False
 
 
+JS_KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
+               'new', 'delete', 'void', 'await', 'yield', 'do', 'else', 'try', 'finally',
+               'in', 'of', 'instanceof', 'with', 'throw', 'case', 'default', 'var',
+               'let', 'const', 'class', 'extends', 'super', 'this'}
+
+
 def _scan_body(tokens, body):
     """扫一个函数体：危险调用和所有被调用的名字。"""
     calls, callees = [], []
@@ -335,6 +341,10 @@ def _scan_body(tokens, body):
                 and tokens[i + 2].kind == 'ident' and tokens[i + 3].text == '('):
             callees.append(tokens[i + 2].text)
         if tokens[i + 1].text != '(':
+            continue
+        if tok.text in JS_KEYWORDS:
+            # if(...)、or(...) 这种不是函数调用；早先当成调用边，
+            # 于是冒出一堆「xt→if」「kt→f」的假链，把误报算到别人头上。
             continue
         callees.append(tok.text)
         if tok.text in DANGER:
