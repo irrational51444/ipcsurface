@@ -337,6 +337,12 @@ class Parser(object):
         expr = self.parse_primary()
         while True:
             word = self.text()
+            if word == '?.' and self.text(1) == '(':
+                # 可选调用 a?.()：和 a() 一样算一条调用边
+                self.take()
+                args = self.parse_arguments()
+                expr = Node('Call', [expr] + args)
+                continue
             if word in ('.', '?.'):
                 self.take()
                 name = self.text()

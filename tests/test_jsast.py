@@ -40,6 +40,12 @@ class ParserRegressionTests(unittest.TestCase):
         self.assertEqual(self.others(code), [],
                          'for 头部的多声明 + 后缀自增不该留下未知节点')
 
+    def test_private_field_and_optional_call(self):
+        code = 'class A { #x = 1; get() { return this.#x; } }'
+        self.assertEqual(self.others(code), [], '私有字段 #x 不该漏成未知节点')
+        code2 = 'function f(t) { return t?.split?.(";")[0]; }'
+        self.assertEqual(self.others(code2), [], '可选调用 ?.() 不该漏成未知节点')
+
     def test_danger_still_found_after_fixes(self):
         code = ('function save(){fs.writeFileSync("a","b");}\n'
                 'function h(e){ for (var i=0,n=1;i<n;i++) { save(); } }')

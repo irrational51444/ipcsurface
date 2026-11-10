@@ -184,6 +184,14 @@ def tokenize(text):
                 UNTERMINATED.append('template')
             tokens.append(Token('template', text[start:i], start_line, start, i))
             continue
+        if ch == '#' and i + 1 < n and text[i + 1] in IDENT_START:
+            # 私有字段 this.#x：把 #x 当成一个标识符，省得后面到处漏一个 '#'
+            start = i
+            i += 1
+            while i < n and text[i] in IDENT_PART:
+                i += 1
+            tokens.append(Token('ident', text[start:i], line, start, i))
+            continue
         if ch in IDENT_START:
             start = i
             while i < n and text[i] in IDENT_PART:
