@@ -289,6 +289,7 @@
   "channel_sinks": {},
   "channel_sink_paths": {},
   "channel_sinks_ast": {},
+  "channel_sinks_ambiguous": [],
   "channel_tainted": {},
   "channel_unattributed": 0,
   "channel_unattributed_samples": [],

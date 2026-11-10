@@ -217,3 +217,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：升版 0.82.0：schema 到 asar/16，报告新增树口径与污点列
+
+## 2026-11-10 19:43
+
+- 变了的字段：channel_sinks_ambiguous
+- 理由：新增 channel_sinks_ambiguous：经过同名多义链的结论单独标出来

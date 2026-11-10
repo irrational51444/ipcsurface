@@ -2741,6 +2741,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     out = {}
     paths = {}
     ast_out = {}
+    ast_ambiguous = set()
     ast_supported = True
     for rel in targets:
         blob = files[rel]
@@ -2808,6 +2809,10 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                     result = jsast.reachable_from_roots(program, list(reg['calls']), _DANGER)
                     if result:
                         ast_out[reg['channel']] = sorted(result)
+                        # 路径里带问号 = 经过同名多义（压缩产物里常见）。
+                        # 这种结论要单独标出来：它可能是对的，也可能是跟错了身子。
+                        if any('?' in step for paths in result.values() for step in paths):
+                            ast_ambiguous.add(reg['channel'])
                 except Exception:
                     ast_supported = False
             for api, count in hops.items():
@@ -2818,7 +2823,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
 
     sinks = {name: sorted(apis) for name, apis in out.items()}
     if with_paths:
-        return sinks, paths, ast_out
+        return sinks, paths, ast_out, sorted(ast_ambiguous)
     return sinks
 
 
@@ -2917,6 +2922,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sink_paths': facts.get('channel_sink_paths'),
         # 语法树口径的可达性：成员调用、回调传参、别名都能连上
         'channel_sinks_ast': facts.get('channel_sinks_ast'),
+        # 这些结论要经过同名多义链，可能是跟错了函数，读的时候要留一分
+        'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
         # 第二条口径：外部输入能到危险参数的通道
         'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
@@ -3136,6 +3143,13 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('> 树只跟同一份文件；跨文件的调用还连不过去，这条缺口写在 '
                    '`docs/known-wrong.md`。')
+        ambiguous = facts.get('channel_sinks_ambiguous') or []
+        if ambiguous:
+            out.append('')
+            out.append('下面这些结论要**经过同名多义**的函数（压缩产物里 f/y/m 满地重名）：'
+                       '可能是对的，也可能跟错了身子，读的时候留一分。')
+            for name in ambiguous:
+                out.append(f'  - `{name}`')
         out.append('')
 
     tainted = facts.get('channel_tainted')
@@ -3287,7 +3301,8 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
+    'channel_sinks_ambiguous', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
@@ -4815,9 +4830,10 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         # 分析器不在、或者一个注册点都没找到时是 None：别当场解包炸掉，
         # 报告里写 null 才是老实的语义（「没分析」不等于「没有」）。
         if collected is None:
-            sinks, sink_paths, ast_sinks = None, None, None
+            sinks, sink_paths, ast_sinks, ast_amb = None, None, None, []
         else:
-            sinks, sink_paths, ast_sinks = collected
+            sinks, sink_paths, ast_sinks, ast_amb = collected
+        facts['channel_sinks_ambiguous'] = ast_amb
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths

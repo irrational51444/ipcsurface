@@ -583,6 +583,11 @@ def locals_of(fn):
     return names
 
 
+KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new',
+            'delete', 'void', 'await', 'yield', 'do', 'else', 'try', 'finally',
+            'in', 'of', 'instanceof', 'with', 'throw', 'case', 'default'}
+
+
 def calls_of(fn):
     """函数里发出的调用：[(种类, 名字)]。种类 ident / member / callback。"""
     out = []
@@ -591,6 +596,8 @@ def calls_of(fn):
             continue
         callee = node.children[0]
         if callee.kind == 'Ident':
+            if callee.value in KEYWORDS:
+                continue
             out.append(('ident', callee.value))
         elif callee.kind == 'Member':
             name = callee.value
