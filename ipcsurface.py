@@ -2636,6 +2636,13 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
         for reg in regs:
             found = set()
             span = reg.get('span')
+            if not span and reg.get('target'):
+                # 处理函数是按名字传进来的（ipcMain.on('relaunch', relaunch)）：
+                # 把那个函数的身子当处理函数体。同一个文件里找不到就算了，不猜。
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
             if span:
                 found.update(jssem.sinks_in_span(tokens, span[0], span[1]))
                 if other_tokens:
