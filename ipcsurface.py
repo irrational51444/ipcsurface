@@ -2488,7 +2488,7 @@ def count_unattributed(files, max_files=12):
         return None
     with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
     if not with_ipc:
-        return 0
+        return {'count': 0, 'samples': []}
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
     total = 0
     samples = []
