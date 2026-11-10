@@ -2740,6 +2740,8 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     const_strings = package_const_strings(files)
     out = {}
     paths = {}
+    ast_out = {}
+    ast_supported = True
     for rel in targets:
         blob = files[rel]
         if not blob:
@@ -2753,6 +2755,13 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                     if r['channel']]
         except Exception:
             continue
+        program = None
+        if ast_supported:
+            try:
+                import jsast
+                program = jsast.parse(text)
+            except Exception:
+                ast_supported = False
         if not regs:
             continue
 
@@ -2792,6 +2801,15 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                 anchors={'line': reg.get('line') or 0}, with_hops=True)
             for calls in reach.values():
                 found.update(calls)
+            if program is not None:
+                try:
+                    import jsast
+                    from jssem import DANGER as _DANGER
+                    result = jsast.reachable_from_roots(program, list(reg['calls']), _DANGER)
+                    if result:
+                        ast_out[reg['channel']] = sorted(result)
+                except Exception:
+                    ast_supported = False
             for api, count in hops.items():
                 paths.setdefault(reg['channel'], {})[api] = {
                     'hops': count, 'via': vias.get(api, '')}
@@ -2800,7 +2818,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
 
     sinks = {name: sorted(apis) for name, apis in out.items()}
     if with_paths:
-        return sinks, paths
+        return sinks, paths, ast_out
     return sinks
 
 
@@ -2897,6 +2915,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sinks': facts.get('channel_sinks'),
         # 每条危险调用是怎么摸到的：处理函数 → 谁 → 谁 → 危险 API
         'channel_sink_paths': facts.get('channel_sink_paths'),
+        # 语法树口径的可达性：成员调用、回调传参、别名都能连上
+        'channel_sinks_ast': facts.get('channel_sinks_ast'),
         # 第二条口径：外部输入能到危险参数的通道
         'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
@@ -3220,7 +3240,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
-    'channel_sinks', 'channel_sink_paths', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
@@ -4741,10 +4761,17 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         facts['harvest_grades'] = grade_harvested(
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
-        collected = channel_sinks_map(files, with_paths=True)
+        try:
+            collected = channel_sinks_map(files, with_paths=True)
+        except TypeError:
+            collected = None
         # 分析器不在、或者一个注册点都没找到时是 None：别当场解包炸掉，
         # 报告里写 null 才是老实的语义（「没分析」不等于「没有」）。
-        sinks, sink_paths = (None, None) if collected is None else collected
+        if collected is None:
+            sinks, sink_paths, ast_sinks = None, None, None
+        else:
+            sinks, sink_paths, ast_sinks = collected
+        facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths
         facts['channel_tainted'] = channel_taint_map(files)

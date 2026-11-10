@@ -207,3 +207,8 @@
 
 - 变了的字段：channel_sink_paths
 - 理由：新增 channel_sink_paths：每条危险调用的来路写清楚，少让人回原文找
+
+## 2026-11-10 16:37
+
+- 变了的字段：channel_sinks_ast
+- 理由：新增 channel_sinks_ast：语法树口径的可达性（成员调用、回调、别名）
