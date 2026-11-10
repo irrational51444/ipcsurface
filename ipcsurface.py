@@ -2639,17 +2639,30 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
             if not span and reg.get('target'):
                 # 处理函数是按名字传进来的（ipcMain.on('relaunch', relaunch)）：
                 # 把那个函数的身子当处理函数体。同一个文件里找不到就算了，不猜。
-                for item in defs:
-                    if item['name'] == reg['target']:
-                        span = (item['body_start'], item['body_end'])
-                        break
+                # 压缩产物里同名函数不止一个（一堆 f、y、m），取「离注册点最近的
+                # 那一个前辈」；前面没有就取后面最近的一个。取错就等于乱认。
+                same = [d for d in defs if d['name'] == reg['target']]
+                if same:
+                    line = reg.get('line') or 0
+                    before = [d for d in same if (d.get('line') or 0) <= line]
+                    pick = before[-1] if before else same[0]
+                    span = (pick['body_start'], pick['body_end'])
             if span:
                 found.update(jssem.sinks_in_span(tokens, span[0], span[1]))
                 if other_tokens:
                     for _rel, _name, sinks in jssem.cross_file_member_sinks(
                             tokens, span[0], span[1], rel, other_tokens):
                         found.update(sinks)
-            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
+            # 同名函数在打包产物里满地都是（f/y/m），按「离注册点最近的前一个」
+            # 去重，否则可达性会跟到别人的身子里，结果就不可信了。
+            near, by_name = [], {}
+            line = reg.get('line') or 0
+            for item in sorted(defs, key=lambda d: d.get('line') or 0):
+                by_name[item['name']] = item
+            for item in defs:
+                if by_name.get(item['name']) is item:
+                    near.append(item)
+            for calls in jssem.reachable_sinks(tokens, near, list(reg['calls'])).values():
                 found.update(calls)
             if found:
                 out.setdefault(reg['channel'], set()).update(found)

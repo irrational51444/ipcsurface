@@ -42,6 +42,47 @@ class Token:
         return f'Token({self.kind!r}, {self.text[:12]!r}, line={self.line})'
 
 
+
+def _matching_interp(text, start):
+    """从 ${ 之后开始，找到配对的 }。字符串和嵌套模板都跳过。"""
+    n = len(text)
+    depth = 0
+    i = start
+    while i < n:
+        ch = text[i]
+        if ch in '\'"':
+            quote = ch
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    i += 2
+                    continue
+                if text[i] == quote:
+                    i += 1
+                    break
+                i += 1
+            continue
+        if ch == '`':
+            i += 1
+            while i < n:
+                if text[i] == '\\':
+                    i += 2
+                    continue
+                if text[i] == '`':
+                    i += 1
+                    break
+                i += 1
+            continue
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return -1
+
+
 def tokenize(text):
     """把源码切成 token。注释丢掉，但保留它们占的位置（行号才对得上）。"""
     tokens = []
@@ -88,21 +129,27 @@ def tokenize(text):
             continue
         if ch == '`':
             start, start_line = i, line
-            depth = 0
             i += 1
             while i < n:
                 if text[i] == '\\':
                     i += 2
                     continue
                 if text.startswith('${', i):
-                    depth += 1
-                    i += 2
+                    # 模板里的 ${...} 是**代码**，不是字符串内容。
+                    # 早先这里直接跳过去了，结果打包产物里嵌在模板里的注册点
+                    # 全被吞掉——Obsidian 那 16 条通道就是这么丢的。
+                    close = _matching_interp(text, i + 2)
+                    if close == -1:
+                        i = n
+                        break
+                    inner = text[i + 2:close]
+                    for token in tokenize(inner):
+                        tokens.append(Token(token.kind, token.text, line + token.line,
+                                            token.start + i + 2, token.end + i + 2))
+                    line += inner.count('\n')
+                    i = close + 1
                     continue
-                if text[i] == '}' and depth:
-                    depth -= 1
-                    i += 1
-                    continue
-                if text[i] == '`' and depth == 0:
+                if text[i] == '`':
                     i += 1
                     break
                 if text[i] == '\n':
@@ -124,9 +171,13 @@ def tokenize(text):
             i = match.end()
             continue
         if ch == '/' and i + 1 < n and _regex_allowed(tokens):
+            # 正则里不该出现分号、也不该长到几百字符。
+            # 真包踩过：打错的斜杠把后面一整段代码（含 ipcMain 注册）吞成了一个
+            # 「正则」，那 16 条通道就这么消失的。看到分号就当它是除号，退回去。
             start = i
             i += 1
             in_class = False
+            looks_like_code = False
             while i < n:
                 if text[i] == '\\':
                     i += 2
@@ -138,9 +189,14 @@ def tokenize(text):
                 elif text[i] == '/' and not in_class:
                     i += 1
                     break
-                elif text[i] == '\n':
-                    raise ParseError('正则没有结尾')
+                elif text[i] == ';' or (text[i] == '\n' and not in_class):
+                    looks_like_code = True
+                    break
                 i += 1
+            if looks_like_code or (i - start) > 400:
+                tokens.append(Token('punct', '/', line, start, start + 1))
+                i = start + 1
+                continue
             while i < n and text[i] in IDENT_PART:
                 i += 1
             tokens.append(Token('regex', text[start:i], line, start, i))
