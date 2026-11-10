@@ -192,6 +192,12 @@ def tokenize(text):
             continue
         if ch.isdigit():
             match = NUMBER_RE.match(text, i)
+            if match is None:
+                # 非 ASCII 数字（全角、阿拉伯-印度数字…）会进到这里：当普通标点，
+                # 别让 match 是 None 时直接崩掉整份分析。
+                tokens.append(Token('punct', ch, line, i, i + 1))
+                i += 1
+                continue
             tokens.append(Token('number', match.group(0), line, i, match.end()))
             i = match.end()
             continue

@@ -12,7 +12,7 @@ cd "$(dirname "$0")/.." || exit 1
 
 fail=0
 
-echo "== 1/3 单元用例 =="
+echo "== 1/4 单元用例 =="
 # 管道会把退出码换成 tail 的，必须显式取左边那个
 python -m unittest discover -s tests > /tmp/verify-unit.log 2>&1
 unit=$?
@@ -24,7 +24,7 @@ else
   fail=1
 fi
 
-echo "== 2/3 冒烟 =="
+echo "== 2/4 冒烟 =="
 bash scripts/smoke.sh > /tmp/verify-smoke.log 2>&1
 smoke=$?
 tail -2 /tmp/verify-smoke.log
@@ -35,7 +35,7 @@ else
   fail=1
 fi
 
-echo "== 3/3 自查 =="
+echo "== 3/4 自查 =="
 python scripts/selfcheck.py || fail=1
 
 echo "== 4/4 污点尺子 =="
@@ -43,7 +43,7 @@ python scripts/taint_ruler.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then
-  echo "三道闸全绿。"
+  echo "四道闸全绿（单元用例 / 冒烟 / 自查 / 污点尺子）。"
 else
   echo "有闸没过，别提交。"
 fi
