@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.81.0'
+__version__ = '0.82.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -2403,7 +2403,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/15',
+        'schema': 'ipcsurface/asar/16',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -2882,7 +2882,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/15',
+        'schema': 'ipcsurface/asar/16',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -3112,6 +3112,53 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('> 这条只说明「能碰到」，不说明「能被滥用」。参数从哪来、校验拦不拦得住，'
                    '要另一套分析，本报告不下结论。')
+        out.append('')
+
+    # 语法树口径：成员调用、方括号、别名、回调都能连边，比上面那节准。
+    ast_sinks = facts.get('channel_sinks_ast')
+    if ast_sinks is not None:
+        hit = {name: apis for name, apis in ast_sinks.items() if apis}
+        out.append('## 按语法树再走一遍')
+        out.append('')
+        out.append(f'这次不靠名字猜：建了语法树，成员调用、`fs["readFileSync"]`、'
+                   f'别名、回调传参都算一条边。{len(hit)} 条通道能碰到危险 API。')
+        paths = facts.get('channel_sink_paths') or {}
+        for name in sorted(hit):
+            kinds = sorted({danger_kind_of(api) for api in hit[name]})
+            chain = ''
+            detail = paths.get(name) or {}
+            first = next((item.get('via') for item in detail.values() if item.get('via')), '')
+            if first:
+                chain = f'｜链路 {first}'
+            out.append(f"  - `{name}`：{'、'.join(sorted(hit[name]))}（{'、'.join(kinds)}）{chain}")
+        if not hit:
+            out.append('  - 一条都没有。只说明这个包里没连到，不是确认没有。')
+        out.append('')
+        out.append('> 树只跟同一份文件；跨文件的调用还连不过去，这条缺口写在 '
+                   '`docs/known-wrong.md`。')
+        out.append('')
+
+    tainted = facts.get('channel_tainted')
+    if tainted is not None:
+        hit = {name: flows for name, flows in tainted.items() if flows}
+        out.append('## 外部输入能走到危险参数')
+        out.append('')
+        if hit:
+            out.append(f'{len(hit)} 条通道里，请求带进来的东西确实到了危险调用的参数上。'
+                       '这批是要动手看的，不是提醒。')
+            for name in sorted(hit):
+                bits = []
+                for item in hit[name][:3]:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        bits.append(f'{item[0]}({item[1]})')
+                    else:
+                        bits.append(str(item))
+                out.append(f'  - `{name}`：{"、".join(bits)}')
+        else:
+            out.append('一条都没有。这不等于安全：可能校验拦住了，也可能是我没跟到。')
+        out.append('')
+        out.append('> 判据只有一种：外部输入经赋值、回调、循环变量、catch 变量流到危险参数。'
+                   '跨函数传参只跟到形参对应的实参，不做完整的别名分析。')
         out.append('')
 
 

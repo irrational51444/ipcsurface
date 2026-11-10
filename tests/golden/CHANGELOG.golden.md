@@ -212,3 +212,8 @@
 
 - 变了的字段：channel_sinks_ast
 - 理由：新增 channel_sinks_ast：语法树口径的可达性（成员调用、回调、别名）
+
+## 2026-11-10 16:47
+
+- 变了的字段：fingerprint, schema
+- 理由：升版 0.82.0：schema 到 asar/16，报告新增树口径与污点列

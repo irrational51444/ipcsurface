@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.81.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.82.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -28,6 +28,37 @@
 ![三道闸](docs/img/case-gates.png)
 
 ---
+
+## 两个例子，都是真跑出来的
+
+### 一、靶场：三条通道，一条安全、一条写文件、一条执行命令
+
+样品不用我发，一条命令就能造出来：
+
+```bash
+python scripts/make_demo_asar.py build/demo.asar
+python ipcsurface.py build/demo.asar
+```
+
+![靶场跑一遍](docs/img/example-demo.png)
+
+这份报告说明三件事：`demo:ping` 什么都没碰到；`demo:save-note` 能写文件、
+`demo:run` 能执行命令；而且这两条**外部输入直接到了危险参数上**——
+这是「该动手看」的那批，不是提醒。
+
+### 二、真机：Obsidian 26.8 MB 的 `obsidian.asar`
+
+```bash
+python ipcsurface.py "/path/to/Obsidian/resources/obsidian.asar"
+```
+
+![Obsidian 跑一遍](docs/img/example-obsidian.png)
+
+同一个包里，粗扫说 19 条通道能碰到危险 API，语法树说 22 条——
+差的那几条是成员调用、别名这类写法，名字级匹配认不出来。
+其中 11 条我一条条读过源码确认（`print-to-pdf` 真 `writeFile`、
+`vault-move` 真 `renameSync`、`sandbox` 真的会 `rmSync`…），
+剩下的是「这条链路我看见了，但没人工核」。
 
 ## 为什么不是「扫出通道数」就完事
 
