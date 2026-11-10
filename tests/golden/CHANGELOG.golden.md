@@ -182,3 +182,8 @@
 
 - 变了的字段：channel_unattributed
 - 理由：报告新增 channel_unattributed：把解不出来的注册点数报出来，空档要有数字
+
+## 2026-11-10 13:51
+
+- 变了的字段：channel_unattributed_samples
+- 理由：新增 channel_unattributed_samples：把卡住的表达式带回来，方便判断该不该往下钻
