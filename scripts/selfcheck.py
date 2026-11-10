@@ -428,7 +428,7 @@ def main():
     pyproject = read('pyproject.toml')
     packed = re.search(r'py-modules\s*=\s*\[(.*?)\]', pyproject, re.S)
     names = set(re.findall(r'"([a-z]+)"', packed.group(1))) if packed else set()
-    ok &= check('pyproject 打进去四个模块', names >= {'ipcsurface', 'jsparse', 'jssem', 'jsast'},
+    ok &= check('pyproject 打进去五个模块', names >= {'ipcsurface', 'jsasar', 'jsparse', 'jssem', 'jsast'},
                 str(sorted(names)))
     rules = {r['id'] for r in t.RULES}
     tests = read('tests', 'test_ipcsurface.py')

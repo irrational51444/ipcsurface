@@ -22,4 +22,4 @@ ipcsurface = "ipcsurface:main"
 # 四个模块缺一不可：jsparse 是词法、jssem 是污点/可达性、jsast 是语法树。
 # 只写 ipcsurface 的话，装出来的 wheel 会缺这三个文件，而代码里 except ImportError
 # 会把它们变成 None——用户装完就在悄悄降级，这个坑必须封住。
-py-modules = ["ipcsurface", "jsparse", "jssem", "jsast"]
+py-modules = ["ipcsurface", "jsasar", "jsparse", "jssem", "jsast"]
