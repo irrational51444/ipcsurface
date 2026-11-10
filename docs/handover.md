@@ -48,11 +48,12 @@ python ipcsurface.py <某个 asar>          # 报告
 
 ## 五、离线镜像（2026-11-10 已做，可重做）
 
-桌面上有个 ipcsurface-mirror\ 文件夹，里面两份东西：
+存档放在 C:\\Users\\irrational\\Documents\\ipcsurface-archive\\（桌面上也留了一份 ipcsurface-mirror\\）。里面三份：
 
 - ipcsurface-<时间>.bundle —— **带全部提交历史**的 git bundle（不是拷贝文件）。
   重做：git bundle create <路径>.bundle --all
 - xi-memory-<时间>.zip —— 记忆库整包（知识、日记都在里面）。
+- 说明.txt —— 恢复与更新存档的命令，照着敲。
 
 从 bundle 恢复（实测过，克隆出来的仓库 295 条用例能跑）：
 
