@@ -1936,11 +1936,28 @@ class GoldenScriptTests(unittest.TestCase):
             shutil.rmtree(folder, ignore_errors=True)
 
     def test_rule_golden_script_says_reason_not_written_when_unchanged(self):
-        result = self.run_script('--reason', '这次内容其实没有变化，只是验证提示语')
-        if result.returncode != 0:
-            self.skipTest('快照真的变了，这条只在无变化时适用')
-        self.assertIn('reason 没有写进', result.stderr,
-                      '内容没变时必须说明 reason 未记录，否则「想改但没生效」会消失')
+        # 注意：这条以前直接对着仓库里的 tests/golden 跑，内容一变就把真快照改掉，
+        # 等于测试自己在改仓库（踩过一次，谁也没发现）。改成拷到临时目录再跑。
+        folder = tempfile.mkdtemp()
+        try:
+            real = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                                'tests', 'golden')
+            for name in os.listdir(real):
+                src = os.path.join(real, name)
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(folder, name))
+            env = dict(os.environ, PYTHONIOENCODING='utf-8',
+                       IPCSURFACE_GOLDEN_DIR=folder)
+            result = subprocess.run([sys.executable, self.script,
+                                     '--reason', '这次内容其实没有变化，只是验证提示语'],
+                                    capture_output=True, text=True,
+                                    encoding='utf-8', errors='replace', env=env)
+            if result.returncode != 0:
+                self.skipTest('快照真的变了，这条只在无变化时适用')
+            self.assertIn('reason 没有写进', result.stderr,
+                          '内容没变时必须说明 reason 未记录，否则「想改但没生效」会消失')
+        finally:
+            shutil.rmtree(folder, ignore_errors=True)
 
 
 class ChannelSinkTests(unittest.TestCase):
