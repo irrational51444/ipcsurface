@@ -379,7 +379,7 @@ def _string_of(token):
 
 
 
-def unattributed_registrations(tokens, objects=None, samples=20):
+def unattributed_registrations(tokens, objects=None, samples=40):
     """列出「注册了但名字不是字面量、也解不出来」的注册点。
 
     不只是个数：把卡住的那串表达式也带回来（this.channel、e.type…），

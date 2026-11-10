@@ -187,3 +187,8 @@
 
 - 变了的字段：channel_unattributed_samples
 - 理由：新增 channel_unattributed_samples：把卡住的表达式带回来，方便判断该不该往下钻
+
+## 2026-11-10 13:55
+
+- 变了的字段：channel_names_recovered
+- 理由：新增 channel_names_recovered：常量键反推的结果，唯一才补、多值列歧义

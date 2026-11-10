@@ -1993,6 +1993,29 @@ class ChannelSinkTests(unittest.TestCase):
         self.assertIn('readFileSync', mapping.get('x:1', []))
 
 
+class ConstRecoverTests(unittest.TestCase):
+    """常量键反推：唯一才补，两个值必须留着不猜。"""
+
+    def test_unique_value_is_recovered(self):
+        files = {'a.js': b'const M = { CH_A: "app:alpha" };'}
+        out = ipc.recover_const_channels(files, ['a.js:1 M.CH_A'])
+        self.assertEqual(out['recovered'], [('M.CH_A', 'app:alpha')])
+        self.assertEqual(out['ambiguous'], [])
+
+    def test_two_values_are_not_guessed(self):
+        files = {'a.js': b'const M = { CH_B: "app:one" };',
+                 'b.js': b'const N = { CH_B: "app:two" };'}
+        out = ipc.recover_const_channels(files, ['a.js:1 M.CH_B'])
+        self.assertEqual(out['recovered'], [], '两个不同的值时必须不补')
+        self.assertEqual(len(out['ambiguous']), 1)
+
+    def test_unknown_key_stays_unresolved(self):
+        out = ipc.recover_const_channels({'a.js': b'const M = { X: "y" };'},
+                                         ['a.js:1 M.NOPE'])
+        self.assertEqual(out['recovered'], [])
+        self.assertEqual(out['ambiguous'], [])
+
+
 class ReportContractTests(unittest.TestCase):
     """报告 JSON 的顶层键是契约。多一个键就红，不靠人记得。"""
 

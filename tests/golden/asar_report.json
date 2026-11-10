@@ -289,6 +289,10 @@
   "channel_sinks": {},
   "channel_unattributed": 0,
   "channel_unattributed_samples": [],
+  "channel_names_recovered": {
+    "recovered": [],
+    "ambiguous": []
+  },
   "content_digest": {
     "algorithm": "sha256(canonical-json, 去掉 generated_at 与 fingerprint.digest)",
     "digest": "<content-digest>",

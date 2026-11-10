@@ -2477,6 +2477,44 @@ def pick_main_js(files):
 
 
 
+
+CONST_PAIR_RE = re.compile(r'([A-Za-z_$][\w$]*)\s*:\s*"([^"\\]{1,200})"')
+
+
+def recover_const_channels(files, samples):
+    """试一把「常量键反推」：把归不到名字的表达式里最后那个键，
+    拿包里唯一的字符串值兜回来。
+
+    规则只有一条，而且必须写死：同一个键在包里出现两个不同字符串值，就不补。
+    宁可列进「没补上」，也不猜——猜错一次，整份清单的可信度就没了。
+
+    返回 {'recovered': [(表达式, 通道名)], 'ambiguous': [(表达式, [候选值…])]}。
+    """
+    if not samples:
+        return {'recovered': [], 'ambiguous': []}
+    values = {}
+    for rel in files.keys():
+        if not rel.endswith('.js') or not files[rel]:
+            continue
+        text = files[rel].decode('utf-8', 'ignore')
+        if ':' not in text:
+            continue
+        for key, value in CONST_PAIR_RE.findall(text):
+            values.setdefault(key, set()).add(value)
+    recovered, ambiguous = [], []
+    for item in samples:
+        expr = item.split(' ', 1)[1] if ' ' in item else item
+        key = expr.split('.')[-1].strip()
+        found = values.get(key)
+        if not found:
+            continue
+        if len(found) == 1:
+            recovered.append((expr, next(iter(found))))
+        else:
+            ambiguous.append((expr, sorted(found)))
+    return {'recovered': recovered, 'ambiguous': ambiguous}
+
+
 def count_unattributed(files, max_files=12):
     """整个包里有多少注册点的通道名我没解出来。数字，不是形容。"""
     try:
@@ -2502,7 +2540,7 @@ def count_unattributed(files, max_files=12):
             continue
         total += len(found)
         for line, expr in found:
-            if len(samples) < 8:
+            if len(samples) < 40:
                 samples.append(f'{rel}:{line} {expr}')
     return {'count': total, 'samples': samples}
 
@@ -2621,6 +2659,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_unattributed': facts.get('channel_unattributed'),
         # 卡在什么形状上：几行样例，够人判断该不该往下钻
         'channel_unattributed_samples': facts.get('channel_unattributed_samples'),
+        # 试过一次常量反推的结果：唯一的才补，多个值的一律列出来不猜
+        'channel_names_recovered': facts.get('channel_names_recovered'),
     }
     # 报告自己的指纹在函数里算好：任何调用方拿到的都是完整报告，
     # 不会出现「漏了这个键」的两种形态。
@@ -2935,6 +2975,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_names_recovered',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
 
@@ -4458,6 +4499,8 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']
         facts['channel_unattributed_samples'] = None if unattr is None else unattr['samples']
+        recovered = None if unattr is None else recover_const_channels(files, unattr['samples'])
+        facts['channel_names_recovered'] = recovered
         total = files.total_bytes()
         return facts, len(files), total
     finally:
