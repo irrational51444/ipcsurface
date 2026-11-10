@@ -32,7 +32,10 @@ HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
 # ---------------------------------------------------------------- asar
 
-from jsasar import AsarFiles, read_asar  # noqa: E402  asar 解析层单独成文件，这里重新导出
+from jsasar import AsarFiles, read_asar
+from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
+                      danger_kind_of)
+import jslabels  # noqa: E402  # noqa: E402  asar 解析层单独成文件，这里重新导出
 
 TEXT_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.json', '.html', '.asar')
 
@@ -60,8 +63,7 @@ def line_of(text, pos):
 
 def stamp():
     """报告里带生成时间和版本——审出来的东西要能对上号。"""
-    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
-    return f'生成于 {now}，ipcsurface {__version__}'
+    return jslabels.stamp(__version__)
 
 
 # 分两档。strong 才算「这包被人动过」，weak 只是常见写法，报出来供参考。
@@ -2307,25 +2309,6 @@ def fingerprint_of(target, channel_names, params=None):
     payload['algorithm'] = 'sha256(canonical-json)'
     return payload
 
-
-
-
-DANGER_KIND_MAP = {
-    '文件写': ('writeFile', 'writeFileSync', 'appendFile', 'appendFileSync',
-             'createWriteStream', 'unlink', 'unlinkSync', 'rmSync', 'rename', 'renameSync'),
-    '文件读': ('readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync'),
-    '命令执行': ('exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync'),
-    '网络': ('fetch', 'request'),
-    '动态求值': ('eval', 'Function'),
-}
-
-
-def danger_kind_of(api):
-    """这个危险 API 属于哪一类。读文件和执行命令不是一回事，混着说等于没说。"""
-    for kind, names in DANGER_KIND_MAP.items():
-        if api in names:
-            return kind
-    return '其它'
 
 
 
@@ -4668,7 +4651,6 @@ def harvest_strings(files):
 #   near-ipc : 出现在提到 IPC 的文件里（离调用多远都算，名字常躺在表里）
 #   clustered: 同前缀 ≥3 个成簇出现，像一张名字表
 #   stray    : 零星、只在别的文件里出现，最可能是噪音
-HARVEST_GRADES = ('channel', 'near-ipc', 'clustered', 'stray')
 
 
 def grade_harvested(files, harvested, channel_names):
