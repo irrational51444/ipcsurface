@@ -232,7 +232,7 @@ def guard_neutralized(tokens, start, end, name):
                 return True
     return False
 
-def reachable_sinks(tokens, defs, roots, max_depth=3):
+def reachable_sinks(tokens, defs, roots, max_depth=4):
     """可达性口径：从 roots 出发能调到哪些函数，其中哪些函数里有危险 API。
 
     和污点分析是两个问题，别混：
@@ -240,7 +240,12 @@ def reachable_sinks(tokens, defs, roots, max_depth=3):
       污点问「外部输入能不能到达危险参数」——那才需要看数据流。
     用污点去算可达性，会把「自己拼路径再写文件」的通道全判成 0，实测就是这样。
     """
-    by_name = {item['name']: item for item in defs}
+    # 同名函数可能有好几份（压缩产物里 f/y/m/_ 都是重名的）。取「最后一个」
+    # 会跟错身子——sandbox 那条通道就是这么把 rmSync 弄丢的。这里对同名的
+    # **全部**都跟一遍：宁可多说一句「可能碰到」，也别把真能碰到的说成没有。
+    by_name = {}
+    for item in defs:
+        by_name.setdefault(item['name'], []).append(item)
     out = {}
     seen, frontier, depth = set(), list(roots), 0
     while frontier and depth < max_depth:
@@ -249,18 +254,38 @@ def reachable_sinks(tokens, defs, roots, max_depth=3):
             if name in seen or name not in by_name:
                 continue
             seen.add(name)
-            body = by_name[name]
-            calls = []
-            for i in range(body['body_start'], min(body['body_end'], len(tokens) - 1)):
-                tok = tokens[i]
-                if tok.kind == 'ident' and tok.text in DANGER and tokens[i + 1].text == '(':
-                    if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
-                        continue
-                    calls.append(tok.text)
+            calls, callees = [], []
+            for body in by_name[name]:
+                self_calls, self_callees = _scan_body(tokens, body)
+                calls.extend(self_calls)
+                callees.extend(self_callees)
             if calls:
-                out[name] = calls
-            nxt.extend(body.get('calls', []))
+                out[name] = sorted(set(calls))
+            nxt.extend(callees)
         frontier, depth = nxt, depth + 1
+    return out
+
+
+def _scan_body(tokens, body):
+    """扫一个函数体：危险调用和所有被调用的名字。"""
+    calls, callees = [], []
+    for i in range(body['body_start'], min(body['body_end'], len(tokens) - 1)):
+        tok = tokens[i]
+        if tok.kind != 'ident' or tokens[i + 1].text != '(':
+            continue
+        callees.append(tok.text)
+        if tok.text in DANGER:
+            if tok.text in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
+                continue
+            calls.append(tok.text)
+    return calls, callees
+
+
+def _unused_old_loop():
+    """占位：原来的单份循环已搬到 _scan_body，别删这段注释的来历。"""
+    calls, callees = [], []
+    for body in ():
+        pass
     return out
 
 

@@ -2706,16 +2706,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
                     for _rel, _name, sinks in jssem.cross_file_member_sinks(
                             tokens, span[0], span[1], rel, other_tokens):
                         found.update(sinks)
-            # 同名函数在打包产物里满地都是（f/y/m），按「离注册点最近的前一个」
-            # 去重，否则可达性会跟到别人的身子里，结果就不可信了。
-            near, by_name = [], {}
-            line = reg.get('line') or 0
-            for item in sorted(defs, key=lambda d: d.get('line') or 0):
-                by_name[item['name']] = item
-            for item in defs:
-                if by_name.get(item['name']) is item:
-                    near.append(item)
-            for calls in jssem.reachable_sinks(tokens, near, list(reg['calls'])).values():
+            for calls in jssem.reachable_sinks(tokens, defs, list(reg['calls'])).values():
                 found.update(calls)
             if found:
                 out.setdefault(reg['channel'], set()).update(found)

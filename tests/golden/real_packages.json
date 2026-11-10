@@ -20,6 +20,21 @@
         ],
         "sandbox": [
           "rmSync"
+        ],
+        "adblock-frequency": [
+          "readFile",
+          "writeFile"
+        ],
+        "adblock-lists": [
+          "readFile",
+          "writeFile"
+        ],
+        "create-browser-session": [
+          "readFile",
+          "writeFile"
+        ],
+        "vault-remove": [
+          "unlinkSync"
         ]
       },
       "依据": {
@@ -27,7 +42,11 @@
         "vault-move": "ipcMain.on(\"vault-move\") 里 m.renameSync(i, c)，i、c 都是入参",
         "set-icon": "ipcMain.on(\"set-icon\") 里 m.rmSync(...) 和 m.writeFileSync(F.join(v,i), c)，i、c 都是入参",
         "register-cli": "ipcMain.handle(\"register-cli\") 里 const i = promisify(co.exec)，之后 await i(`powershell ...`)，exec 是别名调用",
-        "sandbox": "ipcMain.on(\"sandbox\") 只调 f()；f() 里 m.rmSync(F.join(n, \"sandbox\"), {recursive: !0})，同文件一层调用"
+        "sandbox": "ipcMain.on(\"sandbox\") 只调 f()；f() 里 m.rmSync(F.join(n, \"sandbox\"), {recursive: !0})，同文件一层调用",
+        "adblock-frequency": "ipcMain.on(\"adblock-frequency\") 里 _() → ae() → m.writeFileSync(X(t), JSON.stringify(r))；数值变化时还会调 we()，那边读 adblock 目录",
+        "adblock-lists": "同上：设完 C.adblock 就 _() 存盘，再 we() 重建过滤规则文件",
+        "create-browser-session": "传入 adblock=true 时调 we()，we() 里 existsSync/mkdirSync 之后读写 adblock 目录下的规则文件",
+        "vault-remove": "删完仓库条目后调 ce() → m.unlinkSync(X(t))；另外 wt() 里是 fs.promises.rm(recursive)"
       },
       "unverified": []
     },
