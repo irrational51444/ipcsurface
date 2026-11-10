@@ -374,8 +374,10 @@ class Parser(object):
                 return Node('Function', [body] if body else [],
                             value={'name': None, 'params': [word]})
             return Node('Ident', value=word)
+        line = token.line + 1
         self.take()
-        return Node('Other', value=word)
+        # 带上行号：未知节点要能指到 file:line，否则「归因」只是统计游戏
+        return Node('Other', value={'text': word, 'line': line, 'col': token.start})
 
     def parse_object(self):
         self.take()  # {
