@@ -20,6 +20,36 @@ SAMPLE = '\n'.join([
 ]) + '\n'
 
 
+class RealRunTests(unittest.TestCase):
+    """真跑留下的样本：electron v45 起的一个最小应用，探针抓到的四条。
+
+    这个文件是从真机上跑出来的（不是编的），所以它盯的不只是格式，
+    还盯住「运行时能看见静态看不见的那两条」这件事。
+    """
+
+    SAMPLE = os.path.join(ROOT, 'tests', 'golden', 'probe_sample.jsonl')
+
+    def test_real_run_four_channels(self):
+        with io.open(self.SAMPLE, encoding='utf-8') as fh:
+            probe = json.loads(subprocess.run(
+                [sys.executable, SCRIPT, self.SAMPLE],
+                capture_output=True, text=True, encoding='utf-8', errors='replace').stdout)
+        self.assertEqual(sorted(probe['handlers']), ['probe-dynamic', 'probe:literal'])
+        self.assertEqual(sorted(probe['listeners']), ['probe:concat', 'probe:from-object'])
+        self.assertEqual(len(probe['sites']), 4, '四条都该带位置')
+
+    def test_static_sees_fewer_than_runtime(self):
+        """静态只认得字面量那条；另外三条要运行时才知道。"""
+        import jsparse
+        src = os.path.join(ROOT, 'build', 'electron-probe', 'app', 'main.js')
+        if not os.path.exists(src):
+            self.skipTest('真跑用的最小 app 不在（build 目录不入库）')
+        with io.open(src, encoding='utf-8') as fh:
+            tokens = jsparse.tokenize(fh.read())
+        named = [r['channel'] for r in jsparse.ipc_registrations(tokens, {}) if r['channel']]
+        self.assertEqual(named, ['probe:literal'])
+
+
 class ProbeConvertTests(unittest.TestCase):
     def run_convert(self, text):
         fd, path = tempfile.mkstemp(suffix='.jsonl')

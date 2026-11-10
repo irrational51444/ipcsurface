@@ -12,6 +12,15 @@ const path = require('path');
 const OUT = process.env.IPCSURFACE_PROBE_OUT
   || path.join(process.cwd(), 'ipc-probe.jsonl');
 
+// 第一行就写一条：证明探针真的被加载了。
+// 没有这一条、后面也没有注册记录时，能立刻分清是「没加载」还是「没注册」。
+function boot() {
+  try {
+    fs.appendFileSync(OUT, JSON.stringify({ kind: 'probe-loaded', pid: process.pid }) + '\n');
+  } catch (err) {}
+}
+boot();
+
 function write(record) {
   try {
     fs.appendFileSync(OUT, JSON.stringify(record) + '\n');

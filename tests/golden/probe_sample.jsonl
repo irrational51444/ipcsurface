@@ -1,0 +1,5 @@
+{"kind":"probe-loaded","pid":11928}
+{"kind":"handle","channel":"probe:literal","type":"string","site":"    at Object.<anonymous> (C:/Users/irrational/Desktop/rea-lab/build/electron-probe/app/main.js:12:9) |     at Module._compile (node:internal/modules/cjs/loader:1937:14)"}
+{"kind":"on","channel":"probe:from-object","type":"string","site":"    at Object.<anonymous> (C:/Users/irrational/Desktop/rea-lab/build/electron-probe/app/main.js:13:9) |     at Module._compile (node:internal/modules/cjs/loader:1937:14)"}
+{"kind":"handle","channel":"probe-dynamic","type":"string","site":"    at Object.<anonymous> (C:/Users/irrational/Desktop/rea-lab/build/electron-probe/app/main.js:14:9) |     at Module._compile (node:internal/modules/cjs/loader:1937:14)"}
+{"kind":"on","channel":"probe:concat","type":"string","site":"    at Object.<anonymous> (C:/Users/irrational/Desktop/rea-lab/build/electron-probe/app/main.js:15:9) |     at Module._compile (node:internal/modules/cjs/loader:1937:14)"}
