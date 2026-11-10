@@ -336,6 +336,13 @@ class Parser(object):
         if word in ('true', 'false', 'null', 'undefined', 'this', 'super'):
             self.take()
             return Node('Literal', value=word)
+        if word == 'async' and self.text(1) in ('(', 'function'):
+            # async (event, value) => {...}：以前只认 async function，箭头版整段丢了，
+            # 剪贴板那条 fetch 就是这么漏的。
+            self.take()
+            if self.text() == 'function':
+                return self.parse_function()
+            return self.parse_primary()
         if word == 'function':
             return self.parse_function()
         if word == 'async' and self.text(1) == 'function':
@@ -596,6 +603,10 @@ def reachable_from_roots(program, roots, danger, max_depth=5):
             if name in seen:
                 continue
             seen.add(name)
+            if name in danger:
+                # 起点本身就是危险 API：处理函数直接调了它，别再去函数表里找
+                out.setdefault(name, []).append('→'.join(path))
+                continue
             nodes = table.get(name) or []
             ambiguous = len(nodes) > 1
             for fn in nodes:
