@@ -181,3 +181,35 @@ The list has mechanical lower bounds (fixed columns, at least eight symptoms, ve
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
+
+## Two examples, both actually run
+
+### 1. A tiny range: three channels — one safe, one writes files, one runs commands
+
+Build it yourself, no proprietary sample needed:
+
+```bash
+python scripts/make_demo_asar.py build/demo.asar
+python ipcsurface.py build/demo.asar
+```
+
+![demo run](docs/img/example-demo.png)
+
+The report says three things: `demo:ping` touches nothing; `demo:save-note` can write
+a file and `demo:run` can execute a command; and for those two the **request data
+reaches the dangerous parameter** — the short list you act on, not a reminder.
+
+### 2. A real one: Obsidian's 26.8 MB `obsidian.asar`
+
+```bash
+python ipcsurface.py "/path/to/Obsidian/resources/obsidian.asar"
+```
+
+![obsidian run](docs/img/example-obsidian.png)
+
+On the same package the name-level scan reports 19 channels reaching dangerous APIs,
+the AST pass reports 22 — the difference is member calls and aliases, which
+name matching cannot see. Eleven of them I verified by reading the source
+(`print-to-pdf` really calls `writeFile`, `vault-move` really calls `renameSync`,
+`sandbox` really reaches `rmSync`); the rest are "I see the chain, nobody confirmed it".
+
