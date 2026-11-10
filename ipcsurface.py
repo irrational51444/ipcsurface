@@ -4741,7 +4741,10 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         facts['harvest_grades'] = grade_harvested(
             files, facts['harvested'], set(facts['channels']))
         facts['archive_merkle'] = archive_merkle(files)
-        sinks, sink_paths = channel_sinks_map(files, with_paths=True)
+        collected = channel_sinks_map(files, with_paths=True)
+        # 分析器不在、或者一个注册点都没找到时是 None：别当场解包炸掉，
+        # 报告里写 null 才是老实的语义（「没分析」不等于「没有」）。
+        sinks, sink_paths = (None, None) if collected is None else collected
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths
         facts['channel_tainted'] = channel_taint_map(files)
