@@ -265,6 +265,36 @@ def reachable_sinks(tokens, defs, roots, max_depth=3):
 
 
 
+
+def danger_aliases(tokens, start, end):
+    """把危险 API 起了别名：`const i = promisify(co.exec)`、`const r = fs.readFileSync`。
+
+    真包里这样写很常见（Obsidian 的 register-cli 就是 `promisify(co.exec)` 之后
+    `await i(cmd)`）。只认「右边出现了某个危险名字」这一种形状：
+    拿不准的（函数返回、动态取值）一律不认，宁可漏也不编。
+    """
+    out = {}
+    i = start
+    while i < end:
+        tok = tokens[i]
+        name = None
+        if tok.text in DECL and i + 2 < end and tokens[i + 1].kind == 'ident':
+            name, j = tokens[i + 1].text, i + 2
+        elif tok.kind == 'ident' and i + 1 < end and tokens[i + 1].text == '=':
+            name, j = tok.text, i + 1
+        if name is None or tokens[j].text != '=':
+            i += 1
+            continue
+        stop = _end_of_statement(tokens, j + 1, end)
+        rhs = tokens[j + 1:stop]
+        for k, token in enumerate(rhs):
+            if token.kind == 'ident' and token.text in DANGER:
+                out[name] = token.text
+                break
+        i = max(stop, i + 1)
+    return out
+
+
 def danger_at(tokens, index, limit):
     """这一串 token 是不是一次危险调用。返回 (名字, 左括号下标)，不是就 (None, None)。
 
@@ -289,9 +319,13 @@ def danger_at(tokens, index, limit):
 
 def sinks_in_span(tokens, start, end):
     """直接扫一段（比如内联处理函数体），看里面有没有危险调用，不看实参。"""
+    aliases = danger_aliases(tokens, start, end)
     found = []
     for i in range(start, min(end, len(tokens) - 1)):
         name, _open = danger_at(tokens, i, end)
+        if not name and tokens[i].kind == 'ident' and tokens[i].text in aliases \
+                and i + 1 < end and tokens[i + 1].text == '(':
+            name = aliases[tokens[i].text]
         if not name:
             continue
         if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
@@ -437,9 +471,13 @@ def field_hits(tokens, start, end, params):
     tainted = field_taints(tokens, start, end, params)
     aliases = child_process_aliases(tokens)
     hits = []
+    aliases_of = danger_aliases(tokens, start, end)
     for i in range(start, min(end, len(tokens) - 1)):
         tok = tokens[i]
         name, open_at = danger_at(tokens, i, end)
+        if not name and tok.kind == 'ident' and tok.text in aliases_of \
+                and i + 1 < end and tokens[i + 1].text == '(':
+            name, open_at = aliases_of[tok.text], i + 1
         if not name:
             continue
         if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':

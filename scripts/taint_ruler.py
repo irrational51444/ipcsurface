@@ -180,6 +180,12 @@ function h(event, payload) {
   fs.readFileSync(payload.list[0]);
 }
 """, 'danger'),
+    ('危险 API 起别名后调用（真包里抄的写法）', """
+function h(event, payload) {
+  const i = promisify(co.exec);
+  return i(payload.cmd);
+}
+""", 'danger'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');
