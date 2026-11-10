@@ -170,11 +170,11 @@ function h(event, payload) {
   (function (p) { fs.readFileSync(p); })(payload.path);
 }
 """, 'danger'),
-    ('catch 里用错误对象读文件', """
+    ('catch 里用抛出值里的外部输入', """
 function h(event, payload) {
-  try { work(); } catch (err) { fs.readFileSync(err.path); }
+  try { work(payload.path); throw new Error(payload.path); } catch (err) { fs.readFileSync(err.path); }
 }
-""", 'unsupported'),
+""", 'danger'),
     ('数组下标取元素', """
 function h(event, payload) {
   fs.readFileSync(payload.list[0]);
@@ -186,6 +186,11 @@ function h(event, payload) {
   return i(payload.cmd);
 }
 """, 'danger'),
+    ('抛的是常量，catch 不该算脏', """
+function h(event, payload) {
+  try { throw new Error("boom"); } catch (err) { fs.readFileSync(err.path); }
+}
+""", 'clean'),
     ('常量路径不该报', """
 function h(event) {
   fs.readFileSync('/etc/hostname');

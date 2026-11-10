@@ -426,6 +426,7 @@ def field_taints(tokens, start, end, params):
     base = tainted | early
     base |= callback_taints(tokens, start, end, base)
     base |= loop_taints(tokens, start, end, base)
+    base |= catch_taints(tokens, start, end, base)
     return base
 
 
@@ -588,6 +589,43 @@ def cross_file_targets(tokens, from_rel, known):
             out[(local, imported)] = target
     return out
 
+
+def catch_taints(tokens, start, end, tainted):
+    """有界版的抛出传播：同一个 try 里抛出去的东西带外部输入，
+    那它的 catch 变量也算脏。
+
+    边界写死在这儿：只看同一层 try/catch，不跨函数、不追嵌套 try。
+    超出这个范围的一律不算——宁可漏，也不编。
+    """
+    extra = set()
+    i = start
+    while i < end - 3:
+        if tokens[i].text != 'try':
+            i += 1
+            continue
+        j = i + 1
+        if j >= end or tokens[j].text != '{':
+            i += 1
+            continue
+        body_end = _close_paren(tokens, j)
+        # 找 catch (NAME)
+        k = body_end + 1
+        if k >= end or tokens[k].text != 'catch':
+            i = body_end + 1
+            continue
+        if k + 3 >= end or tokens[k + 1].text != '(':
+            i = body_end + 1
+            continue
+        name = tokens[k + 2].text
+        try_body = tokens[j:body_end]
+        dirty = any(tok.kind == 'ident' and tok.text in tainted for tok in try_body)
+        # 只有 try 里真的 throw 了才算
+        if dirty and any(tok.text == 'throw' for tok in try_body):
+            extra.add(name)
+        i = body_end + 1
+    return extra
+
+
 def module_aliases(tokens):
     """这个文件里，谁指向哪个模块：`const cp = require('child_process')`、
     `import { pick } from './svc'`、`const { pick } = require('./svc')`。
@@ -715,6 +753,7 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     tainted = tainted_names(table)
     tainted |= callback_taints(tokens, start, end, tainted)
     tainted |= loop_taints(tokens, start, end, tainted)
+    tainted |= catch_taints(tokens, start, end, tainted)
     aliases = aliases if aliases is not None else child_process_aliases(tokens)
     # 立即执行的匿名函数：(function (p) { fs.read(p) })(payload.path)
     # 实参脏就把形参也算脏，否则这种写法整片漏掉。
