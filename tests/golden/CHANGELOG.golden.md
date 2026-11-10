@@ -227,3 +227,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：升版 0.83.0：schema 到 asar/17（新增 channel_sinks_ambiguous 等键）
+
+## 2026-11-11 02:18
+
+- 变了的字段：fingerprint
+- 理由：升版 0.84.0：版本号由主模块注入报告层

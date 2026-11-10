@@ -36,16 +36,20 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
+__version__ = '0.84.0'
+
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
 import jsreport  # noqa: E402
 from jsreport import (  # noqa: E402
     ACTION_BY_SOURCE, ACTION_STRICTNESS, ALL_SOURCES, ENUM_STRENGTH_OPEN, ENUM_STRENGTH_PROVEN,
-    HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SOURCE_STRENGTH, STATIC_SOURCES, __version__,
+    HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SOURCE_STRENGTH, STATIC_SOURCES,
     _build_independence, audit_asar, baseline_delta, channel_sources, confidence_ladder,
     confidence_levels, corroboration_strength, fingerprint_of, independent, input_sha256,
-    refutes_if, render_asar, render_baseline, sample_sites, stamp,
+    refutes_if, render_asar, render_baseline, sample_sites,
 )
+
+jsreport.VERSION = __version__   # 报告层的版本号由这儿注入
 import jslabels  # noqa: E402  # noqa: E402  asar 解析层单独成文件，这里重新导出
 
 TEXT_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.json', '.html', '.asar')

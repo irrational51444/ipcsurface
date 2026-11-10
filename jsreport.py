@@ -19,9 +19,6 @@ import jslabels
 
 
 from jslabels import HARVEST_GRADES, danger_kind_of
-__version__ = '0.83.0'
-
-
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
 
@@ -30,7 +27,7 @@ def stamp(version=None):
 
     version 由调用方传进来：这一层不许 import 主模块，否则循环。
     """
-    return jslabels.stamp(version)
+    return jslabels.stamp(version or VERSION)
 
 
 def audit_asar(facts):
@@ -571,7 +568,7 @@ def fingerprint_of(target, channel_names, params=None):
     """
     payload = {
         'input_sha256': input_sha256(target),
-        'version': __version__,
+        'version': VERSION,
         'schema': 'ipcsurface/asar/17',
         'params': params or {},
         'channels': sorted(channel_names),
