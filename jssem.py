@@ -232,6 +232,14 @@ def guard_neutralized(tokens, start, end, name):
                 return True
     return False
 
+
+def _group(defs):
+    out = {}
+    for item in defs:
+        out.setdefault(item['name'], []).append(item)
+    return out
+
+
 def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None, with_hops=False):
     """可达性口径：从 roots 出发能调到哪些函数，其中哪些函数里有危险 API。
 
@@ -245,6 +253,7 @@ def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None, with_hops=Fa
     # 改按**离调用点最近**来挑：先找前面最近的一份，没有再找后面最近的一份。
     # 这是压缩产物能给出的最好近似——不做作用域分析，但也不会把所有同名都算。
     near = anchors.get('line') if isinstance(anchors, dict) else None
+    ambiguous = {name for name, items in _group(defs).items() if len(items) > 1}
     by_name = {}
     for item in defs:
         bucket = by_name.setdefault(item['name'], [])
@@ -283,7 +292,12 @@ def reachable_sinks(tokens, defs, roots, max_depth=4, anchors=None, with_hops=Fa
                 out[name] = sorted(set(calls))
                 for api in calls:
                     hops.setdefault(api, depth + 1)
-                    vias.setdefault(api, '→'.join(path))
+                    if api not in vias:
+                        chain = '→'.join(path)
+                        if any(item in ambiguous for item in path):
+                            # 链上有个名字在包里有多份定义，这条来路只是「其中一种可能」
+                            chain += '（同名多义）'
+                        vias[api] = chain
             for callee in callees:
                 nxt.append((callee, path + [callee]))
         frontier, depth = nxt, depth + 1
