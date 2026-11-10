@@ -10,31 +10,42 @@
         ],
         "vault-move": [
           "renameSync"
+        ],
+        "set-icon": [
+          "rmSync",
+          "writeFileSync"
+        ],
+        "register-cli": [
+          "exec"
+        ],
+        "sandbox": [
+          "rmSync"
         ]
       },
       "依据": {
         "print-to-pdf": "ipcMain.on(\"print-to-pdf\") 里 m.promises.writeFile(d, b)，d 来自入参 filepath",
-        "vault-move": "ipcMain.on(\"vault-move\") 里 m.renameSync(i, c)，i、c 都是入参"
+        "vault-move": "ipcMain.on(\"vault-move\") 里 m.renameSync(i, c)，i、c 都是入参",
+        "set-icon": "ipcMain.on(\"set-icon\") 里 m.rmSync(...) 和 m.writeFileSync(F.join(v,i), c)，i、c 都是入参",
+        "register-cli": "ipcMain.handle(\"register-cli\") 里 const i = promisify(co.exec)，之后 await i(`powershell ...`)，exec 是别名调用",
+        "sandbox": "ipcMain.on(\"sandbox\") 只调 f()；f() 里 m.rmSync(F.join(n, \"sandbox\"), {recursive: !0})，同文件一层调用"
       },
-      "unverified": [
-        "sandbox",
-        "set-icon",
-        "register-cli"
-      ]
+      "unverified": []
     },
     "dsh": {
       "asar": "C:\\Users\\irrational\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar",
       "verified": {
         "dsh-desktop:clipboard-image-read": [
           "fetch"
+        ],
+        "dsh-desktop:locale-changed": [
+          "writeFileSync"
         ]
       },
       "依据": {
-        "clipboard-image-read": "ipcMain.handle(DESKTOP_IPC.clipboardImageRead) 里先 assertOwner + URL 校验，然后 fetch(checkedUrl)"
+        "clipboard-image-read": "ipcMain.handle(DESKTOP_IPC.clipboardImageRead) 里先 assertOwner + URL 校验，然后 fetch(checkedUrl)",
+        "dsh-desktop:locale-changed": "ipcMain.on(DESKTOP_IPC.localeChanged) 校验 sender 与 senderFrame 后调 writeDesktopLocaleCache(userData, id)，写入在那一层"
       },
-      "unverified": [
-        "dsh-desktop:locale-changed"
-      ]
+      "unverified": []
     }
   },
   "没读的包": {
