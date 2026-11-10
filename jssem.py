@@ -323,7 +323,13 @@ def _scan_body(tokens, body):
     calls, callees = [], []
     for i in range(body['body_start'], min(body['body_end'], len(tokens) - 1)):
         tok = tokens[i]
-        if tok.kind != 'ident' or tokens[i + 1].text != '(':
+        if tok.kind != 'ident':
+            continue
+        # 成员调用 a.b(...) 也当成一条边：方法名和定义表里的方法名对上就跟。
+        if (i + 3 < len(tokens) and tokens[i + 1].text in ('.', '?.')
+                and tokens[i + 2].kind == 'ident' and tokens[i + 3].text == '('):
+            callees.append(tokens[i + 2].text)
+        if tokens[i + 1].text != '(':
             continue
         callees.append(tok.text)
         if tok.text in DANGER:

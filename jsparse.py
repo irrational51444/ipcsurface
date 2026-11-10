@@ -300,6 +300,41 @@ def object_property_functions(tokens):
     return found
 
 
+
+def method_defs(tokens):
+    """对象字面量/赋值里的方法：`name: function(...) {...}`、`name = function(...) {...}`。
+
+    这类函数没有 `function name` 头，原来的定义表抓不到，于是 `x.name()`
+    这种调用永远建不起边。这是「字符串级粗扫」的天花板之一，先补这一种。
+    """
+    out = []
+    for i in range(len(tokens) - 3):
+        name, eq, fn = tokens[i], tokens[i + 1], tokens[i + 2]
+        if name.kind != 'ident' or eq.text not in (':', '='):
+            continue
+        if fn.text != 'function':
+            continue
+        try:
+            params_open = i + 3
+            if tokens[params_open].text != '(':
+                continue
+            params_close = match_brace(tokens, params_open)
+            body_open = params_close + 1
+            if body_open >= len(tokens) or tokens[body_open].text != '{':
+                continue
+            body_close = match_brace(tokens, body_open)
+        except ParseError:
+            continue
+        out.append({
+            'name': name.text,
+            'kind': 'method',
+            'line': name.line,
+            'body_start': body_open,
+            'body_end': body_close,
+        })
+    return out
+
+
 def function_defs(tokens):
     """找函数定义：function f()、const f = () =>、对象方法简写 f() {。
 
