@@ -2,6 +2,41 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.83.0 — 2026-11-11
+
+这一版没有新功能，全是把 0.82.0 之后攒下的真问题修掉，并且把「代价」写进报告里。
+
+### 修掉的
+
+| 问题 | 怎么发现的 | 现在 |
+| --- | --- | --- |
+| wheel 只装了 `ipcsurface`，`jsparse`/`jssem`/`jsast` 缺失后会 `except ImportError` 静默降级 | 外部评审真的构建了 wheel 检查内容 | pyproject 打进四个模块；`selfcheck` 加一条「四个模块都得在」，另加一条「README 里的 schema 必须和源码一致」 |
+| 解析器在真包上三种硬崩：U+2026、未闭合模板、非 ASCII 数字 | 拿四个真包跑覆盖率时崩的 | 全部改成软失败：认不出就跳过、没闭合就断开，并计数；`tokenize_with_stats` 把「认不出的字符/未闭合」带回来 |
+| 逗号表达式、正则字符类里的分号、`for (var i=0,n=2;…)` 头声明、后缀 `++`、私有字段 `#x`、可选调用 `a?.()` | 抖音那包 8.34% 的未知节点拆三栏后逐条追 | 四包未知节点率：Obsidian 5.39%→1.98%、DeepSeek Harness 5.57%→1.37%、抖音 8.34%→4.58%、bilibili 5.76%→0.95% |
+| 依赖相关危险 API 缺项：`copyFileSync`、`mkdirSync`、`mkdtemp`、`rmdirSync`、`stat` | 人工核 Obsidian 的 `copy-asar` 时发现只报了个 `exec` | 补进 `DANGER_KINDS`；`copy-asar` 现在报 `copyFileSync` |
+| 关键字（`if`/`for`）被当成函数名，链路里出现「xt→if」这种假边 | 复核报告里的链路时看到 | 词法层与语法树层都排除 `JS_KEYWORDS` |
+| 同名多义的结论混在普通结论里 | 误报定位 | 新增 `channel_sinks_ambiguous`，报告里单列一段提醒「可能是跟错了函数」 |
+
+### 人工核对的账（写进 `docs/known-wrong.md`）
+
+- 已核通道 **23 条**（Obsidian 21 / DeepSeek Harness 3，1 条重叠），依据全在
+  `tests/golden/real_packages.json`；
+- Obsidian 树口径报出 24 条：完全对 20 条、部分错 1 条（`copy-asar` 多报 `exec`）、
+  整条误报 3 条（`help`/`starter`/`set-menu`）→ **通道级精确率 20/24 ≈ 83%**；
+- 已核通道召回 **23/23**；`register-cli` 的 `exec` 是树口径已知漏报（粗扫能抓），已登记为 `known_miss`。
+
+### 文档
+
+- 新增 `docs/parser-decision.md`：手写 / tree-sitter / 第三方绑定三条路线的取舍，附四包实测
+  （未知节点率、建树吞吐、三段吞吐口径），以及「什么情况下翻案」；
+- 新增 `docs/handover.md`：宿主升级后怎么把我接回来（跑什么、先坏哪、别做什么）；
+- `docs/known-wrong.md` 增加「解析器语法边界」与「外部有效性」两节。
+
+### 不变量
+
+- 295 条用例、四道闸（用例 / 冒烟 / 自查 / 污点尺子）全绿；
+- schema 从 `ipcsurface/asar/16` 升到 `17`（顶层键又多了，老读法会漏字段）。
+
 ## 0.82.0 — 2026-11-10
 
 这一版把「跟调用链」从名字匹配换成了**语法树**。之前那套是按字符串猜：

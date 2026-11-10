@@ -417,12 +417,12 @@ def main():
     ok = check_referenced_paths(ok, readme)
 
     print('== 二、schema 与规则一致性 ==')
-    ok &= check('schema 版本号是 asar/16', 'ipcsurface/asar/16' in read('ipcsurface.py'))
+    ok &= check('schema 版本号是 asar/17', 'ipcsurface/asar/17' in read('ipcsurface.py'))
     # 文档漂移：README 里写死的 schema 必须和源码一致，不然消费方会按旧版本对不上
     source_schema = re.search(r"SCHEMA_VERSION = '([^']+)'", read('ipcsurface.py')) or \
         re.search(r"'ipcsurface/asar/([0-9]+)'", read('ipcsurface.py'))
     doc_schemas = set(re.findall(r'ipcsurface/asar/[0-9]+', read('README.md') + read('README.en.md')))
-    ok &= check('README 里的 schema 和源码一致', doc_schemas == {'ipcsurface/asar/16'},
+    ok &= check('README 里的 schema 和源码一致', doc_schemas == {'ipcsurface/asar/17'},
                 str(sorted(doc_schemas)) + ' 源码 ' + (source_schema.group(0) if source_schema else '?'))
     # 打包：四个模块少一个，装出来的 wheel 就会悄悄降级
     pyproject = read('pyproject.toml')

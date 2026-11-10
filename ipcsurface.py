@@ -26,7 +26,7 @@ import time
 import uuid
 from collections import defaultdict
 
-__version__ = '0.82.0'
+__version__ = '0.83.0'
 
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
@@ -2403,7 +2403,7 @@ def fingerprint_of(target, channel_names, params=None):
     payload = {
         'input_sha256': input_sha256(target),
         'version': __version__,
-        'schema': 'ipcsurface/asar/16',
+        'schema': 'ipcsurface/asar/17',
         'params': params or {},
         'channels': sorted(channel_names),
     }
@@ -2887,7 +2887,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/16',
+        'schema': 'ipcsurface/asar/17',
         'mode': 'asar',
         'subject': target,
         'files': file_count,

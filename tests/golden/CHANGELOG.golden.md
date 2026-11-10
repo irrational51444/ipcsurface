@@ -222,3 +222,8 @@
 
 - 变了的字段：channel_sinks_ambiguous
 - 理由：新增 channel_sinks_ambiguous：经过同名多义链的结论单独标出来
+
+## 2026-11-11 00:33
+
+- 变了的字段：fingerprint, schema
+- 理由：升版 0.83.0：schema 到 asar/17（新增 channel_sinks_ambiguous 等键）
