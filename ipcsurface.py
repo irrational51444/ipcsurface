@@ -393,6 +393,10 @@ def resolve_ipc_arg(text, extra=None):
 
 
 def fold_literals(text):
+    # 先花常数时间看一眼：没有「引号 + 加号 + 引号」就没有可折的。
+    # 这条守卫把整包还原从 13 秒压到几秒——正则跑在四百兆上是真贵。
+    if "' +" not in text and '" +' not in text and "+'" not in text and '+"' not in text:
+        return text
     for _ in range(4):
         folded = CONCAT_QUOTES.sub(
             lambda m: m.group(1) + m.group(2) + m.group(4) + m.group(1), text)
@@ -1360,6 +1364,9 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                            members=global_members, original_size=len(text),
                            max_passes=max_passes)[0]
         scanned += 1
+        # 本文件的函数体只建一次：一个文件里常有几十条通道，
+        # 以前每条都重扫一遍整份文本找函数定义，是这轮最贵的一笔。
+        local_funcs = None
         for kind, pattern in PATTERNS:
             for match in pattern.finditer(text):
                 where = f'{rel}:{line_of(text, match.start())}'
@@ -1376,8 +1383,10 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                         resolved.add(value)
                     (handlers if kind == 'handle' else invokes).append((value, where))
                     if kind == 'handle':
-                        body = bound_call_args(text, text.rfind('(', 0, match.start()) if False else match.start())
-                        followed, _via = follow_one_hop(body, text)
+                        body = bound_call_args(text, match.start())
+                        if local_funcs is None:
+                            local_funcs = local_function_bodies(text)
+                        followed, _via = follow_one_hop(body, text, local_funcs)
                         caps, guards, level = describe_capability(followed)
                         if caps or level != 'unknown':
                             capability[value] = {'apis': caps, 'guards': guards,

@@ -696,6 +696,22 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(ipc.classify_path('lib/desktop/preload.js'), 'self')
 
 
+class SpeedGuardTests(unittest.TestCase):
+    """性能优化的守卫：省掉的活不能把结果改掉。"""
+
+    def test_fold_literals_still_folds(self):
+        self.assertEqual(ipc.fold_literals("'a' + 'b'"), "'ab'")
+
+    def test_fold_literals_passes_through_plain_text(self):
+        text = "ipcMain.handle('x', ...)" * 10
+        self.assertIs(ipc.fold_literals(text), text)
+
+    def test_scan_caches_local_bodies_per_file(self):
+        # 同一份文本问两次，不该重扫出不同的函数表
+        text = 'function a(){return 1} function b(){return 2}'
+        self.assertEqual(ipc.local_function_bodies(text), ipc.local_function_bodies(text))
+
+
 class HarvestTests(unittest.TestCase):
     def test_channel_like_string_is_kept(self):
         got = ipc.harvest_strings({'a.js': b"ipcMain.handle('vault:unlock', f)"})
