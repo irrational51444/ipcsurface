@@ -8,9 +8,14 @@
 """
 
 DANGER_KINDS = {
+    # 真包里核对时发现少了几样：Obsidian 的 vault-open 是 mkdirSync、copy-asar 是 copyFileSync，
+    # 这两个都不在旧表里，于是「能碰文件」的能力被漏掉了。
     '文件写': ('writeFile', 'writeFileSync', 'appendFile', 'appendFileSync',
-             'createWriteStream', 'unlink', 'unlinkSync', 'rmSync', 'rename', 'renameSync'),
-    '文件读': ('readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync'),
+             'createWriteStream', 'unlink', 'unlinkSync', 'rmSync', 'rename', 'renameSync',
+             'copyFile', 'copyFileSync', 'mkdir', 'mkdirSync', 'mkdtemp', 'mkdtempSync',
+             'rmdir', 'rmdirSync', 'truncate', 'truncateSync'),
+    '文件读': ('readFile', 'readFileSync', 'createReadStream', 'readdir', 'readdirSync',
+             'readdirSync', 'lstat', 'stat', 'existsSync'),
     '命令执行': ('exec', 'execSync', 'spawn', 'spawnSync', 'execFile', 'execFileSync'),
     '网络': ('fetch', 'request'),
     '动态求值': ('eval', 'Function'),

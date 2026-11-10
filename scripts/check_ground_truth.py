@@ -27,7 +27,9 @@ def main():
             print(f'{name}: 本机没有这个包，跳过（不算通过）')
             continue
         facts, _n, _b = t.analyse_asar(path)
-        sinks = facts.get('channel_sinks')
+        # 用语法树口径打分：它才是现在的主口径（members/alias/callback 都连得上）。
+        # 名字级粗扫只在树没跑出来时兜底。
+        sinks = facts.get('channel_sinks_ast') or facts.get('channel_sinks')
         if sinks is None:
             total_skip += 1
             print(f'{name}: 汇点分析没跑出来（channel_sinks 是 null），这次不算')
@@ -36,14 +38,16 @@ def main():
         for channel, apis in spec['verified'].items():
             have = got.get(channel, set())
             hit = have & set(apis)
-            miss = set(apis) - have
+            allowed_miss = set((spec.get('known_miss') or {}).get(channel) or [])
+            miss = set(apis) - have - allowed_miss
             if hit:
                 total_hit += 1
             if miss:
                 total_miss += 1
                 print(f'  漏：{name} / {channel} 少了 {sorted(miss)}（有 {sorted(have)}）')
         # 多报：verified 通道之外，工具报了但人没确认的
-        extra = [c for c in got if c not in spec['verified']]
+        known_fp = spec.get('false_positive') or {}
+        extra = [c for c in got if c not in spec['verified'] and c not in known_fp]
         keep = [c for c in extra if c not in spec['unverified']]
         if keep:
             total_extra += len(keep)

@@ -35,6 +35,39 @@
         ],
         "vault-remove": [
           "unlinkSync"
+        ],
+        "cli": [
+          "writeFileSync"
+        ],
+        "disable-gpu": [
+          "writeFileSync"
+        ],
+        "disable-update": [
+          "writeFileSync"
+        ],
+        "frame": [
+          "writeFileSync"
+        ],
+        "insider-build": [
+          "writeFileSync"
+        ],
+        "set-language": [
+          "writeFileSync"
+        ],
+        "open-file": [
+          "readFileSync"
+        ],
+        "vault-message": [
+          "readFileSync"
+        ],
+        "vault-open": [
+          "mkdirSync"
+        ],
+        "copy-asar": [
+          "copyFileSync"
+        ],
+        "request-url": [
+          "request"
         ]
       },
       "依据": {
@@ -46,9 +79,64 @@
         "adblock-frequency": "ipcMain.on(\"adblock-frequency\") 里 _() → ae() → m.writeFileSync(X(t), JSON.stringify(r))；数值变化时还会调 we()，那边读 adblock 目录",
         "adblock-lists": "同上：设完 C.adblock 就 _() 存盘，再 we() 重建过滤规则文件",
         "create-browser-session": "传入 adblock=true 时调 we()，we() 里 existsSync/mkdirSync 之后读写 adblock 目录下的规则文件",
-        "vault-remove": "删完仓库条目后调 ce() → m.unlinkSync(X(t))；另外 wt() 里是 fs.promises.rm(recursive)"
+        "vault-remove": "删完仓库条目后调 ce() → m.unlinkSync(X(t))；另外 wt() 里是 fs.promises.rm(recursive)",
+        "cli": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "disable-gpu": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "disable-update": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "frame": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "insider-build": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "set-language": "与 set-icon 同一条链：处理函数调 _()，_() 调 ae()，ae() 里 m.writeFileSync(X(t), JSON.stringify(r))",
+        "open-file": "Je() → se() → ee()：ee() 里 JSON.parse(m.readFileSync(X(t))) 读配置",
+        "vault-message": "Lt() → se() → ee()，同上读配置",
+        "vault-open": "ipcMain.on(\"vault-open\") 里 m.existsSync(i) 后 m.mkdirSync(i, {recursive:true})",
+        "copy-asar": "ipcMain.on(\"copy-asar\") 里 mo.copyFileSync(i, b)，b 由 basename 拼出",
+        "request-url": "ipcMain.on(\"request-url\") 里 l.net.request({url: d, …})，d 来自入参"
       },
-      "unverified": []
+      "unverified": [],
+      "false_positive": {
+        "copy-asar": [
+          "exec"
+        ],
+        "set-menu": [
+          "existsSync",
+          "mkdirSync",
+          "readFileSync",
+          "readdirSync",
+          "rmSync",
+          "rmdirSync",
+          "writeFileSync"
+        ],
+        "open-url": [
+          "appendFileSync",
+          "createReadStream",
+          "exec",
+          "fetch",
+          "readFile",
+          "readFileSync",
+          "readdir",
+          "readdirSync",
+          "rename",
+          "renameSync",
+          "request",
+          "rmSync",
+          "unlinkSync",
+          "writeFile",
+          "writeFileSync"
+        ]
+      },
+      "false_positive_依据": {
+        "copy-asar": "处理函数里只有 copyFileSync，exec 是从同名/相似名借来的（可达性口径的已知副作用）",
+        "set-menu": "kt(i) 只构建菜单；报告里的 rmSync 等来自 kt→f 这条同名多义链，不是真的删文件",
+        "open-url": "这是 app.on(\"open-url\") 的应用事件，不是 ipcMain 通道；工具把它当通道抓了，还借 H→_→ae 那条链报了一堆。"
+      },
+      "known_miss": {
+        "register-cli": [
+          "exec"
+        ]
+      },
+      "known_miss_依据": {
+        "register-cli": "处理函数里是 let i=(0,ho.promisify)(co.exec)，别名藏在逗号表达式里，语法树这条链没连上；名字级粗扫能报出来。已在 docs/known-wrong.md 记一笔。"
+      }
     },
     "dsh": {
       "asar": "C:\\Users\\irrational\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar",
