@@ -379,7 +379,7 @@ def _string_of(token):
 
 
 
-def unattributed_registrations(tokens, objects=None, samples=40):
+def unattributed_registrations(tokens, objects=None, samples=40, const_strings=None):
     """列出「注册了但名字不是字面量、也解不出来」的注册点。
 
     不只是个数：把卡住的那串表达式也带回来（this.channel、e.type…），
@@ -406,6 +406,15 @@ def unattributed_registrations(tokens, objects=None, samples=40):
                 resolved = True
         if resolved:
             continue
+        if const_strings:
+            # 常量表里唯一能定的，也算解出来了
+            for ident_text in [t.text for t in tokens[i + 2:i + 8] if t.kind == 'ident']:
+                values = const_strings.get(ident_text)
+                if values and len(values) == 1:
+                    resolved = True
+                    break
+        if resolved:
+            continue
         # 取到第一个逗号为止，当作卡住的那段表达式
         expr = []
         depth = 0
@@ -426,7 +435,7 @@ def unattributed_registrations(tokens, objects=None, samples=40):
             out.append((tok.line + 1, ''.join(expr)))
     return out
 
-def ipc_registrations(tokens, objects=None):
+def ipc_registrations(tokens, objects=None, const_strings=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
 
     返回 [{channel, target, calls, line}]：
@@ -464,6 +473,17 @@ def ipc_registrations(tokens, objects=None):
         elif len(first) == 3 and first[0].kind == 'ident' and first[1].text == '.':
             # 常量对象成员：DESKTOP_IPC.fileSave。表由调用方喂进来，解不出就是 None
             channel = (objects or {}).get(first[0].text, {}).get(first[2].text)
+        if channel is None and const_strings:
+            # 三层成员链的解：X.Y.KEY → 拿包里唯一的字符串值兜回来。
+            # 只认「唯一」：这个键在整包里有第二个不同值就放着不猜。
+            idents = [t.text for t in first if t.kind == 'ident']
+            for ident_text in reversed(idents):
+                values = const_strings.get(ident_text)
+                if values and len(values) == 1:
+                    (only,) = values
+                    if isinstance(only, str) and 0 < len(only) <= 200:
+                        channel = only
+                    break
         target, calls, guards = None, [], []
         if len(args) >= 2:
             second = args[1]

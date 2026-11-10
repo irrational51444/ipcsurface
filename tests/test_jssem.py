@@ -77,6 +77,27 @@ class NeutralisationTests(unittest.TestCase):
         self.assertFalse(hits_of(src))
 
 
+class ConstChannelTests(unittest.TestCase):
+    """三层成员链的通道名：唯一才认，多值不猜。"""
+
+    def regs(self, const_strings):
+        src = "ipcMain.handle(M.IPC_EVENTS.CH_X, (e, p) => {});"
+        tokens = jsparse.tokenize(src)
+        return jsparse.ipc_registrations(tokens, {}, const_strings)
+
+    def test_unique_const_resolves_channel(self):
+        found = self.regs({'CH_X': {'app:x'}})
+        self.assertEqual(found[0]['channel'], 'app:x')
+
+    def test_two_values_do_not_resolve(self):
+        found = self.regs({'CH_X': {'app:one', 'app:two'}})
+        self.assertIsNone(found[0]['channel'], '两个不同的值必须不猜')
+
+    def test_missing_key_stays_none(self):
+        found = self.regs({'OTHER': {'app:x'}})
+        self.assertIsNone(found[0]['channel'])
+
+
 class CrossFileTests(unittest.TestCase):
     FILES = {
         'src/main.js': "const svc = require('./svc');\n"

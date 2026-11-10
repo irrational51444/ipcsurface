@@ -2481,6 +2481,24 @@ def pick_main_js(files):
 CONST_PAIR_RE = re.compile(r'([A-Za-z_$][\w$]*)\s*:\s*"([^"\\]{1,200})"')
 
 
+
+def package_const_strings(files):
+    """整包里「键 → 字符串值集合」的表，用来给三层成员链兜名字。
+
+    只在唯一时用得上（调用方自己判），所以这里不挑，先攒齐。
+    """
+    table = {}
+    for rel in files.keys():
+        if not rel.endswith('.js') or not files[rel]:
+            continue
+        text = files[rel].decode('utf-8', 'ignore')
+        if ':' not in text:
+            continue
+        for key, value in CONST_PAIR_RE.findall(text):
+            table.setdefault(key, set()).add(value)
+    return table
+
+
 def recover_const_channels(files, samples):
     """试一把「常量键反推」：把归不到名字的表达式里最后那个键，
     拿包里唯一的字符串值兜回来。
@@ -2530,12 +2548,14 @@ def count_unattributed(files, max_files=12):
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
     total = 0
     samples = []
+    const_strings = package_const_strings(files)
     for rel in with_ipc[:max_files]:
         text = files[rel].decode('utf-8', 'ignore')
         try:
             tokens = jsparse.tokenize(text)
             objects = parse_object_literals(text)
-            found = jsparse.unattributed_registrations(tokens, objects)
+            found = jsparse.unattributed_registrations(tokens, objects,
+                                                      const_strings=const_strings)
         except Exception:
             continue
         total += len(found)
@@ -2577,6 +2597,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
         targets = with_ipc[:max_files]
 
     known = set(files.keys())
+    const_strings = package_const_strings(files)
     out = {}
     for rel in targets:
         blob = files[rel]
@@ -2587,7 +2608,8 @@ def channel_sinks_map(files, main_rel=None, max_files=12):
             tokens = jsparse.tokenize(text)
             defs = jsparse.function_defs(tokens)
             objects = parse_object_literals(text)
-            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+            regs = [r for r in jsparse.ipc_registrations(tokens, objects, const_strings)
+                    if r['channel']]
         except Exception:
             continue
         if not regs:
