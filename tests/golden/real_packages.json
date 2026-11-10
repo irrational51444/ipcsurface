@@ -122,12 +122,34 @@
           "unlinkSync",
           "writeFile",
           "writeFileSync"
+        ],
+        "help": [
+          "existsSync",
+          "mkdirSync",
+          "readFileSync",
+          "readdirSync",
+          "rmSync",
+          "rmdirSync",
+          "writeFile",
+          "writeFileSync"
+        ],
+        "starter": [
+          "existsSync",
+          "mkdirSync",
+          "readFileSync",
+          "readdirSync",
+          "rmSync",
+          "rmdirSync",
+          "writeFile",
+          "writeFileSync"
         ]
       },
       "false_positive_依据": {
         "copy-asar": "处理函数里只有 copyFileSync，exec 是从同名/相似名借来的（可达性口径的已知副作用）",
         "set-menu": "kt(i) 只构建菜单；报告里的 rmSync 等来自 kt→f 这条同名多义链，不是真的删文件",
-        "open-url": "这是 app.on(\"open-url\") 的应用事件，不是 ipcMain 通道；工具把它当通道抓了，还借 H→_→ae 那条链报了一堆。"
+        "open-url": "这是 app.on(\"open-url\") 的应用事件，不是 ipcMain 通道；工具把它当通道抓了，还借 H→_→ae 那条链报了一堆。",
+        "help": "处理函数只调 xt()/ye()：那俩只是新建/聚焦一个 BrowserWindow 并 loadURL，没有文件操作；报出来的写文件来自共用建窗函数 Tt 的链",
+        "starter": "处理函数只调 xt()/ye()：那俩只是新建/聚焦一个 BrowserWindow 并 loadURL，没有文件操作；报出来的写文件来自共用建窗函数 Tt 的链"
       },
       "known_miss": {
         "register-cli": [
@@ -146,11 +168,15 @@
         ],
         "dsh-desktop:locale-changed": [
           "writeFileSync"
+        ],
+        "dsh-desktop:boot-failed": [
+          "writeFile"
         ]
       },
       "依据": {
         "clipboard-image-read": "ipcMain.handle(DESKTOP_IPC.clipboardImageRead) 里先 assertOwner + URL 校验，然后 fetch(checkedUrl)",
-        "dsh-desktop:locale-changed": "ipcMain.on(DESKTOP_IPC.localeChanged) 校验 sender 与 senderFrame 后调 writeDesktopLocaleCache(userData, id)，写入在那一层"
+        "dsh-desktop:locale-changed": "ipcMain.on(DESKTOP_IPC.localeChanged) 校验 sender 与 senderFrame 后调 writeDesktopLocaleCache(userData, id)，写入在那一层",
+        "dsh-desktop:boot-failed": "ipcMain.handle(DESKTOP_IPC.bootFailed) → reportFatal(new Error(message), \"web-boot\")，reportFatal 会写崩溃日志"
       },
       "unverified": []
     }
