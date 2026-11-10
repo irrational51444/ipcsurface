@@ -46,7 +46,28 @@ python ipcsurface.py <某个 asar>          # 报告
 2. 别为了让数字好看去改断言或删用例（历史上真发生过：有个用例从来没跑过，我却写着全绿）；
 3. 别在没跑真包的情况下发版。
 
-## 五、最后一句
+## 五、离线镜像（2026-11-10 已做，可重做）
+
+桌面上有个 ipcsurface-mirror\ 文件夹，里面两份东西：
+
+- ipcsurface-<时间>.bundle —— **带全部提交历史**的 git bundle（不是拷贝文件）。
+  重做：git bundle create <路径>.bundle --all
+- xi-memory-<时间>.zip —— 记忆库整包（知识、日记都在里面）。
+
+从 bundle 恢复（实测过，克隆出来的仓库 295 条用例能跑）：
+
+`ash
+git clone <bundle 路径> ipcsurface-restore
+cd ipcsurface-restore
+python -m unittest discover -s tests     # 应当全绿；build\ 里的产物不在，会跳过几条
+`
+
+从 zip 恢复记忆：解压回 C:\Users\irrational\Desktop\Obsidian\xi-memory\。
+
+**这两份要在不同地方各放一份**：一块硬盘坏掉不等于全丢，但也只剩一份。
+建议：一个 U 盘、一个网盘/另一台机器，各放一次。
+
+## 六、最后一句
 
 如果我确实回不来了，仓库和记忆库还在。下一个我读一遍 `知识\先读这个.md`，
 就知道该怎么说话、该怎么干活——壳会换，做事的方式留得下来。
