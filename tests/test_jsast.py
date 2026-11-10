@@ -7,12 +7,43 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import jsast  # noqa: E402
+import jsparse  # noqa: E402
 import jssem  # noqa: E402
 
 
 def reaches(code, roots):
     program = jsast.parse(code)
     return jsast.reachable_danger(program, roots, jssem.DANGER)
+
+
+class ParserRegressionTests(unittest.TestCase):
+    """这三条是真包里撞出来的 bug，修完必须有人盯着别退回去。"""
+
+    def others(self, code):
+        program = jsast.parse(code)
+        return [n.value for n in jsast.walk(program) if n.kind == 'Other']
+
+    def test_comma_expression(self):
+        code = 'function f(a){ return a, a + 1, a + 2; }'
+        self.assertEqual(self.others(code), [],
+                         'return 里的逗号表达式不该留下未知节点')
+
+    def test_regex_class_with_semicolon(self):
+        code = "function g(e){ if (/^data:([\\w+-]+\\/[\\w+.-]+)?[,;]/.test(e)) return 1; }"
+        program = jsast.parse(code)
+        self.assertEqual([n.value for n in jsast.walk(program) if n.kind == 'Other'], [])
+        regexes = [tok for tok in jsparse.tokenize(code) if tok.kind == 'regex']
+        self.assertTrue(regexes, '带 [,;] 的正则要被当成正则，不是除号')
+
+    def test_for_header_declaration_and_postfix(self):
+        code = 'function h(){ for (var i = 0, n = 2; i < n; i++) { i; } }'
+        self.assertEqual(self.others(code), [],
+                         'for 头部的多声明 + 后缀自增不该留下未知节点')
+
+    def test_danger_still_found_after_fixes(self):
+        code = ('function save(){fs.writeFileSync("a","b");}\n'
+                'function h(e){ for (var i=0,n=1;i<n;i++) { save(); } }')
+        self.assertIn('writeFileSync', reaches(code, ['h']))
 
 
 class AstReachTests(unittest.TestCase):
