@@ -911,6 +911,24 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                     tag = '（活值，可能来自外部）'
                 out.append(f"  - `{hit['where']}`{tag}：{hit['snippet']}")
         out.append('')
+
+    # precise 第三列：tree-sitter 精查层，opt-in。这是「更强一档证据」，不是确认。
+    if 'precise_sinks' in facts:
+        out.append('## precise 第三列（tree-sitter 精查）')
+        out.append('')
+        out.append('跨文件 / 类方法才连得上的那条链，粗扫看不见；这里是更强一档证据，'
+                   '不是「确认」。')
+        out.append('')
+        ps = facts.get('precise_sinks')
+        if ps is None:
+            out.append('- precise 没跑成（tree-sitter 没装或报错），这一列空着。'
+                       '`pip install ipcsurface[precise]`')
+        elif not ps:
+            out.append('- precise 跑完了，没多认出任何粗扫漏掉的危险 API。')
+        else:
+            for ch, apis in list(ps.items())[:20]:
+                out.append(f'- `{ch}`：{"、".join(apis)}')
+        out.append('')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:
             out.append(f'- 名字是算出来的不是写死的：`{what}`  `{where}`')

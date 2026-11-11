@@ -4124,6 +4124,8 @@ def main(argv=None):
                         help='还原多转几趟。默认一趟：实测多转在这批样本上没多认出东西，还慢')
     parser.add_argument('--poke', metavar='POKE_JSON',
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
+    parser.add_argument('--precise', action='store_true',
+                        help='用 tree-sitter 精查层补一列（跨文件/类方法）。需要 pip install ipcsurface[precise]')
     args = parser.parse_args(argv)
 
     if args.recover:
@@ -4171,6 +4173,15 @@ def main(argv=None):
     elif looks_like_asar(args.input):
         facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval,
                                            max_passes=6 if args.deep_restore else 1)
+        # precise：tree-sitter 精查层，opt-in，装不上就降级不硬撑
+        if args.precise:
+            try:
+                import precise_engine
+                facts['precise_sinks'] = precise_engine.analyse_asar_precise(args.input)
+            except SystemExit:
+                facts['precise_sinks'] = None
+            except Exception:
+                facts['precise_sinks'] = None
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         probe_data = load_probe(args.runtime) if args.runtime else None

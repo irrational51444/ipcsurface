@@ -23,3 +23,6 @@ ipcsurface = "ipcsurface:main"
 # 只写 ipcsurface 的话，装出来的 wheel 会缺这三个文件，而代码里 except ImportError
 # 会把它们变成 None——用户装完就在悄悄降级，这个坑必须封住。
 py-modules = ["ipcsurface", "jsasar", "jslabels", "jsparse", "jssem", "jsast", "jsreport"]
+
+[project.optional-dependencies]
+precise = ["tree-sitter", "tree-sitter-javascript"]
