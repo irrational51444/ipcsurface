@@ -23,12 +23,38 @@
 
 ## 还差的（诚实清单）
 
-CI 里起 `xvfb-run electron` 这一步还没落。原因不是做不了，是 Electron 在 CI 里要
-现下载几百兆、而且起窗口要 xvfb，这一串又慢又容易 flaky。对齐率脚本先立住了，
-CI 那步留到「跑通一次本地 xvfb」之后再加，不然 CI 一红就是环境问题、不是回归。
+~~CI 里起 `xvfb-run electron` 这一步还没落。~~ **已经在本机虚拟机里完整跑通了**
+（2026-11-11，Ubuntu 26.10 虚拟机），对齐率复现 71%，跟之前 Windows 实测一致。
+下面是可复现的 recipe，CI 那步照抄即可。
 
-## 怎么补
+## 跑通的 recipe（虚拟机 / CI 通用）
 
-1. 在 CI 的 ubuntu runner 上装 electron + xvfb，`xvfb-run node probe/run.js <靶场目录> 6`；
-2. `probe_to_json.py` 转、`probe_align.py` 比；
-3. 对齐率低于一个从实测值起步的下限就红（同 P1-6 的路数：先测基线，再锁值）。
+环境：Ubuntu 26.10（VMware 虚拟机，NAT 网络）、node v24.19.0、npm 11。
+
+1. 装依赖（apt 源用国内镜像更快）：
+   ```
+   sudo apt-get update && sudo apt-get install -y nodejs npm xvfb
+   ```
+2. 装 Electron + ws（github 被墙，Electron 二进制必须走国内镜像，否则 install.js 卡死）：
+   ```
+   ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ \
+     npm install --registry=https://registry.npmmirror.com
+   ```
+3. chrome-sandbox 设 setuid（否则 Electron 报 SUID sandbox 错误直接 abort）：
+   ```
+   sudo chown root:root node_modules/electron/dist/chrome-sandbox
+   sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+   ```
+4. 跑探针：
+   ```
+   xvfb-run -a node run.js ../examples/static-asar 6 > probe.json
+   ```
+5. 比对齐率：`python scripts/probe_align.py probe.json examples/build/static-asar.asar`
+
+结果（复现）：运行时 7 条、静态认得 5 条、对齐率 71%，漏的 2 条仍是
+`IMPORT_SHARED_TEXTURE_*`（Electron 内置）和 `error`（Node 内置）——应用通道 5/5 全对齐。
+
+## 怎么落 CI
+
+把上面 1–4 步写进 ubuntu runner 的 job（步骤 2 的镜像环境变量照抄），
+`probe_to_json.py` 转、`probe_align.py` 比，对齐率低于 71% 就红（基线从实测值起步）。

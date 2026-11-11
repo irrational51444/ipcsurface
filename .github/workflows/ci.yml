@@ -102,6 +102,33 @@ jobs:
       - name: 短 fuzz（30 秒，三个解析入口）
         run: python fuzz/atheris_fuzz.py -max_total_time=30
 
+  probe:
+    # 运行时探针对齐率（P1-8）：起真 Electron 靶场，比静态认得几条应用通道。
+    # 本机虚拟机（Ubuntu 26.10）已跑通：应用通道 5/5 全对齐。github 被墙，
+    # Electron 二进制必须走国内镜像；chrome-sandbox 要 setuid，否则直接 abort。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 装 node + xvfb
+        run: sudo apt-get update && sudo apt-get install -y nodejs npm xvfb
+      - name: 造靶场
+        run: |
+          pip install .
+          cd examples && bash build.sh
+      - name: 装 Electron（国内镜像 + sandbox setuid）
+        run: |
+          cd probe
+          ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install --registry=https://registry.npmmirror.com
+          sudo chown root:root node_modules/electron/dist/chrome-sandbox
+          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+      - name: 跑探针
+        run: cd probe && xvfb-run -a node run.js ../examples/static-asar 6 > /tmp/probe.json
+      - name: 对齐率门禁（应用通道要全对齐）
+        run: python scripts/probe_align.py /tmp/probe.json examples/build/static-asar.asar --min-align 0.7
+
   signal:
     # 这一节验的是「CI 能不能靠退出码和 SARIF 做判断」，不是验工具本身
     runs-on: ubuntu-latest
