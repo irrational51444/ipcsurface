@@ -25,6 +25,10 @@ jobs:
         run: cd examples && bash build.sh
       - name: 三道闸（用例 + 冒烟 + 自查）
         run: bash scripts/verify.sh
+      - name: 分支覆盖率门禁（只许涨不许跌）
+        run: |
+          pip install coverage
+          python scripts/coverage_check.py
       - name: 拿不到证据时要报错，不能静悄悄过
         run: |
           set +e
