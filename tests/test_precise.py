@@ -68,6 +68,19 @@ class PreciseTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_follows_class_method(self):
+        # this.x() / obj.x() 到类方法，precise 得追到方法体里的危险 API
+        main = ('const {ipcMain} = require("electron");\n'
+                'const fs = require("fs");\n'
+                'class App { _load(p) { return fs.readFileSync(p); } }\n'
+                'const app = new App();\n'
+                'ipcMain.handle("x", (e, p) => app._load(p));\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            self.assertEqual(pe.analyse_asar_precise(path), {'x': ['readFileSync']})
+        finally:
+            os.unlink(path)
+
 
 if __name__ == '__main__':
     unittest.main()
