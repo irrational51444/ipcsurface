@@ -234,9 +234,9 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **319 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **325 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：python scripts/perf_check.py，固定种子造包测吞吐，低于下限 CI 红（README 的性能数字也从这个脚本复现）
-- **分支覆盖率 68%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
+- **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **输入解析 fuzz**：`python scripts/fuzz_smoke.py` 字节级变异 asar 头 / PE 导入表；CI 里另跑 30 秒 atheris 真 fuzz
 - **基准测试**：`python scripts/benchmark.py`，通道级 / API 级的精确率与召回率（数字写进 `docs/benchmark.md`）

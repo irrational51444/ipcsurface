@@ -9,9 +9,12 @@ atheris 是 libFuzzer 的 Python 绑定，靠 OSS-Fuzz 的 harness 起。这里�
 真正起 fuzz 的是 OSS-Fuzz 的 build.sh（见同目录）。
 """
 import atheris
+import os
 import sys
 
-sys.path.insert(0, '..')
+# 用脚本目录的父目录（项目根）进 sys.path，别用相对 '..'——那依赖 cwd。
+# CI 从仓库根跑 `python fuzz/atheris_fuzz.py` 时，'..' 指向仓库根上一级，jsasar 找不到。
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import ipcsurface as t  # noqa: E402
 import jsasar  # noqa: E402
 
