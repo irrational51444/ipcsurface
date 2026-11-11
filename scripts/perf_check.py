@@ -23,7 +23,9 @@ sys.path.insert(0, ROOT)
 import ipcsurface as t  # noqa: E402
 
 PERF_MB = int(os.environ.get('PERF_MB', '40'))
-PERF_FLOOR = float(os.environ.get('PERF_FLOOR', '15'))   # MB/s，吞吐下限
+# CI 的 ubuntu runner 波动大：本机 26 MB/s，CI 有时掉到 15 以下会假红。
+# 10 MB/s 是「明显倒退」的线，本机 26 远高于它，真倒退（掉到个位数）照样拦得住。
+PERF_FLOOR = float(os.environ.get('PERF_FLOOR', '10'))   # MB/s，吞吐下限
 
 
 def main():
