@@ -69,6 +69,42 @@ class AsarTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def _header_with(self, files_json):
+        import struct
+        payload = files_json.encode()
+        blob = struct.pack('<I', 4) + struct.pack('<I', len(payload)) + payload + b'X'
+        fd, path = tempfile.mkstemp(suffix='.asar')
+        with os.fdopen(fd, 'wb') as fh:
+            fh.write(blob)
+        return path
+
+    def test_rejects_non_numeric_offset(self):
+        # fuzz 抓到过：offset 写成非数字时 int() 直接 ValueError 崩掉，而不是拒掉
+        path = self._header_with('{"files":{"a.js":{"offset":"abc","size":"1"}}}')
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.read_asar(path)
+        finally:
+            os.unlink(path)
+
+    def test_rejects_non_numeric_size(self):
+        path = self._header_with('{"files":{"a.js":{"offset":"0","size":"1e999"}}}')
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.read_asar(path)
+        finally:
+            os.unlink(path)
+
+    def test_accepts_string_numbers(self):
+        # asar 头里 offset/size 本来就是数字字符串，不能因为上面两条把它拒了
+        path = self._header_with('{"files":{"a.js":{"offset":"0","size":"1"}}}')
+        try:
+            header, files = ipc.read_asar(path)
+            self.assertIn('a.js', files)
+        finally:
+            files.close()
+            os.unlink(path)
+
 
 class ScanTests(unittest.TestCase):
     def scan(self, source, name='src/main.js'):

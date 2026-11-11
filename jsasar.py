@@ -97,6 +97,55 @@ class AsarFiles:
         return False
 
 
+def parse_asar_header(data):
+    """只解 asar 的头，不碰文件内容。返回 (header 字典, 内容起始偏移, spans 字典)。
+
+    单独拎出来一是为了 fuzz（不用每次造临时文件），二是 read_asar 里那一截
+    确实是个独立的、最容易被坏输入打崩的边界。坏输入一律 SystemExit，别崩别猜。
+    """
+    if len(data) < 8:
+        raise SystemExit('这不是 asar：文件太短')
+    header_size = struct.unpack('<I', data[4:8])[0]
+    payload = data[8:8 + header_size]
+    if len(payload) < header_size:
+        raise SystemExit('这不是 asar：头部被截断')
+    # 头部是层叠的 pickle：几层长度前缀，后面才是 JSON。
+    # 不数层数，直接找第一个 { 让它自己解，省得跟着版本变。
+    text = payload.decode('utf-8', 'replace')
+    start = text.find('{')
+    if start < 0:
+        raise SystemExit('这不是 asar：头部找不到 JSON')
+    try:
+        header, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        raise SystemExit('这不是 asar：头部不是合法 JSON')
+    base = 8 + header_size
+
+    spans = {}
+
+    def _parse_int(value, what):
+        """offset/size 得是数字（asar 里它们写成数字字符串）。不是就拒，别崩也别瞎猜。"""
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            raise SystemExit(f'这不是 asar：{what} 不是数字（{value!r}）')
+
+    def walk(node, prefix, depth=0):
+        if depth > 200:
+            raise SystemExit('这不是 asar：files 套太深，像是被改过')
+        for name, child in (node.get('files') or {}).items():
+            rel = f'{prefix}{name}'
+            if 'files' in child:
+                walk(child, rel + '/', depth + 1)
+            else:
+                offset = _parse_int(child.get('offset', 0), 'offset')
+                size = _parse_int(child.get('size', 0), 'size')
+                spans[rel] = (base + offset, size)
+
+    walk(header, '')
+    return header, base, spans
+
+
 def read_asar(path):
     """解一个 asar，返回 (文件树, 文件表)。
 
@@ -106,38 +155,8 @@ def read_asar(path):
     文件表不装内容，只装位置。要哪份切哪份。
     """
     with open(path, 'rb') as fh:
-        head = fh.read(8)
-        if len(head) < 8:
-            raise SystemExit('这不是 asar：文件太短')
-        header_size = struct.unpack('<I', head[4:8])[0]
-        payload = fh.read(header_size)
-        if len(payload) < header_size:
-            raise SystemExit('这不是 asar：头部被截断')
-        # 头部是层叠的 pickle：几层长度前缀，后面才是 JSON。
-        # 不数层数，直接找第一个 { 让它自己解，省得跟着版本变。
-        text = payload.decode('utf-8', 'replace')
-        start = text.find('{')
-        if start < 0:
-            raise SystemExit('这不是 asar：头部找不到 JSON')
-        try:
-            header, _ = json.JSONDecoder().raw_decode(text[start:])
-        except json.JSONDecodeError:
-            raise SystemExit('这不是 asar：头部不是合法 JSON')
-        base = 8 + header_size
-
-    spans = {}
-
-    def walk(node, prefix):
-        for name, child in (node.get('files') or {}).items():
-            rel = f'{prefix}{name}'
-            if 'files' in child:
-                walk(child, rel + '/')
-            else:
-                offset = int(child.get('offset', 0))
-                size = int(child.get('size', 0))
-                spans[rel] = (base + offset, size)
-
-    walk(header, '')
+        data = fh.read()
+    header, _base, spans = parse_asar_header(data)
     return header, AsarFiles(path, spans)
 
 
