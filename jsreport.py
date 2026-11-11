@@ -895,7 +895,13 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             label = labels.get(facet, facet)
             out.append(f'- **{label}**：{len(hits)} 处')
             for hit in hits[:3]:
-                out.append(f"  - `{hit['where']}`：{hit['snippet']}")
+                arg = hit.get('arg')
+                tag = ''
+                if arg == 'literal':
+                    tag = '（写死的值）'
+                elif arg == 'variable':
+                    tag = '（活值，可能来自外部）'
+                out.append(f"  - `{hit['where']}`{tag}：{hit['snippet']}")
         out.append('')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:

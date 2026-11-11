@@ -131,6 +131,12 @@ class ScanTests(unittest.TestCase):
         facts = self.scan("win.webContents.executeJavaScript('1+1')")
         self.assertIn('exec-js', facts['attack_surface'])
 
+    def test_attack_surface_classifies_literal_vs_variable(self):
+        facts = self.scan("shell.openExternal('https://fixed'); shell.openExternal(url)")
+        hits = facts['attack_surface']['shell-open']
+        self.assertEqual(hits[0]['arg'], 'literal')
+        self.assertEqual(hits[1]['arg'], 'variable')
+
     def test_computed_channel_is_dynamic(self):
         facts = self.scan("ipcMain.handle(makeChannel(op), () => {})")
         self.assertEqual(facts['handlers'], [])

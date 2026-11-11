@@ -94,6 +94,25 @@ ATTACK_LABELS = {
 }
 
 
+def _classify_arg(text, pos):
+    """看一个调用点第一个参数是死值还是活值。
+
+    pos 是左括号之后的位置。死值（字符串/数字）说明写死了，活值（变量/表达式/
+    函数调用）才可能来自外部——只标这一档，不替它下「一定危险」的结论。
+    """
+    i = pos
+    while i < len(text) and text[i] in ' \t\n':
+        i += 1
+    if i >= len(text):
+        return 'empty'
+    ch = text[i]
+    if ch in ('"', "'", '`'):
+        return 'literal'
+    if ch.isdigit() or ch in '-+':
+        return 'literal'
+    return 'variable'
+
+
 def line_of(text, pos):
     return text.count('\n', 0, pos) + 1
 
@@ -1445,13 +1464,16 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                     prefs[kind] = (value, where)
 
         # IPC 之外的能力面：一个文件扫一遍，按面归堆。这里只认「出现」，
-        # 不判强弱——别把「看到了 shell.openExternal」说成「会滥用它」。
+        # 但对 shell-open / exec-js 额外判一档「参数是死字面量还是活的」——
+        # 死的是写死的值，活的才可能来自外部，这一档决定证据强弱。
         for facet, pattern in ATTACK_PATTERNS:
             for match in pattern.finditer(text):
                 where = f'{rel}:{line_of(text, match.start())}'
                 snippet = text[match.start():match.start() + 40].strip()
-                attack_surface.setdefault(facet, []).append(
-                    {'where': where, 'snippet': snippet})
+                hit = {'where': where, 'snippet': snippet}
+                if facet in ('shell-open', 'exec-js'):
+                    hit['arg'] = _classify_arg(text, match.end())
+                attack_surface.setdefault(facet, []).append(hit)
 
         # 算出来的名字：能穷举就穷举成具体名字，穷举不了的留在 dynamic 里照实报。
         # 用还原之后的文本：常量代回去之后，拼装式子才看得清。

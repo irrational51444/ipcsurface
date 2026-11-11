@@ -189,7 +189,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **305 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **306 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **分支覆盖率 68%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **基准测试**：`python scripts/benchmark.py`，通道级 / API 级的精确率与召回率（数字写进 `docs/benchmark.md`）
