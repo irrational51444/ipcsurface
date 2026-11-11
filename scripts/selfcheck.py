@@ -8,7 +8,7 @@ import sys
 sys.path.insert(0, r'C:\Users\irrational\Desktop\rea-lab')
 import ipcsurface as t
 
-REAL = r'C:\Users\irrational\AppData\Local\Programs\DeepSeek Harness\resources\app.asar'
+REAL = os.environ.get('IPCSURFACE_REAL_APP') or r'C:\Users\irrational\AppData\Local\Programs\DeepSeek Harness\resources\app.asar'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
