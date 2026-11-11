@@ -2367,6 +2367,9 @@ def load_record(path):
         records = data
     else:
         raise SystemExit('这不是 REA 的 Evidence 包：找不到 records')
+    if not isinstance(records, list) or not all(isinstance(r, dict) for r in records):
+        # fuzz 抓到过：records 写成字符串、或列表里塞了非字典，都会 .get 崩掉
+        raise SystemExit('这不是 REA 的 Evidence 包：records 不是记录列表')
     for record in records:
         result = record.get('normalized_result') or {}
         if 'graph' in result:
@@ -3615,11 +3618,12 @@ def _rva_to_offset(rva, sections):
     return None
 
 
-def read_pe_imports(path):
-    """读 PE 的导入表。只回答一件事：这个模块引了外头哪些函数。"""
-    with open(path, 'rb') as fh:
-        data = fh.read()
-    if data[:2] != b'MZ':
+def parse_pe_bytes(data):
+    """读 PE 的导入表，纯字节入口（fuzz 用，也方便单测）。坏输入 SystemExit，别崩。
+
+    只回答一件事：这个模块引了外头哪些函数。
+    """
+    if len(data) < 2 or data[:2] != b'MZ':
         raise SystemExit('这不是 PE：开头不是 MZ')
     try:
         pe_off = struct.unpack_from('<I', data, 0x3C)[0]
@@ -3688,6 +3692,13 @@ def read_pe_imports(path):
         offset += 20
 
     return {'machine': machine, 'is_64': is_64, 'libraries': libraries, 'sections': len(sections)}
+
+
+def read_pe_imports(path):
+    """读 PE 的导入表。只回答一件事：这个模块引了外头哪些函数。"""
+    with open(path, 'rb') as fh:
+        data = fh.read()
+    return parse_pe_bytes(data)
 
 
 def audit_pe(facts):

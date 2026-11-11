@@ -28,6 +28,14 @@ def asar_seed():
     return struct.pack('<I', len(header)) + header + b'X'
 
 
+def pe_seed():
+    data = bytearray(b'MZ' + b'\x00' * (0x40 - 2))
+    struct.pack_into('<I', data, 0x3C, 0x40)
+    data += b'PE\x00\x00'
+    data += b'\x00' * (20 + 240)
+    return bytes(data)
+
+
 def mutate(rng, data):
     data = bytearray(data)
     choice = rng.randrange(5)
@@ -66,6 +74,7 @@ def run(iterations):
                 print(f'  {name} {i}/{iterations}', flush=True)
 
     drive('asar 头', jsasar.parse_asar_header, asar_seed())
+    drive('PE 导入表', t.parse_pe_bytes, pe_seed())
 
     if crashes:
         print(f'发现 {len(crashes)} 个崩溃：')
@@ -73,7 +82,7 @@ def run(iterations):
             print(f'  [{name} #{i}] {kind}: {msg}')
             print(f'      样本 {sample!r}')
         return 1
-    print(f'asar 头 {iterations} 次变异，没崩')
+    print(f'两个入口各 {iterations} 次变异，没崩')
     return 0
 
 

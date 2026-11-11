@@ -211,6 +211,29 @@ class EvidenceTests(unittest.TestCase):
         levels = [level for level, _, _ in ipc.audit_evidence(facts)]
         self.assertIn('high', levels)
 
+    def test_rejects_non_list_records(self):
+        # fuzz 抓到过：records 写成字符串、或列表里塞了非字典，都会 .get 崩掉
+        import json as _json
+        fd, path = tempfile.mkstemp(suffix='.json')
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            _json.dump({'records': 'not-a-list'}, fh)
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.load_record(path)
+        finally:
+            os.unlink(path)
+
+    def test_rejects_records_with_non_dict_entries(self):
+        import json as _json
+        fd, path = tempfile.mkstemp(suffix='.json')
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            _json.dump({'records': [1, 2, 3]}, fh)
+        try:
+            with self.assertRaises(SystemExit):
+                ipc.load_record(path)
+        finally:
+            os.unlink(path)
+
     def test_sender_check_present_clears_it(self):
         facts = ipc.collect_evidence(minimal_evidence(['a:1'], sender_checks=2))
         texts = [text for _, text, _ in ipc.audit_evidence(facts)]
