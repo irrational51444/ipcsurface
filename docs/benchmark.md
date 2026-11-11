@@ -33,6 +33,9 @@ python scripts/benchmark.py
 | DeepSeek Harness | 100% | 100% | 3 | 60% | 100% |
 | 合计 | 100% | 96% | 24 | 24% | 100% |
 
+抖音、bilibili、vivo、aclos 四个已入库的包 `verified` 是空的（只确认了通道名真、
+危险 API 读不到或全是借来误报），不进这张打分表——它们是边界样本，不是 0 分。
+
 ## 这几个数字该怎么读（重要）
 
 - **通道级 100% / 96% 是好消息**：工具基本不把通道认错、也不漏（漏的那 1 条是
@@ -48,8 +51,11 @@ API 级精确率低，不是因为工具坏了，是因为**人工只确认了�
 
 ## 还差什么（诚实的清单）
 
-- 应用数：现在 2 个真包（Obsidian、DeepSeek Harness）。路线图要 5-10 个、覆盖不同
-  构建链（webpack / vite / electron-forge / electron-vite / 原生 / 游戏客户端）。
+- 应用数：现在 6 个真包（Obsidian、DeepSeek Harness 有完整人工标注；抖音、bilibili、
+  vivo、aclos 是边界样本，分别记录「跨文件委托读不到」「重度混淆动态注册」「sink 全
+  同名多义借来」三种读不到）。路线图要 5-10 个、覆盖不同构建链
+  （webpack / vite / electron-forge / electron-vite / 原生 / 游戏客户端）——现在缺
+  vite / electron-forge / electron-vite 这几条干净的链。
 - API 级误报标注：把 `false_positive` 从通道粒度下沉到 API 粒度，API 精确率才有意义。
-- 抖音 / bilibili 两个已在本机的包：它们大量动态注册（名字拼装、第三方库），
-  静态能抓到的少，需要先跑运行时探针对齐再入标注。
+  vivo 已经补了一例 API 粒度的通道级 false_positive（9 条通道全借来），还没到
+  「某通道某 API」的细粒度。
