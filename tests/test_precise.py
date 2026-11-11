@@ -81,6 +81,40 @@ class PreciseTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_for_of_loop_enumerates_channels(self):
+        # 抖音那 8 条：for (const name of [...]) ipcMain.on(name, ...) 枚举注册
+        main = ('const {ipcMain} = require("electron");\n'
+                'const fs = require("fs");\n'
+                'const names = ["close", "minimize", "openFolder"];\n'
+                'for (const name of names) {\n'
+                '  ipcMain.on(name, (e, p) => fs.readFileSync(p));\n'
+                '}\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            out = pe.analyse_asar_precise(path)
+            self.assertEqual(out, {
+                'close': ['readFileSync'],
+                'minimize': ['readFileSync'],
+                'openFolder': ['readFileSync'],
+            })
+        finally:
+            os.unlink(path)
+
+    def test_for_in_loop_is_not_expanded(self):
+        # for...in 遍历的是对象 key，不是字面量通道清单，不能当通道展开
+        main = ('const {ipcMain} = require("electron");\n'
+                'const fs = require("fs");\n'
+                'const ev = { a: "A", b: "B" };\n'
+                'for (const k in ev) {\n'
+                '  ipcMain.on(k, (e, p) => fs.readFileSync(p));\n'
+                '}\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            out = pe.analyse_asar_precise(path)
+            self.assertEqual(out, {}, 'for...in 不能当字面量通道清单展开')
+        finally:
+            os.unlink(path)
+
 
 if __name__ == '__main__':
     unittest.main()

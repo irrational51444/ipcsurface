@@ -181,6 +181,93 @@ def _handler_of(node):
     return None
 
 
+def _array_consts(root, text):
+    """const x = ['a','b'] → {x: ['a','b']}，供循环枚举展开用。"""
+    arrays = {}
+    for n in _walk(root):
+        if n.type not in ('lexical_declaration', 'variable_declaration'):
+            continue
+        for d in n.named_children:
+            if d.type != 'variable_declarator':
+                continue
+            name = d.child_by_field_name('name')
+            value = d.child_by_field_name('value')
+            if name is None or value is None or value.type != 'array':
+                continue
+            items = []
+            ok = True
+            for c in value.named_children:
+                if c.type == 'string':
+                    items.append(_text_of(c, text)[1:-1])
+                else:
+                    ok = False
+                    break
+            if ok:
+                arrays[_text_of(name, text)] = items
+    return arrays
+
+
+def _for_of_channels(node, text, arrays):
+    """for (const x of [...]) { ipcMain.on(x, fn) } → [(通道名, handler)]。
+
+    只展开「字面量数组 + ipcMain 用循环变量当通道名」这一种；迭代对象是变量
+    时查 arrays 表（const x = [...]）。for...in 不展开（遍历的是对象 key，不是
+    字面量通道清单）。
+    """
+    if node.type != 'for_in_statement':
+        return []
+    op = node.child_by_field_name('operator')
+    if op is not None and _text_of(op, text) == 'in':
+        return []
+    left = node.child_by_field_name('left')
+    right = node.child_by_field_name('right')
+    body = node.child_by_field_name('body')
+    if left is None or right is None or body is None:
+        return []
+    var = _text_of(left, text)
+    if right.type == 'array':
+        items = []
+        for c in right.named_children:
+            if c.type != 'string':
+                return []
+            items.append(_text_of(c, text)[1:-1])
+    elif right.type == 'identifier':
+        items = arrays.get(_text_of(right, text))
+        if items is None:
+            return []
+    else:
+        return []
+    if not items:
+        return []
+    # 循环体里找 ipcMain.on/handle(var, fn)
+    handler = None
+    for n in _walk(body):
+        if n.type != 'call_expression':
+            continue
+        fn = n.child_by_field_name('function')
+        if fn is None or fn.type != 'member_expression':
+            continue
+        obj = fn.child_by_field_name('object')
+        prop = fn.child_by_field_name('property')
+        if obj is None or prop is None:
+            continue
+        if _text_of(obj, text) != 'ipcMain':
+            continue
+        if _text_of(prop, text) not in ('handle', 'on', 'handleOnce'):
+            continue
+        args = n.child_by_field_name('arguments')
+        if args is None or len(args.named_children) < 2:
+            continue
+        first = args.named_children[0]
+        if _text_of(first, text) != var:
+            continue
+        handler = args.named_children[1]
+        break
+    if handler is None:
+        return []
+    return [(ch, handler) for ch in items]
+
+
 def _require_map(root, text):
     """const fs = require('fs') / const x = require('./mod') → {var: path}"""
     req = {}
@@ -231,7 +318,29 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs')):
         out = {}
         for rel, mod in modules.items():
             text, root, funcs, req = mod['text'], mod['root'], mod['funcs'], mod['requires']
+            arrays = _array_consts(root, text)
+
+            def record(channel, handler):
+                if channel is None or handler is None:
+                    return
+                apis = set()
+                if handler.type == 'identifier':
+                    name = _text_of(handler, text)
+                    if name in funcs:
+                        apis |= _follow(funcs[name], text, funcs, 0)
+                else:
+                    apis |= _follow(handler, text, funcs, 0)
+                # 跨文件：handler 里 require 进来的模块函数，再跟一层
+                apis |= _cross_file(handler, text, req, modules, rel)
+                if apis:
+                    out.setdefault(channel, set()).update(apis)
+
             for n in _walk(root):
+                # 循环枚举：for (const x of [...]) { ipcMain.on(x, fn) }
+                if n.type == 'for_in_statement':
+                    for channel, handler in _for_of_channels(n, text, arrays):
+                        record(channel, handler)
+                    continue
                 if n.type != 'call_expression':
                     continue
                 fn = n.child_by_field_name('function')
@@ -255,17 +364,7 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs')):
                 handler = _handler_of(n)
                 if handler is None:
                     continue
-                apis = set()
-                if handler.type == 'identifier':
-                    name = _text_of(handler, text)
-                    if name in funcs:
-                        apis |= _follow(funcs[name], text, funcs, 0)
-                else:
-                    apis |= _follow(handler, text, funcs, 0)
-                # 跨文件：handler 里 require 进来的模块函数，再跟一层
-                apis |= _cross_file(handler, text, req, modules, rel)
-                if apis:
-                    out.setdefault(channel, set()).update(apis)
+                record(channel, handler)
         return {k: sorted(v) for k, v in out.items()}
     finally:
         files.close()
