@@ -165,9 +165,46 @@
         "dsh-desktop:boot-failed": "ipcMain.handle(DESKTOP_IPC.bootFailed) → reportFatal(new Error(message), \"web-boot\")，reportFatal 会写崩溃日志"
       },
       "unverified": []
+    },
+    "douyin": {
+      "asar": "C:\\Program Files (x86)\\ByteDance\\douyin\\8.8.0\\resources\\app.asar",
+      "verified": {},
+      "unverified": [
+        "BRIDGE_MAIN_RECEIVE_EVENT",
+        "BRIDGE_MAIN_RECORD_CONTAINER",
+        "BRIDGE_RECEIVE_RENDERER_JSB_REGISTER",
+        "BRIDGE_RECEIVE_RENDERER_JSB_UNREGISTER",
+        "CANS_OPEN_H5_DEVTOOL",
+        "EVENTCENTER_MAIN_RECEIVE_EVENT",
+        "EVENTCENTER_MAIN_TRIGGER_EVENT",
+        "GET_CANS_MAIN_SETTING",
+        "MAIN_CALL_RENDERER_METHOD_CALLBACK",
+        "REPORT_STAT",
+        "WEBVIEW_GET_BRIDGE_CONFIG",
+        "WEBVIEW_GET_CURRENT_SCHEME",
+        "WEBVIEW_GET_GLOBAL_PROPS",
+        "WEBVIEW_UPDATE_CURRENT_SCHEME",
+        "cancel-to-update",
+        "close",
+        "confirm-to-update",
+        "maximize",
+        "minimize",
+        "openFolder",
+        "pin",
+        "quit-and-install-update"
+      ],
+      "依据": "22 条通道名是真的（constanst.js 里常量名=字符串值，IPC_EVENTS.X 的 X 就是通道名）。但 handler 直接体里没有危险 API：活全在跨文件类方法里（this._getStaticSetting()、this.setContainerIdByBrowserViewId() 等），静态追不过去。CANS_OPEN_H5_DEVTOOL 直接调 e.sender.openDevTools()，不在危险清单里。结论：通道名层面认得出，危险 API 层面是「看不到」，不是「没有」——这是跨文件委托的已知缺口。"
+    },
+    "bilibili": {
+      "asar": "C:\\Program Files\\bilibili\\resources\\app.asar",
+      "verified": {},
+      "unverified": [
+        "electron-store-get-data"
+      ],
+      "依据": "重度混淆（主 bundle 是压缩产物），只扫出 1 条通道名 electron-store-get-data。其余通道大概率走第三方库动态注册（channel_dynamic_in_deps），静态认不出。这是「看不到」不是「没有」，要跑运行时探针才能对齐（P1-8）。"
     }
   },
   "没读的包": {
-    "为什么": "抖音桌面端、bilibili 桌面端都报 0 条。零发现分不清是「真没有」还是「我看不见」，没读完不敢当标准答案。"
+    "为什么": "已经读过一遍：抖音 22 条通道名确认、bilibili 1 条。读不到的（跨文件委托、动态注册）不是「没读」，是「静态看不到」，分别记在 douyin/bilibili 的 unverified 和依据里。"
   }
 }
