@@ -242,3 +242,8 @@
 
 - 变了的字段：native_imports, schema
 - 理由：新增 native_imports 顶层键，schema 升 19
+
+## 2026-11-11 21:00
+
+- 变了的字段：fingerprint, schema
+- 理由：新增 channel_sink_tiers：每条危险 API 的来路可信度档，schema 升到 asar/20

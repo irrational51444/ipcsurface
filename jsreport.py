@@ -96,6 +96,34 @@ ENUM_STRENGTH_PROVEN = 0.9
 ENUM_STRENGTH_OPEN = 0.6
 
 
+# sink 路径强度档，从高可信到低可信。顺序就是校准脚本单调性断言的依据。
+# 校准实测（docs/calibration.md）：direct/name_confirmed/chain 三档 100%，
+# ambiguous 53%，ast_only 25%——这条梯度真的能把「更可能错的 API」分出来。
+SINK_TIER_ORDER = ['direct', 'name_confirmed', 'chain', 'ambiguous', 'ast_only']
+
+
+def sink_tier(facts, channel, api):
+    """一条危险 API 的「来路可信度」档，从高到低。
+
+    - direct          处理函数自己直接调（hops≤1），且没经过同名多义
+    - name_confirmed  语法树和名字级双口径都报，但路径没记录（别名/成员调用）
+    - chain           同文件内经过一层函数链（hops>1），无同名多义
+    - ambiguous       经过同名多义链（via 带「同名多义」，或通道在 ambiguous 名单）
+    - ast_only        只有语法树口径连上，名字级没连上（最可疑）
+    """
+    paths = facts.get('channel_sink_paths') or {}
+    sinks = facts.get('channel_sinks') or {}
+    ambiguous = set(facts.get('channel_sinks_ambiguous') or [])
+    path = paths.get(channel, {}).get(api)
+    in_names = api in (sinks.get(channel) or [])
+    if path is None:
+        return 'name_confirmed' if in_names else 'ast_only'
+    via = path.get('via', '')
+    if '同名多义' in via or channel in ambiguous:
+        return 'ambiguous'
+    return 'direct' if path.get('hops', 9) <= 1 else 'chain'
+
+
 def channel_sources(facts, probe=None):
     """每条通道名各自是被谁看见的。
 

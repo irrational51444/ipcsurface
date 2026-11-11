@@ -29,33 +29,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import ipcsurface as t  # noqa: E402
+from jsreport import SINK_TIER_ORDER, sink_tier  # noqa: E402
 
 GOLD = os.path.join(ROOT, 'tests', 'golden', 'real_packages.json')
-
-# sink 路径强度档，从高可信到低可信。顺序就是单调性断言的依据。
-SINK_TIER_ORDER = ['direct', 'name_confirmed', 'chain', 'ambiguous', 'ast_only']
-
-
-def sink_tier(facts, channel, api):
-    """一条危险 API 的「来路可信度」档，从高到低。
-
-    - direct          处理函数自己直接调，且没经过同名多义
-    - name_confirmed  语法树和名字级双口径都报，但路径没记录（别名/成员调用）
-    - chain           同文件内经过一层函数链，无同名多义
-    - ambiguous       经过同名多义链（压缩产物里同名函数，可能跟错身子）
-    - ast_only        只有语法树口径连上，名字级没连上（最可疑）
-    """
-    paths = facts.get('channel_sink_paths') or {}
-    sinks = facts.get('channel_sinks') or {}
-    ambiguous = set(facts.get('channel_sinks_ambiguous') or [])
-    path = paths.get(channel, {}).get(api)
-    in_names = api in (sinks.get(channel) or [])
-    if path is None:
-        return 'name_confirmed' if in_names else 'ast_only'
-    via = path.get('via', '')
-    if '同名多义' in via or channel in ambiguous:
-        return 'ambiguous'
-    return 'direct' if path.get('hops', 9) <= 1 else 'chain'
 
 
 def _labelled(gold):

@@ -36,17 +36,17 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.84.0'
+__version__ = '0.85.0'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
 import jsreport  # noqa: E402
 from jsreport import (  # noqa: E402
     ACTION_BY_SOURCE, ACTION_STRICTNESS, ALL_SOURCES, ENUM_STRENGTH_OPEN, ENUM_STRENGTH_PROVEN,
-    HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SOURCE_STRENGTH, STATIC_SOURCES,
+    HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SINK_TIER_ORDER, SOURCE_STRENGTH, STATIC_SOURCES,
     _build_independence, audit_asar, baseline_delta, channel_sources, confidence_ladder,
     confidence_levels, corroboration_strength, fingerprint_of, independent, input_sha256,
-    refutes_if, render_asar, render_baseline, sample_sites,
+    refutes_if, render_asar, render_baseline, sample_sites, sink_tier,
 )
 
 jsreport.VERSION = __version__   # 报告层的版本号由这儿注入
@@ -2354,7 +2354,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/19',
+        'schema': 'ipcsurface/asar/20',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2393,6 +2393,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sinks_ast': facts.get('channel_sinks_ast'),
         # 这些结论要经过同名多义链，可能是跟错了函数，读的时候要留一分
         'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
+        # 每条危险 API 的来路可信度档（direct/name_confirmed/chain/ambiguous/ast_only）
+        'channel_sink_tiers': facts.get('channel_sink_tiers'),
         # 第二条口径：外部输入能到危险参数的通道
         'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
@@ -2467,7 +2469,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'limits', 'runtime', 'poke', 'web_preferences', 'attack_surface', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
-    'channel_sinks_ambiguous', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
@@ -4009,6 +4011,15 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths
+        # sink 路径强度档：每条报出的危险 API 是直连还是借来的。
+        # 让机器直接筛「硬结论 vs 软结论」，不用再跑校准脚本。
+        _tier_src = ast_sinks if ast_sinks is not None else sinks
+        if _tier_src is not None:
+            tiers = {ch: {api: sink_tier(facts, ch, api) for api in apis}
+                     for ch, apis in _tier_src.items() if apis}
+            facts['channel_sink_tiers'] = tiers if tiers else None
+        else:
+            facts['channel_sink_tiers'] = None
         facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']
