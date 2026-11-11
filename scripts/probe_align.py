@@ -28,7 +28,7 @@ def main():
         return 2
     probe_path, asar_path = sys.argv[1], sys.argv[2]
 
-    with open(probe_path, encoding='utf-8') as fh:
+    with open(probe_path, encoding='utf-8-sig') as fh:
         probe = json.load(fh)
     runtime = set(probe.get('handlers', []) + probe.get('listeners', []))
 
