@@ -31,6 +31,8 @@ jobs:
           python scripts/coverage_check.py
       - name: 输入解析器 fuzz 冒烟（短）
         run: python scripts/fuzz_smoke.py
+      - name: 性能门禁（吞吐下限，倒退会红）
+        run: python scripts/perf_check.py
       - name: 拿不到证据时要报错，不能静悄悄过
         run: |
           set +e
