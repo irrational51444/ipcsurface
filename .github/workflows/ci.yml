@@ -87,6 +87,19 @@ jobs:
       - name: 端到端跑一遍并校验
         run: python scripts/e2e_check.py
 
+  fuzz:
+    # atheris 要 clang，只有 Linux runner 有；本机 Windows 跑不了，所以放 CI。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 装 atheris
+        run: pip install atheris
+      - name: 短 fuzz（30 秒，三个解析入口）
+        run: python fuzz/atheris_fuzz.py -max_total_time=30
+
   signal:
     # 这一节验的是「CI 能不能靠退出码和 SARIF 做判断」，不是验工具本身
     runs-on: ubuntu-latest
