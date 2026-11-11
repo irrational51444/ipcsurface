@@ -60,6 +60,51 @@ python ipcsurface.py "/path/to/Obsidian/resources/obsidian.asar"
 `vault-move` 真 `renameSync`、`sandbox` 真的会 `rmSync`…），
 剩下的是「这条链路我看见了，但没人工核」。
 
+## 0.85.0 这一版新加的，都是真跑出来的
+
+### 能力面不止 IPC 通道
+
+`attack_surface` 盯六个面：`shell-open`、`exec-js`、`permission-handler`、
+`custom-protocol`、`deep-link`、`webview`。每条带参数强弱档——参数是写死的值，
+还是可能从外部进来的活值，分两档报。
+
+### 双引擎精查（opt-in）
+
+`--precise` 用 tree-sitter 重走一遍：跨文件 `require`、类方法跟随、循环枚举
+（`for (const x of [...]) ipcMain.on(x)` 能展开）。默认零依赖不变，装 extra 才启用：
+
+```bash
+pip install 'ipcsurface[precise]'
+python ipcsurface.py app.asar --precise -o report.md
+```
+
+### 运行时探针对齐（静态猜不到的，让它自己说）
+
+`probe/run.js` 在真 Electron 里起靶场，读运行时注册的通道，跟静态对账。本机
+虚拟机（Ubuntu 26.10 + xvfb + Electron）跑通：运行时 7 条、静态认得 5 条、总对齐
+71%，**应用自己注册的 5 条 5/5 全对齐**，差的 2 条是 Electron/Node 内置。这条已经
+落进 CI（对齐率低于门禁就红）。
+
+### 每条危险 API 的来路可信度
+
+`channel_sink_tiers` 给每条报出的危险 API 标档：直连 / 双口径证实 / 同文件链 /
+同名多义借来 / 仅语法树借来。拿 6 个真包人工对账（`scripts/calibration.py`）：
+
+| 来路档 | 对 | 误报 | 精确率 |
+| --- | --- | --- | --- |
+| 直连 / 双口径 / 同文件链 | 18 | 0 | 100% |
+| 同名多义借来 | 8 | 7 | 53% |
+| 仅语法树借来 | 1 | 3 | 25% |
+
+路径越可信，精确率越高，**单调成立**——这条由校准脚本断言守着，不是嘴说。
+
+### 基准对账（6 个真包）
+
+`scripts/benchmark.py` 通道级精确率 100%、召回率 96%；API 级精确率 24%——这个
+24% 是实话：共用函数被保守跟进去，报出来的远多于该通道真有的。语料库 6 个真包
+（Obsidian / DeepSeek Harness / 抖音 / bilibili / vivo / ACLOS），边界样本也入库，
+见 `docs/benchmark.md`。
+
 ## 为什么不是「扫出通道数」就完事
 
 同一份报告里的话，强度不一样。上面那份真实报告：
@@ -193,15 +238,20 @@ python ipcsurface.py --recover out.md
 - **性能门禁**：python scripts/perf_check.py，固定种子造包测吞吐，低于下限 CI 红（README 的性能数字也从这个脚本复现）
 - **分支覆盖率 68%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
+- **输入解析 fuzz**：`python scripts/fuzz_smoke.py` 字节级变异 asar 头 / PE 导入表；CI 里另跑 30 秒 atheris 真 fuzz
 - **基准测试**：`python scripts/benchmark.py`，通道级 / API 级的精确率与召回率（数字写进 `docs/benchmark.md`）
+- **可信度校准**：`python scripts/calibration.py`，按证据强度档和 sink 来路档分层算精确率，照出「哪个档名不副实」
+- **运行时对齐**：`python scripts/probe_align.py probe.json app.asar`，静态认得几条运行时通道；应用通道要全对齐
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
 - **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
 
-CI 四个任务，缺一不可：
+CI 六个任务，缺一不可：
 
-- `check`（Linux）：装包、造示例包、三道闸
+- `check`（Linux）：装包、造示例包、三道闸、覆盖率门禁、性能门禁
 - `windows`：同一套三道闸，外加 Windows 专属断言（目录刷盘走 `FlushFileBuffers` 且 `durable` 必须是 `yes`、替换被占用报 `replace_failed`、263 字符长路径写得出来）
+- `fuzz`：30 秒 atheris 短 fuzz（三个解析入口）
+- `probe`：xvfb + Electron 起靶场，跑运行时探针，对齐率低于门禁红
 - `signal`：干净包退 0、有问题的包退 2、SARIF 能上传
 - `e2e`：装成包 → 对可复现靶场跑 → 校准 schema 与口径 → 人工标注对账
 
@@ -227,6 +277,8 @@ ipcsurface.py 五千多行，什么都装在里面，改一处要读全部。现
 | jsparse.py | 词法：认不出的字符、未闭合的字符串都不再让整份分析作废 |
 | jssem.py | 污点与可达性：赋值、回调、循环变量、catch 变量的传播 |
 | jsast.py | 语法树：成员调用、方括号、别名、回调连边 |
+| native_imports.py | PE 导入表：原生模块能力面（加壳读不出就写「读不到」） |
+| precise_engine.py | tree-sitter 精查层（opt-in）：跨文件 require、类方法跟随、循环枚举 |
 | ipcsurface.py | 扫描、证据、报告、命令行（还在往外搬） |
 
 搬完这一层，295 条用例、四道闸、真包数字全都没变——这是能搬的前提。

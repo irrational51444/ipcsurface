@@ -8,9 +8,10 @@
 - 对齐率高但静态多报 = 静态误报。
 
 用法：
-    python scripts/probe_align.py probe.json app.asar
+    python scripts/probe_align.py probe.json app.asar [--min-align 0.7]
 
 probe.json 是 scripts/probe_to_json.py 的产出（含 handlers / listeners）。
+--min-align 给一个 0~1 的门禁：对齐率低于它退 1（挂 CI 用）。
 """
 import json
 import os

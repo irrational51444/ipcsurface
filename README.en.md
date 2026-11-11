@@ -29,6 +29,53 @@ Three gates, same set locally and in CI:
 
 ---
 
+## What 0.85.0 added, all actually run
+
+### Capability surface beyond IPC channels
+
+`attack_surface` watches six faces: `shell-open`, `exec-js`, `permission-handler`,
+`custom-protocol`, `deep-link`, `webview`. Each carries an argument strength tier —
+literal value vs live value that could come from outside.
+
+### Dual-engine precise scan (opt-in)
+
+`--precise` redoes the walk with tree-sitter: cross-file `require`, class-method
+following, loop enumeration (`for (const x of [...]) ipcMain.on(x)` expands). The
+zero-dependency default is unchanged; install the extra to enable it:
+
+```bash
+pip install 'ipcsurface[precise]'
+python ipcsurface.py app.asar --precise -o report.md
+```
+
+### Runtime probe alignment
+
+`probe/run.js` launches a real Electron fixture and reads the channels registered at
+runtime, then reconciles against the static scan. Run on a local VM (Ubuntu 26.10 +
+xvfb + Electron): 7 runtime channels, 5 statically recognized, 71% total — and **the
+5 app-written channels align 5/5**, the 2 misses being Electron/Node built-ins. This
+is now a CI job (alignment below the gate fails the build).
+
+### Sink provenance tier per dangerous API
+
+`channel_sink_tiers` tags every reported dangerous API: direct / name-confirmed /
+same-file chain / ambiguous-name borrow / AST-only borrow. Hand-checked on 6 real apps:
+
+| Provenance tier | Right | False | Precision |
+| --- | --- | --- | --- |
+| direct / name-confirmed / chain | 18 | 0 | 100% |
+| ambiguous-name borrow | 8 | 7 | 53% |
+| AST-only borrow | 1 | 3 | 25% |
+
+The more direct the path, the higher the precision — **monotone**, and the calibration
+script asserts it rather than claiming it.
+
+### Benchmark on 6 real apps
+
+`scripts/benchmark.py`: channel precision 100%, recall 96%; API precision 24% — that
+24% is honest (shared functions over-approximate). Corpus is 6 real apps (Obsidian /
+DeepSeek Harness / douyin / bilibili / vivo / ACLOS); see `docs/benchmark.md`.
+
 ## Why "number of channels" is not the answer
 
 Statements in one report do not carry the same weight. From that real report:
@@ -153,11 +200,15 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 - **319 test cases**
 - **68% branch coverage**, only up, never down: python scripts/coverage_check.py, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
+- **Input parser fuzz**: `python scripts/fuzz_smoke.py` byte-level mutation of asar headers / PE imports; CI also runs 30 s of real atheris fuzz
+- **Benchmark**: `python scripts/benchmark.py` — channel / API precision and recall (numbers in `docs/benchmark.md`)
+- **Calibration**: `python scripts/calibration.py` — per-tier precision on evidence strength and sink provenance, catching tiers that do not live up to their name
+- **Runtime alignment**: `python scripts/probe_align.py probe.json app.asar` — app channels must align
 - **End to end**: `python scripts/e2e_check.py` — installed CLI, schema, md/json agreement, exit codes, determinism, ground-truth scoring
 - **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list
-- All three in one command: `bash scripts/verify.sh`, which CI runs too
+- All in one command: `bash scripts/verify.sh`, which CI runs too
 
-CI runs four jobs: `check` (Linux), `windows` (same gates plus Windows-specific assertions), `signal` (exit-code contract and SARIF), `e2e` (install and reconcile).
+CI runs six jobs: `check` (Linux, gates + coverage + perf), `windows` (same gates plus Windows-specific assertions), `fuzz` (30 s atheris), `probe` (xvfb + Electron runtime alignment), `signal` (exit-code contract and SARIF), `e2e` (install and reconcile).
 
 Releases are scripted: `check_release_tag.py` verifies the tagged commit is CI-green (`0` green / `1` red / `2` unknown — **checks still running count as unknown**) and `make_release.py` publishes only after the guard passes (`3` means the script itself failed). Both scripts have their own tests.
 
