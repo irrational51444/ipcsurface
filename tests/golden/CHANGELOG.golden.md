@@ -232,3 +232,8 @@
 
 - 变了的字段：fingerprint
 - 理由：升版 0.84.0：版本号由主模块注入报告层
+
+## 2026-11-11 18:10
+
+- 变了的字段：attack_surface, schema
+- 理由：P1-5 新增能力面字段 attack_surface，schema 升到 asar/18

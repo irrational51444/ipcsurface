@@ -871,6 +871,32 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         for rel in facts['nested_asar'][:5]:
             out.append(f"  - `{rel}`")
         out.append('- 要看得先把它们解出来，单独跑一遍')
+
+    # IPC 之外的能力面（P1-5）：主线只进计数 + 样本，全量进 JSON。
+    asurf = facts.get('attack_surface') or {}
+    if any(asurf.values()):
+        labels = {
+            'shell-open': 'shell 打开外部链接/文件',
+            'exec-js': 'executeJavaScript 注入',
+            'permission-handler': '权限请求处理器',
+            'custom-protocol': '自定义协议',
+            'deep-link': '深链 / 第二实例',
+            'webview': 'webview / WebContentsView',
+        }
+        out.append('')
+        out.append('## 能力面（IPC 之外）')
+        out.append('')
+        out.append('这里只记「这个面在源码里出现过」，不判它会怎么用。')
+        out.append('')
+        for facet in sorted(asurf):
+            hits = asurf[facet]
+            if not hits:
+                continue
+            label = labels.get(facet, facet)
+            out.append(f'- **{label}**：{len(hits)} 处')
+            for hit in hits[:3]:
+                out.append(f"  - `{hit['where']}`：{hit['snippet']}")
+        out.append('')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:
             out.append(f'- 名字是算出来的不是写死的：`{what}`  `{where}`')

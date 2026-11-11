@@ -131,7 +131,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、**哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/17`；对不上就停下，别按字段在不在猜。
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/18`；对不上就停下，别按字段在不在猜。
 
 ---
 
@@ -189,7 +189,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **303 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **305 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **分支覆盖率 68%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
 - **基准测试**：`python scripts/benchmark.py`，通道级 / API 级的精确率与召回率（数字写进 `docs/benchmark.md`）

@@ -121,6 +121,16 @@ class ScanTests(unittest.TestCase):
         self.assertEqual([n for n, _ in facts['handlers']], ['ledger:shadow'])
         self.assertEqual(facts['dynamic'], [])
 
+    def test_attack_surface_detects_shell_open(self):
+        facts = self.scan("shell.openExternal('https://x'); shell.openPath('/tmp/y')")
+        surf = facts['attack_surface']
+        self.assertIn('shell-open', surf)
+        self.assertEqual(len(surf['shell-open']), 2)
+
+    def test_attack_surface_detects_exec_js(self):
+        facts = self.scan("win.webContents.executeJavaScript('1+1')")
+        self.assertIn('exec-js', facts['attack_surface'])
+
     def test_computed_channel_is_dynamic(self):
         facts = self.scan("ipcMain.handle(makeChannel(op), () => {})")
         self.assertEqual(facts['handlers'], [])
@@ -919,7 +929,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/17')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/18')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))

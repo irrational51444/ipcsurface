@@ -71,6 +71,28 @@ PATTERNS = [
     ('sandbox', re.compile(r"sandbox\s*:\s*(\w+)")),
 ]
 
+# IPC 之外的能力面。路线图 P1-5：顶尖的能力面清单不该只有 ipcMain/ipcRenderer。
+# 每一项是一个独立的「面」，带证据强度进报告；主线只进计数+样本，全量进 JSON。
+# 这里只负责「认出来」，强弱判断（guard 有没有）在 describe 那层做。
+ATTACK_PATTERNS = [
+    ('shell-open', re.compile(r"shell\.(?:openExternal|openPath|showItemInFolder)\(\s*")),
+    ('exec-js', re.compile(r"\.executeJavaScript\(\s*")),
+    ('permission-handler', re.compile(r"\.setPermission(?:Request|Check)Handler\(\s*")),
+    ('custom-protocol', re.compile(r"protocol\.(?:handle|registerFileProtocol|registerBufferProtocol|"
+                                  r"registerStreamProtocol|registerHttpProtocol|registerSchemesAsPrivileged)\(\s*")),
+    ('deep-link', re.compile(r"setAsDefaultProtocolClient\(\s*|app\.on\(\s*['\"]open-url|"
+                             r"app\.on\(\s*['\"]second-instance")),
+    ('webview', re.compile(r"<webview\b|webviewTag\s*:\s*true|WebContentsView")),
+]
+ATTACK_LABELS = {
+    'shell-open': 'shell 打开外部链接/文件',
+    'exec-js': 'executeJavaScript 注入',
+    'permission-handler': '权限请求处理器',
+    'custom-protocol': '自定义协议',
+    'deep-link': '深链 / 第二实例',
+    'webview': 'webview / WebContentsView',
+}
+
 
 def line_of(text, pos):
     return text.count('\n', 0, pos) + 1
@@ -1344,6 +1366,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     obfuscation = []
     resolved = set()   # 靠还原才认出名字的那些，强度低一档
     capability = {}    # 通道名 → 处理函数体能碰到什么（能力面，不是风险评级）
+    attack_surface = {}   # IPC 之外的能力面：facets → [{where, snippet}]
     enumerated = []    # 穷举出来的名字，(名字, 位置, 依据)
     enumerated_sites = set()
     scanned = 0
@@ -1356,8 +1379,13 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         # 先用字节找标记。解成字符串再找，慢十倍不止。
         # ipcRenderer 也要算热：只有页面侧调用的文件（没 contextBridge、没 ipcMain）
         # 以前整份被跳过，那条 invoke 就白丢了。
+        # IPC 之外的能力面也在这层认（shell.openExternal 之类），它们不是 ipc 但同样危险。
         hot_ipc = (b'ipcMain' in blob or b'ipcRenderer' in blob
-                   or b'contextBridge' in blob or b'webPreferences' in blob)
+                   or b'contextBridge' in blob or b'webPreferences' in blob
+                   or b'shell.' in blob or b'executeJavaScript' in blob
+                   or b'setPermission' in blob or b'protocol.' in blob
+                   or b'ProtocolClient' in blob or b'WebContentsView' in blob
+                   or b'<webview' in blob)
         suspicious = (b'eval(' in blob or b'_0x' in blob or b'atob(' in blob
                       or b'new Function(' in blob)
         if not hot_ipc and not suspicious:
@@ -1416,6 +1444,15 @@ def scan_asar(files, allow_eval=True, max_passes=1):
                 else:
                     prefs[kind] = (value, where)
 
+        # IPC 之外的能力面：一个文件扫一遍，按面归堆。这里只认「出现」，
+        # 不判强弱——别把「看到了 shell.openExternal」说成「会滥用它」。
+        for facet, pattern in ATTACK_PATTERNS:
+            for match in pattern.finditer(text):
+                where = f'{rel}:{line_of(text, match.start())}'
+                snippet = text[match.start():match.start() + 40].strip()
+                attack_surface.setdefault(facet, []).append(
+                    {'where': where, 'snippet': snippet})
+
         # 算出来的名字：能穷举就穷举成具体名字，穷举不了的留在 dynamic 里照实报。
         # 用还原之后的文本：常量代回去之后，拼装式子才看得清。
         # 先在字节上看一眼有没有循环——绝大多数文件没有，没必要为它跑四条正则。
@@ -1440,6 +1477,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'enumerated': sorted(set(enumerated)),
         'preloads': sorted(set(preloads)),
         'prefs': prefs,
+        'attack_surface': attack_surface,
         'obfuscation': sorted(set(obfuscation))[:200],
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
@@ -2292,7 +2330,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/17',
+        'schema': 'ipcsurface/asar/18',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2303,6 +2341,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'exposes': [n for n, _ in facts['exposes']],
         'web_preferences': {k: v[0] for k, v in facts['prefs'].items()},
         'native_files': facts['native_files'],
+        'attack_surface': {k: v for k, v in facts['attack_surface'].items() if v},
         'obfuscation': [{'what': n, 'where': w, 'level': l}
                         for n, w, l in facts['obfuscation']],
         'confidence': confidence_levels(facts),
@@ -2400,7 +2439,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'schema', 'version', 'mode', 'subject', 'files', 'bytes',
     'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
-    'limits', 'runtime', 'poke', 'web_preferences', 'baseline',
+    'limits', 'runtime', 'poke', 'web_preferences', 'attack_surface', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
     'channel_sinks_ambiguous', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
