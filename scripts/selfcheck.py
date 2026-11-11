@@ -345,6 +345,58 @@ def check_output_side(ok):
     return ok
 
 
+
+
+PRODUCT_MODULES = ('ipcsurface.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
+                   'jssem.py', 'jsast.py', 'jsreport.py')
+
+# 标准库清单：从运行中的解释器拿，最准（Python 3.10+）。
+try:
+    import sys as _sys
+    STDLIB = set(_sys.stdlib_module_names)
+except AttributeError:
+    STDLIB = set()
+
+
+def check_invariants(ok):
+    """docs/invariants.md 的五条不变量，能机器守的都在这里咬一口。
+
+    这是路线图 P0-3 的落地：特色不能靠自觉，得靠 CI 红。
+    """
+    print('== 不变量 ==')
+    # I1 · 默认路径零依赖：产品模块只能 import 标准库（和自己人）。
+    own = {m[:-3] for m in PRODUCT_MODULES}
+    bad_imports = []
+    for mod in PRODUCT_MODULES:
+        text = read(mod)
+        for m in re.findall(r'^\s*(?:from\s+(\w+)|import\s+([\w.]+))', text, re.M):
+            name = m[0] or m[1]
+            top = name.split('.')[0]
+            if top in own or top == '__future__':
+                continue
+            if STDLIB and top not in STDLIB and top not in ('ipcsurface',):
+                bad_imports.append(f'{mod}:{top}')
+    ok &= check('产品模块只 import 标准库（零依赖）', not bad_imports,
+                '、'.join(bad_imports[:5]))
+
+    # I2 · 每条通道结论都带 refutes_if + strength：拿 golden 快照当答案纸。
+    try:
+        data = json.loads(read('tests', 'golden', 'asar_report.json'))
+    except (OSError, json.JSONDecodeError):
+        return ok & check('golden 快照可读', False)
+    evidence = data.get('evidence') or {}
+    missing = [k for k, v in evidence.items()
+               if not isinstance(v, dict) or 'refutes_if' not in v or 'strength' not in v]
+    ok &= check('每条通道结论都带 refutes_if 和 strength', not missing,
+                '、'.join(sorted(missing)[:5]))
+    empty_str = [k for k, v in evidence.items()
+                 if isinstance(v, dict) and any(x == '' for x in
+                 (v.get('strength'), v.get('primary_action')))]
+    ok &= check('结论字段不用空串冒充 null（I3 抽查）', not empty_str,
+                '、'.join(sorted(empty_str)[:5]))
+    return ok
+
+
 def main():
     ok = True
     print('== 一、版本与文档口径 ==')
@@ -415,6 +467,8 @@ def main():
     ok = check_test_classes(ok)
     ok = check_local_links(ok, readme)
     ok = check_referenced_paths(ok, readme)
+
+    ok = check_invariants(ok)
 
     print('== 二、schema 与规则一致性 ==')
     ok &= check('schema 版本号是 asar/17', 'ipcsurface/asar/17' in read('ipcsurface.py'))
