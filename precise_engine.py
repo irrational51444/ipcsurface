@@ -137,7 +137,12 @@ def _follow(body_node, text, funcs, depth):
 
 
 def _channel_of(node, text):
-    """ipcMain.handle('x', fn) 的第一个参数（字符串字面量）。"""
+    """ipcMain.handle('x', fn) 的第一个参数。字符串直接取；成员访问/下标取属性名。
+
+    「取属性名」是启发式：抖音那种 `IPC_EVENTS.BRIDGE_MAIN_RECEIVE_EVENT` 里，
+    常量名往往就等于字符串值（constanst.js 里就是这么写的）。这不是确认，是
+    「成员访问的启发」，precise 结论永远标「更强一档证据」，不冒充字符串字面量。
+    """
     args = node.child_by_field_name('arguments')
     if args is None:
         return None
@@ -149,6 +154,14 @@ def _channel_of(node, text):
         return None
     if first.type == 'string':
         return _text_of(first, text)[1:-1]
+    if first.type == 'member_expression':
+        prop = first.child_by_field_name('property')
+        return _text_of(prop, text) if prop is not None else None
+    if first.type == 'subscript_expression':
+        for c in _walk(first):
+            if c.type == 'string' and c.parent.type == 'subscript_expression':
+                return _text_of(c, text)[1:-1]
+        return None
     return None
 
 

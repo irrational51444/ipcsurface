@@ -55,6 +55,19 @@ class PreciseTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+    def test_member_access_channel_name(self):
+        # 抖音那种 IPC_EVENTS.X 成员访问通道名，属性名就是通道名
+        main = ('const {ipcMain} = require("electron");\n'
+                'const fs = require("fs");\n'
+                'const EV = { BRIDGE_MAIN_RECEIVE_EVENT: "BRIDGE_MAIN_RECEIVE_EVENT" };\n'
+                'ipcMain.on(EV.BRIDGE_MAIN_RECEIVE_EVENT, (e, p) => fs.readFileSync(p));\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            out = pe.analyse_asar_precise(path)
+            self.assertIn('BRIDGE_MAIN_RECEIVE_EVENT', out)
+        finally:
+            os.unlink(path)
+
 
 if __name__ == '__main__':
     unittest.main()
