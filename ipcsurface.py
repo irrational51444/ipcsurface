@@ -50,7 +50,8 @@ from jsreport import (  # noqa: E402
 )
 
 jsreport.VERSION = __version__   # 报告层的版本号由这儿注入
-import jslabels  # noqa: E402  # noqa: E402  asar 解析层单独成文件，这里重新导出
+import jslabels  # noqa: E402
+import native_imports  # noqa: E402  # noqa: E402  asar 解析层单独成文件，这里重新导出
 
 TEXT_EXT = ('.js', '.mjs', '.cjs', '.jsx', '.ts', '.json', '.html', '.asar')
 
@@ -1502,6 +1503,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         'attack_surface': attack_surface,
         'obfuscation': sorted(set(obfuscation))[:200],
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
+        'native_imports': native_imports.native_import_surface(files),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
         'resolved': sorted(resolved),
         # 通道就是主进程注册和页面侧调用的那些名字，不含 window 上暴露的 API。
@@ -2352,7 +2354,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/18',
+        'schema': 'ipcsurface/asar/19',
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2363,6 +2365,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'exposes': [n for n, _ in facts['exposes']],
         'web_preferences': {k: v[0] for k, v in facts['prefs'].items()},
         'native_files': facts['native_files'],
+        'native_imports': facts['native_imports'],
         'attack_surface': {k: v for k, v in facts['attack_surface'].items() if v},
         'obfuscation': [{'what': n, 'where': w, 'level': l}
                         for n, w, l in facts['obfuscation']],
@@ -2459,7 +2462,7 @@ def loc(evidence):
 # 'sites'/'archive_merkle'/'content_digest' 就各写了两遍，谁也没发现。
 REPORT_TOP_LEVEL_KEY_LIST = (
     'schema', 'version', 'mode', 'subject', 'files', 'bytes',
-    'channels', 'exposes', 'dynamic', 'native_files', 'obfuscation',
+    'channels', 'exposes', 'dynamic', 'native_files', 'native_imports', 'obfuscation',
     'unique_names', 'evidence', 'confidence', 'confidence_semantics',
     'limits', 'runtime', 'poke', 'web_preferences', 'attack_surface', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',

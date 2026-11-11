@@ -17,7 +17,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, 'examples', 'build')
 REALISH = os.path.join(BUILD, 'realish.asar')
 OBF = os.path.join(BUILD, 'obf-asar.asar')
-SCHEMA = 'ipcsurface/asar/18'
+SCHEMA = 'ipcsurface/asar/19'
 
 problems = []
 COMMAND = (['ipcsurface'], '')

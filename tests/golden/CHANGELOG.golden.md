@@ -237,3 +237,8 @@
 
 - 变了的字段：attack_surface, schema
 - 理由：P1-5 新增能力面字段 attack_surface，schema 升到 asar/18
+
+## 2026-11-11 19:13
+
+- 变了的字段：native_imports, schema
+- 理由：新增 native_imports 顶层键，schema 升 19

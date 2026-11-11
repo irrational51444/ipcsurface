@@ -863,6 +863,14 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append(f"- 这包带着 {len(facts['native_files'])} 个 native 模块，越界、泄漏只可能在它们里面：")
         for rel in facts['native_files'][:8]:
             out.append(f"  - `{rel}`")
+        nimports = facts.get('native_imports') or {}
+        if nimports:
+            out.append('- 其中这些模块的导入表里，有危险 Windows API（strcpy/system 这类）：')
+            for rel, hits in list(nimports.items())[:8]:
+                out.append(f"  - `{rel}`：{'、'.join(hits)}")
+        elif facts['native_files']:
+            out.append('- 这些模块的导入表读不出来（.node 多半是打包/加壳的，开头不是 MZ）。'
+                       '读不出来是「读不到」，不是「没有危险导入」')
         out.append('- 上面那张表跟它们没关系，两边得分开查')
     else:
         out.append('- 没有 native 模块，越界这类本来就不该出在 JS 这层')

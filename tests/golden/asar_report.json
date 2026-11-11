@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/18",
+  "schema": "ipcsurface/asar/19",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -12,6 +12,7 @@
   "exposes": [],
   "web_preferences": {},
   "native_files": [],
+  "native_imports": {},
   "attack_surface": {},
   "obfuscation": [],
   "confidence": [
