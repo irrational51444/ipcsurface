@@ -485,11 +485,13 @@ def main():
     doc_schemas = set(re.findall(r'ipcsurface/asar/[0-9]+', read('README.md') + read('README.en.md')))
     ok &= check('README 里的 schema 和源码一致', doc_schemas == {'ipcsurface/asar/20'},
                 str(sorted(doc_schemas)) + ' 源码 ' + (source_schema.group(0) if source_schema else '?'))
-    # 打包：四个模块少一个，装出来的 wheel 就会悄悄降级
+    # 打包：九个模块缺一个，装出来的 wheel 就会悄悄降级
     pyproject = read('pyproject.toml')
     packed = re.search(r'py-modules\s*=\s*\[(.*?)\]', pyproject, re.S)
-    names = set(re.findall(r'"([a-z]+)"', packed.group(1))) if packed else set()
-    ok &= check('pyproject 打进去七个模块', names >= {'ipcsurface', 'jsasar', 'jslabels', 'jsparse', 'jssem', 'jsast', 'jsreport'},
+    names = set(re.findall(r'"([a-z_]+)"', packed.group(1))) if packed else set()
+    required = {'ipcsurface', 'jsasar', 'jslabels', 'jsparse', 'jssem',
+                'jsast', 'jsreport', 'native_imports', 'precise_engine'}
+    ok &= check('pyproject 打进去九个模块', names >= required,
                 str(sorted(names)))
     rules = {r['id'] for r in t.RULES}
     tests = read('tests', 'test_ipcsurface.py')
