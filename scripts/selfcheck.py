@@ -348,7 +348,12 @@ def check_output_side(ok):
 
 
 PRODUCT_MODULES = ('ipcsurface.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
-                   'jssem.py', 'jsast.py', 'jsreport.py')
+                   'jssem.py', 'jsast.py', 'jsreport.py', 'native_imports.py',
+                   'precise_engine.py')
+
+# precise_engine 是 opt-in 的精查层，唯一被允许 import tree_sitter。
+# 默认路径零依赖不变；precise 装不上，粗扫照跑，所以这一层豁免零依赖扫描。
+PRECISE_EXEMPT = {'precise_engine.py'}
 
 # 标准库清单：从运行中的解释器拿，最准（Python 3.10+）。
 try:
@@ -368,6 +373,8 @@ def check_invariants(ok):
     own = {m[:-3] for m in PRODUCT_MODULES}
     bad_imports = []
     for mod in PRODUCT_MODULES:
+        if mod in PRECISE_EXEMPT:
+            continue  # precise 层允许 tree-sitter，这是 opt-in 不是默认路径
         text = read(mod)
         for m in re.findall(r'^\s*(?:from\s+(\w+)|import\s+([\w.]+))', text, re.M):
             name = m[0] or m[1]
