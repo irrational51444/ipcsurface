@@ -63,9 +63,24 @@
 
 ## 待办（本 ADR 之后）
 
-1. 确认 tree-sitter 的 js/ts grammar 与手写树在四包上的未知节点率对比；
+1. ~~确认 tree-sitter 的 js grammar 与手写树在四包上的未知节点率对比~~ —— Obsidian main.js 实测
+   （见下）；
 2. 跨文件调用图的最小可行版：先只连「同一 asar 内、显式 require/import 的模块」；
 3. 摘要式污点的第一版：函数级摘要（入口参数 → 是否触危险 API），不做到字段级。
+
+## 实测：手写树 vs tree-sitter（Obsidian main.js，203 KB）
+
+| | 节点数 | 未知/ERROR | 耗时 |
+| --- | --- | --- | --- |
+| 手写 jsast | 18,317 | 142（0.78%） | 0.09s |
+| tree-sitter | 65,274 | 0（0.00%） | 0.05s |
+
+tree-sitter 在同一份真文件上：未知节点 0、节点数多 3.5 倍（树更密，跨文件边有得连）、
+还更快。这坐实了「手写解析器到顶、precise 层该上 tree-sitter」的判断，不是换个花哨
+工具，是有实测差值的。
+
+（tree-sitter 0.26.1 + tree-sitter-javascript 0.25.0 有预编译 wheel，`pip install` 直接装，
+不进默认路径——precise 是 opt-in extra。）
 
 ## 验收
 
