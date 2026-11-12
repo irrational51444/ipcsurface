@@ -41,6 +41,18 @@ python scripts/selfcheck.py || fail=1
 echo "== 4/4 污点尺子 =="
 python scripts/taint_ruler.py || fail=1
 
+# 校准基线是「本机门禁」：要扫真包（obsidian/dsh/vivo 的绝对路径），CI 上没有。
+# 默认跳过，设 IPCSURFACE_CALIBRATE=1 才跑（约 2 分钟）。
+if [ -f tests/golden/calibration.json ]; then
+  if [ "${IPCSURFACE_CALIBRATE:-0}" = "1" ]; then
+    echo
+    echo "== 校准基线 =="
+    python scripts/calibration.py --baseline tests/golden/calibration.json || fail=1
+  else
+    echo "   校准基线存在，跳过（设 IPCSURFACE_CALIBRATE=1 才跑，约 2 分钟）"
+  fi
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
   echo "四道闸全绿（单元用例 / 冒烟 / 自查 / 污点尺子）。"

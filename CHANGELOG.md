@@ -2,6 +2,63 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.96.0 — 2026-11-12
+
+校准进基线：数字会漂，不常跑就是修辞。
+
+### 一、`--baseline` / `--write-baseline`
+
+```bash
+python scripts/calibration.py --write-baseline tests/golden/calibration.json
+python scripts/calibration.py --baseline tests/golden/calibration.json
+```
+
+任何一档掉超过 5 个百分点就退 1。基线在 `tests/golden/calibration.json`。
+
+### 二、发现一个统计口径的坑
+
+原来的精确率是 **API 级**：一个通道报了 9 个 API 误报就算 9 次。
+
+结果 vivo 一个包的 9 条误报通道报了 **77 个 API**，把 `ast_only` 从 25% 拖到 **1%**——
+一个大包把整条曲线带偏了。
+
+加了**通道级**口径：一条通道在同一档最多算 1 次。**基线比对这个**——
+问题问的是「这条通道该不该信」，不是「它顺手报了几个 API」。
+
+2026-11-12 实测（6 个包，117 条人工确认通道名）：
+
+| 档 | API 级 | 通道级 |
+| --- | --- | --- |
+| direct | 100% | 100% |
+| name_confirmed | 100% | 100% |
+| chain | 100% | 100% |
+| ambiguous | 33% | **56%** |
+| ast_only | 1% | **8%** |
+
+### 三、和旧文档的 53% / 25% 对不上，这是真的
+
+旧数字是「只有 obsidian 的 4 条误报通道」时算的。加了 vivo 的 9 条（同名多义借来）
+之后，`ast_only` 从 25% 下修到 **8%**——**这一档比原来以为的更不可信**。
+
+结论没翻转，但数字变了。这就是「校准要常跑」的理由：不跑，25% 这个数就一直是修辞。
+
+### 四、踩的坑：删掉入口，脚本静默不干活
+
+重写 `calibration.py` 尾部时把 `if __name__ == '__main__':` 一起删了。
+脚本跑起来**什么都不做、也不报错、退出码 0**——静默失败。
+
+补了两条护栏（`tests/test_calibration_script.py`）：
+
+- `test_script_has_main_guard`：入口必须在
+- `test_hard_tiers_are_perfect`：硬结论三档必须 100%，掉下来就是代码坏了
+
+### 五、为什么 CI 不跑校准
+
+校准要扫真包（obsidian / dsh / vivo 的绝对路径），CI 上没有。所以它是**本机门禁**：
+`verify.sh` 会显示「基线存在，跳过」，设 `IPCSURFACE_CALIBRATE=1` 才真跑（约 2 分钟）。
+
+质量问题照旧：420 用例、四道闸、覆盖率门禁。
+
 ## 0.95.0 — 2026-11-12
 
 实测 obsidian 的「实时过程」时修掉一处误导文案。

@@ -41,14 +41,27 @@ def _labelled(gold):
             yield name, spec
 
 
-def main():
+def main(argv=None):
+    import argparse
+    ap = argparse.ArgumentParser(description='两层校准：名字层 + sink 层')
+    ap.add_argument('--baseline', metavar='FILE',
+                    help='拿这份基线比对，精确率掉超过 --tolerance 就退 1')
+    ap.add_argument('--write-baseline', metavar='FILE',
+                    help='把这次的结果写成基线（改完代码确认没退化时用）')
+    ap.add_argument('--tolerance', type=float, default=0.05,
+                    help='精确率允许掉多少个百分点，默认 0.05')
+    args = ap.parse_args(argv)
+
     gold = json.load(open(GOLD, encoding='utf-8'))
 
     # 名字层
     confirmed = 0
     tier_dist = {}
-    # sink 层
+    # sink 层，两个口径：
+    #   API 级：一个通道报 9 个 API 误报就算 9 次 —— 会被一个大包主导
+    #   通道级：一个通道在同一档最多算 1 次 —— 更贴近「这条通道该不该信」
     tiers = {name: [0, 0] for name in SINK_TIER_ORDER}
+    tiers_chan = {name: [0, 0] for name in SINK_TIER_ORDER}
 
     for name, spec in _labelled(gold):
         path = spec['asar']
@@ -70,13 +83,23 @@ def main():
 
         # 表二：sink 层（对错按 sink 路径强度分档）
         for ch in verified:
+            hit = set()
             for api in verified[ch]:
                 if ch in ast and api in ast[ch]:
-                    tiers[sink_tier(facts, ch, api)][0] += 1
+                    tier = sink_tier(facts, ch, api)
+                    tiers[tier][0] += 1
+                    hit.add(tier)
+            for tier in hit:
+                tiers_chan[tier][0] += 1
         for ch in known_fp:
+            hit = set()
             for api in known_fp[ch]:
                 if ch in ast and api in ast[ch]:
-                    tiers[sink_tier(facts, ch, api)][1] += 1
+                    tier = sink_tier(facts, ch, api)
+                    tiers[tier][1] += 1
+                    hit.add(tier)
+            for tier in hit:
+                tiers_chan[tier][1] += 1
 
     # 只有 unverified 的包（抖音 22、bilibili 1）：名字已人工确认是真的，
     # 工具报出的事实也写在 golden 的「依据」里，直接计入名字数，不扫 asar。
@@ -106,20 +129,75 @@ def main():
     print()
 
     print('== 表二：sink 层（危险 API 对错） ==')
-    print('| sink 路径档 | 对 | 误报 | 精确率 |')
-    print('| --- | --- | --- | --- |')
+    print('| sink 路径档 | API 对 | API 误报 | API 精确率 | 通道对 | 通道误报 | 通道精确率 |')
+    print('| --- | --- | --- | --- | --- | --- | --- |')
     rows = []
     for tier in SINK_TIER_ORDER:
         tp, fp = tiers[tier]
         prec = tp / (tp + fp) if (tp + fp) else None
+        tp_c, fp_c = tiers_chan[tier]
+        prec_c = tp_c / (tp_c + fp_c) if (tp_c + fp_c) else None
         rows.append((tier, tp, fp, prec))
         shown = '—' if prec is None else f'{prec:.0%}'
-        print(f'| {tier} | {tp} | {fp} | {shown} |')
+        shown_c = '—' if prec_c is None else f'{prec_c:.0%}'
+        print(f'| {tier} | {tp} | {fp} | {shown} | {tp_c} | {fp_c} | {shown_c} |')
 
     precs = [(tier, tp, fp, prec) for tier, tp, fp, prec in rows if prec is not None]
     if not precs:
         print('sink 层没有能跑的样本，校准没跑成')
         return 2
+
+    def _chan(tier):
+        tp_c, fp_c = tiers_chan[tier]
+        total = tp_c + fp_c
+        return {'tp': tp_c, 'fp': fp_c,
+                'precision': (tp_c / total) if total else None}
+
+    result = {
+        'schema': 'ipcsurface/calibration/2',
+        'names_confirmed': confirmed,
+        'unverified_names': unverified_total,
+        'tiers': {tier: {'tp': tp, 'fp': fp, 'precision': prec}
+                  for tier, tp, fp, prec in rows},
+        # 通道级：一条通道在同一档最多算一次。
+        # **基线比对这个**——API 级会被「一个误报通道报出 9 个 API」放大，
+        # 拿它当门禁等于让一个大包主导整条曲线。
+        'tiers_chan': {tier: _chan(tier) for tier in SINK_TIER_ORDER},
+    }
+
+    # 写基线：只在「确认这次没退化」时用
+    if args.write_baseline:
+        import io
+        with io.open(os.path.abspath(args.write_baseline), 'w',
+                     encoding='utf-8', newline='\n') as fh:
+            json.dump(result, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        print()
+        print('基线写进 ', os.path.abspath(args.write_baseline), sep='')
+
+    # 比基线：这才是「校准进 CI」的关键——不常跑，分级就退化成修辞
+    problems = []
+    if args.baseline:
+        if not os.path.exists(args.baseline):
+            print()
+            print('基线文件不存在：%s' % args.baseline)
+            return 2
+        base = json.load(open(args.baseline, encoding='utf-8'))
+        print()
+        print('== 与基线比对（容差 %.0f 个百分点） ==' % (args.tolerance * 100))
+        # 用通道级比：口径稳定，不会被单个大包带偏
+        base_tiers = base.get('tiers_chan') or base.get('tiers') or {}
+        for tier in SINK_TIER_ORDER:
+            now = (result['tiers_chan'].get(tier) or {}).get('precision')
+            old = (base_tiers.get(tier) or {}).get('precision')
+            if now is None or old is None:
+                continue
+            if now < old - args.tolerance:
+                problems.append('%s 档从 %.0f%% 掉到 %.0f%%'
+                                % (tier, old * 100, now * 100))
+        for item in problems:
+            print('  退化：' + item)
+        if not problems:
+            print('  精确率没有退化')
 
     bad = []
     for i in range(1, len(precs)):
@@ -132,6 +210,10 @@ def main():
         for (t_l, _tp, _fp, p_l), (t_h, _tp2, _fp2, p_h) in bad:
             print(f'倒挂：{t_l} 档精确率 {p_l:.0%} 反而高于更高档 {t_h} 的 {p_h:.0%}')
         print('结论：sink 路径强度档和「对不对」没有单调关系，名不副实，要查')
+        return 1
+    if problems:
+        print('结论：有档位掉了，要么代码退化了，要么 golden 的标注变了——'
+              '两种都得先查清再发版')
         return 1
     print('sink 层单调成立：路径越可信，精确率越高（倒挂容忍 ≤10%）')
     return 0

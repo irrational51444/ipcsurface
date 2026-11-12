@@ -1,0 +1,59 @@
+{
+  "names_confirmed": 117,
+  "schema": "ipcsurface/calibration/2",
+  "tiers": {
+    "ambiguous": {
+      "fp": 16,
+      "precision": 0.3333333333333333,
+      "tp": 8
+    },
+    "ast_only": {
+      "fp": 71,
+      "precision": 0.013888888888888888,
+      "tp": 1
+    },
+    "chain": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 11
+    },
+    "direct": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 2
+    },
+    "name_confirmed": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 5
+    }
+  },
+  "tiers_chan": {
+    "ambiguous": {
+      "fp": 4,
+      "precision": 0.5555555555555556,
+      "tp": 5
+    },
+    "ast_only": {
+      "fp": 12,
+      "precision": 0.07692307692307693,
+      "tp": 1
+    },
+    "chain": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 11
+    },
+    "direct": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 2
+    },
+    "name_confirmed": {
+      "fp": 0,
+      "precision": 1.0,
+      "tp": 5
+    }
+  },
+  "unverified_names": 81
+}
