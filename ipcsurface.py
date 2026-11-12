@@ -1833,9 +1833,29 @@ def strength_notes(facts, probe=None, confidence=None):
     return notes
 
 
+def main_process_obfuscated(facts):
+    """主进程文件是不是强混淆。是这个包最要紧的一句话：静态扫描对它基本失效。
+
+    真踩过：bilibili 的 main/index.js 是 obfuscator.io 最高档混淆，连 ipcMain 都被
+    换成 `_0x...`，字符串全编码——最后只认出 1 条（还是第三方库的）。报告如果只说
+    「1 条通道」，读的人会以为这包真只有 1 条；必须顶在前面说「主进程看不到」。
+    """
+    strong = {w.split(':', 1)[0] for _n, w, level in (facts.get('obfuscation') or [])
+              if level == 'strong'}
+    hits = [p for p in strong
+            if p in ('index.js', 'main/main.js', 'main/index.js')
+            or (p.startswith('main/') and p.endswith('.js'))]
+    return sorted(hits)
+
+
 def blind_spots(facts, probe=None, poke=None):
     """这份报告看不到的地方。和 md 那节「没看清的地方」是同一份清单。"""
     items = ['混淆过、压过、名字算出来的代码，我一条都认不出来；所以「没看见」永远是未知，不是没有']
+    main_obf = main_process_obfuscated(facts)
+    if main_obf and not probe:
+        # 这条必须排在最前面：它说明「这个包的通道数基本不可信」，不是小提醒
+        items.insert(0, f"主进程文件是强混淆（{'、'.join(main_obf)}）：静态扫描对它基本失效，"
+                        f"这包认出的通道数是「看不到」的结果，不是「没有」——要准的得跑运行时探针")
     if facts['obfuscation']:
         items.append(f"这包有 {len(facts['obfuscation'])} 处混淆指纹，"
                      f"其中强 {sum(1 for _n, _w, l in facts['obfuscation'] if l == 'strong')} 处")

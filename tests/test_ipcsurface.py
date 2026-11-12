@@ -301,6 +301,21 @@ class ObfuscationTests(unittest.TestCase):
         self.assertNotIn('这包动过手脚', report)
         self.assertIn('[弱]', report)
 
+    def test_main_process_obfuscation_is_flagged_first(self):
+        # bilibili 那种：主进程重度混淆，静态基本失效，报告第一句就要说清
+        facts = ipc.scan_asar({'main/index.js': b"var _0x4a2f = 1; eval(x)"})
+        facts['obfuscation'] = [('十六进制标识符', 'main/index.js:1', 'strong'),
+                                ('eval 直接执行字符串', 'node_modules/x.js:2', 'strong')]
+        self.assertEqual(ipc.main_process_obfuscated(facts), ['main/index.js'])
+        spots = '\n'.join(ipc.blind_spots(facts))
+        self.assertTrue(spots.startswith('主进程文件是强混淆'), spots)
+
+    def test_library_only_obfuscation_is_not_main_process(self):
+        facts = ipc.scan_asar({'node_modules/x.js': b'eval(decode(y))'})
+        facts['obfuscation'] = [('eval 直接执行字符串', 'node_modules/x.js:2', 'strong')]
+        self.assertEqual(ipc.main_process_obfuscated(facts), [])
+        self.assertNotIn('主进程文件是强混淆', '\n'.join(ipc.blind_spots(facts)))
+
     def test_report_warns_when_obfuscated(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
         report = ipc.render_asar('demo.asar', facts, 1, 100)
