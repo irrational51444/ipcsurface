@@ -248,6 +248,20 @@ class EventServerTests(unittest.TestCase):
         _, body = self.get('/api/snapshot')
         self.assertEqual(json.loads(body)['done']['channels'], 3)
 
+    def test_snapshot_reads_channel_tiers_from_done(self):
+        """discovery 当时的 tier 是 None，扫完 done 才定；快照要拿 done 里那份。"""
+        self.bus.emit('discovery', {'name': 'a:b', 'tier': None})
+        self.bus.emit('discovery', {'name': 'c:d', 'tier': None})
+        self.bus.emit('lifecycle', {'stage': 'done', 'channels': 2, 'sinks': 2,
+                                    'unresolved': 0, 'by_tier': {'direct': 1, 'chain': 1},
+                                    'channel_tiers': {'a:b': 'direct', 'c:d': 'chain'}})
+        _, body = self.get('/api/snapshot')
+        snap = json.loads(body)
+        self.assertEqual(snap['tiers']['a:b'], 'direct')
+        self.assertEqual(snap['tiers']['c:d'], 'chain')
+        # 通道不许因为 done 里再出现一次就重复
+        self.assertEqual(snap['channels'], ['a:b', 'c:d'])
+
     def test_export_is_jsonl(self):
         self.bus.emit('lifecycle', {'stage': 'start', 'input': 'y.asar'})
         _, body = self.get('/api/export')

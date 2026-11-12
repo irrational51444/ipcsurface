@@ -4145,9 +4145,16 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
             # （设计守则 4：实时视图和最终报告必须可对账）。
             tiers = facts.get('channel_sink_tiers') or {}
             by_tier = {}
-            for ch_tiers in tiers.values():
-                for tier in ch_tiers.values():
+            channel_tiers = {}
+            for ch, ch_tiers in tiers.items():
+                vals = [t for t in (ch_tiers or {}).values() if t]
+                for tier in vals:
                     by_tier[tier] = by_tier.get(tier, 0) + 1
+                if vals:
+                    # 一条通道可能挂着多个档位，取最强的那个当它的代表档
+                    channel_tiers[ch] = min(
+                        vals, key=lambda x: (SINK_TIER_ORDER.index(x)
+                                             if x in SINK_TIER_ORDER else 99))
             sink_src = facts.get('channel_sinks_ast') or facts.get('channel_sinks') or {}
             events.emit('lifecycle', {
                 'stage': 'done',
@@ -4156,6 +4163,8 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 'channels': len(facts['channels']),
                 'sinks': sum(len(v) for v in sink_src.values() if v),
                 'by_tier': by_tier,
+                # 每条通道的代表档：实时页面靠它上色，缺了就只能画横线
+                'channel_tiers': channel_tiers,
                 'unresolved': len(facts.get('dynamic') or []),
                 'elapsed_ms': int((time.monotonic() - started_at) * 1000),
             }, phase='report')

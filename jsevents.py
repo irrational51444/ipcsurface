@@ -620,6 +620,13 @@ class _State:
                     tiers[name] = payload.get('tier')
             elif kind == 'lifecycle' and payload.get('stage') == 'done':
                 done = payload
+                # done 里带「每条通道的代表档」：discovery 当时 tier 还是 None
+                # （sink 分析没跑完），到这一步才定下来。缺了这段，页面就只能画横线。
+                for ch, tier in (payload.get('channel_tiers') or {}).items():
+                    if ch not in seen:
+                        seen.add(ch)
+                        channels.append(ch)
+                    tiers[ch] = tier
         s['channels'] = channels
         s['tiers'] = tiers
         s['done'] = done

@@ -39,7 +39,16 @@ GET /api/snapshot  {"channels": [5 条 ledger:*], "done": {..., "channels": 5, "
                     "by_tier": {"direct": 12, "chain": 5, "name_confirmed": 1}, "unresolved": 0}}
 ```
 
-质量问题照旧：375 用例、四道闸、覆盖率门禁。
+### 五、`lifecycle.done` 补了 `channel_tiers`
+
+第一版页面截图时发现 tier 那一列全是横线：`discovery` 事件发的时候 sink 分析还没跑完，
+`tier` 只能是 `None`；到 `done` 才定下来。所以在 `done` 的 payload 里补了
+`channel_tiers`（通道 → 代表档，取最强的那个），快照从这儿读，页面才能上色。
+
+这条是**看图看出来的**，不是测试发现的——测试当时只断言了 `by_tier` 总数，
+没断言「每条通道有没有档」。补了 `test_snapshot_reads_channel_tiers_from_done`。
+
+质量问题照旧：376 用例、四道闸、覆盖率门禁。
 
 ## 0.88.0 — 2026-11-12
 
