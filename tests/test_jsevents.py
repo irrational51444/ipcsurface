@@ -205,5 +205,90 @@ class TerminalRenderTests(unittest.TestCase):
         self.assertIn('MB/s', text)
 
 
+class EventServerTests(unittest.TestCase):
+    """P3：单页 + SSE + 快照。起真服务器，打真 HTTP。"""
+
+    def setUp(self):
+        import threading  # noqa: F401 —— 让 EventServer 内部的线程能跑
+        self.bus = jsevents.EventBus(None)
+        self.server = jsevents.EventServer(self.bus, host='127.0.0.1', port=0)
+        self.server.start()
+        self.base = 'http://127.0.0.1:%d' % self.server.port
+
+    def tearDown(self):
+        self.server.stop()
+
+    def get(self, path):
+        import urllib.request
+        with urllib.request.urlopen(self.base + path, timeout=5) as resp:
+            return resp.status, resp.read().decode('utf-8', 'replace')
+
+    def test_page_is_self_contained(self):
+        status, html = self.get('/')
+        self.assertEqual(status, 200)
+        self.assertIn('ipcsurface live', html)
+        # 零 CDN：页面里不许出现 http(s):// 的外链脚本
+        self.assertNotIn('src="http', html)
+        self.assertNotIn('https://', html)
+
+    def test_snapshot_reflects_events(self):
+        self.bus.emit('lifecycle', {'stage': 'start', 'input': 'x.asar'})
+        self.bus.emit('discovery', {'name': 'a:b', 'tier': None})
+        self.bus.emit('discovery', {'name': 'c:d', 'tier': 'direct'})
+        status, body = self.get('/api/snapshot')
+        self.assertEqual(status, 200)
+        snap = json.loads(body)
+        self.assertEqual(snap['input'], 'x.asar')
+        self.assertEqual(snap['channels'], ['a:b', 'c:d'])
+        self.assertEqual(snap['tiers']['c:d'], 'direct')
+
+    def test_snapshot_carries_done(self):
+        self.bus.emit('lifecycle', {'stage': 'done', 'channels': 3, 'sinks': 5,
+                                    'unresolved': 1, 'by_tier': {'direct': 3}})
+        _, body = self.get('/api/snapshot')
+        self.assertEqual(json.loads(body)['done']['channels'], 3)
+
+    def test_export_is_jsonl(self):
+        self.bus.emit('lifecycle', {'stage': 'start', 'input': 'y.asar'})
+        _, body = self.get('/api/export')
+        lines = [line for line in body.splitlines() if line.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])['kind'], 'lifecycle')
+
+    def test_unknown_path_is_404(self):
+        import urllib.error
+        import urllib.request
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            urllib.request.urlopen(self.base + '/nope', timeout=5)
+        self.assertEqual(ctx.exception.code, 404)
+
+    def test_sse_replays_history_after_last_event_id(self):
+        """断线重连：带 Last-Event-ID 只补发之后的事件。"""
+        import socket
+        for i in range(3):
+            self.bus.emit('discovery', {'name': 'ch%d' % i})
+        host, port = '127.0.0.1', self.server.port
+        sock = socket.create_connection((host, port), timeout=5)
+        try:
+            sock.sendall(b'GET /events HTTP/1.1\r\nHost: x\r\n'
+                         b'Last-Event-ID: 2\r\nAccept: text/event-stream\r\n\r\n')
+            # 头和事件体可能是两次 write，要循环读到有正文为止
+            buf = b''
+            for _ in range(20):
+                part = sock.recv(4096)
+                if not part:
+                    break
+                buf += part
+                if b'id: ' in buf:
+                    break
+            chunk = buf.decode('utf-8', 'replace')
+        finally:
+            sock.close()
+        # 只应该看到 seq 3，不该重放 1 和 2
+        self.assertIn('id: 3', chunk)
+        self.assertNotIn('id: 1', chunk)
+        self.assertNotIn('id: 2', chunk)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -414,3 +414,264 @@ def diff_summary(events_path, report):
             problems.append('%s 对不上：事件 %r vs 报告 %r'
                             % (key, payload.get(key), actual.get(key)))
     return problems
+
+
+# ---------------------------------------------------------------- Web 呈现
+# 零依赖：http.server + 线程 + queue。前端是单个 HTML，原生 JS + EventSource，
+# 不引任何 CDN（离线可用，也没有供应链风险）。
+
+_DASHBOARD = """<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>ipcsurface live</title>
+<style>
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#111;color:#ddd;margin:0;padding:14px}
+h1{font-size:13px;font-weight:600;margin:0 0 6px}
+.bar{color:#888}
+table{border-collapse:collapse;width:100%;margin-top:10px}
+td,th{padding:2px 8px;text-align:left;border-bottom:1px solid #222}
+th{color:#888;font-weight:400}
+.hard{color:#4caf50}.chain{color:#ffb300}.borrowed{color:#777}.unknown{color:#777}
+</style></head><body>
+<h1>ipcsurface live <span id="input" class="bar"></span></h1>
+<div class="bar" id="head">等事件…</div>
+<table><thead><tr><th>档</th><th>通道</th><th>tier</th></tr></thead>
+<tbody id="rows"></tbody></table>
+<script>
+var glyph={direct:['þ','hard'],name_confirmed:['þ','hard'],chain:['◐','chain'],
+           ambiguous:['¨','borrowed'],ast_only:['¨','borrowed']};
+var rows=new Map();
+function addCh(name,tier){
+  if(rows.has(name))return;
+  var g=glyph[tier]||['·','unknown'];
+  var tr=document.createElement('tr');
+  tr.innerHTML='<td class="'+g[1]+'">'+g[0]+'</td><td>'+name+'</td><td class="'+g[1]+'">'+(tier||'—')+'</td>';
+  rows.set(name,tr);
+  document.getElementById('rows').appendChild(tr);
+}
+function head(t){document.getElementById('head').textContent=t;}
+function onEvent(ev){
+  var p=ev.payload||{};
+  if(ev.kind==='lifecycle'&&p.stage==='start'){document.getElementById('input').textContent=p.input||'';}
+  if(ev.kind==='discovery'){addCh(p.name,p.tier);}
+  if(ev.kind==='progress'){head('files '+p.files_done+'/'+p.files_total+'  '+Math.round((p.elapsed_ms||0)/1000)+'s');}
+  if(ev.kind==='lifecycle'&&p.stage==='done'){head('done  '+p.channels+' channels  '+p.sinks+' sinks  '+p.unresolved+' unresolved');}
+}
+fetch('/api/snapshot').then(function(r){return r.json();}).then(function(s){
+  if(s.input){document.getElementById('input').textContent=s.input;}
+  (s.channels||[]).forEach(function(c){addCh(c,s.tiers?s.tiers[c]:null);});
+  if(s.done){head('done  '+s.done.channels+' channels  '+s.done.sinks+' sinks');}
+  var es=new EventSource('/events');
+  ['lifecycle','progress','discovery','stats'].forEach(function(k){
+    es.addEventListener(k,function(e){onEvent(JSON.parse(e.data));});
+  });
+});
+</script></body></html>
+"""
+
+
+class _Handler(__import__('http.server', fromlist=['BaseHTTPRequestHandler']).BaseHTTPRequestHandler):
+    """单页 + SSE + 快照 + 导出。零依赖，全部 GET。"""
+
+    server_version = 'ipcsurface-live'
+
+    def log_message(self, *args):
+        pass   # 别把访问日志刷到用户屏幕上
+
+    def _send(self, code, ctype, body, extra=None):
+        if isinstance(body, str):
+            body = body.encode('utf-8')
+        self.send_response(code)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Content-Length', str(len(body)))
+        self.send_header('Cache-Control', 'no-store')
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def do_GET(self):
+        state = self.server.state
+        path = self.path.split('?', 1)[0]
+        if path == '/':
+            self._send(200, 'text/html; charset=utf-8', _DASHBOARD)
+        elif path == '/api/snapshot':
+            self._send(200, 'application/json; charset=utf-8',
+                       json.dumps(state.snapshot(), ensure_ascii=False))
+        elif path == '/api/export':
+            body = '\n'.join(json.dumps(e, ensure_ascii=False,
+                                        separators=(',', ':'))
+                             for e in state.events)
+            self._send(200, 'application/x-ndjson; charset=utf-8',
+                       body + ('\n' if body else ''))
+        elif path == '/events':
+            self._stream(state)
+        else:
+            self._send(404, 'text/plain; charset=utf-8', 'not found\n')
+
+    def _stream(self, state):
+        """SSE：先补发历史（按 Last-Event-ID 断线续传），再挂着等新事件。"""
+        self.send_response(200)
+        self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'keep-alive')
+        self.end_headers()
+
+        last_id = 0
+        header = self.headers.get('Last-Event-ID')
+        if header:
+            try:
+                last_id = int(header)
+            except ValueError:
+                last_id = 0
+
+        box = state.subscribe(last_id)
+        try:
+            while True:
+                try:
+                    event = box.get(timeout=15)
+                except Exception:   # queue.Empty
+                    self.wfile.write(b': keepalive\n\n')
+                    self.wfile.flush()
+                    continue
+                if event is None:
+                    break
+                frame = 'id: %d\nevent: %s\ndata: %s\n\n' % (
+                    event.get('seq', 0), event.get('kind', 'message'),
+                    json.dumps(event, ensure_ascii=False))
+                self.wfile.write(frame.encode('utf-8'))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            state.unsubscribe(box)
+
+
+class _State:
+    """服务端状态：所有事件 + 每个 SSE 连接一个队列。"""
+
+    def __init__(self, max_events=50000, queue_size=2000):
+        self.max_events = max_events
+        self.queue_size = queue_size
+        self._events = []
+        self._subs = []
+        self._lock = __import__('threading').Lock()
+
+    @property
+    def events(self):
+        with self._lock:
+            return list(self._events)
+
+    def record(self, event):
+        """EventBus 的订阅者。必须快：扫描线程上同步调用。"""
+        import queue as _queue
+        with self._lock:
+            self._events.append(event)
+            if len(self._events) > self.max_events:
+                del self._events[:len(self._events) - self.max_events]
+            subs = list(self._subs)
+        for box in subs:
+            try:
+                box.put_nowait(event)
+            except _queue.Full:
+                pass   # 慢客户端：丢给它，不拖累扫描
+
+    def subscribe(self, last_id=0):
+        import queue as _queue
+        box = _queue.Queue(maxsize=self.queue_size)
+        with self._lock:
+            # 补发：把 last_id 之后的事件先灌进队列（再挂新的）
+            for event in self._events:
+                if event.get('seq', 0) > last_id:
+                    try:
+                        box.put_nowait(event)
+                    except _queue.Full:
+                        break
+            self._subs.append(box)
+        return box
+
+    def unsubscribe(self, box):
+        with self._lock:
+            if box in self._subs:
+                self._subs.remove(box)
+
+    def snapshot(self):
+        """当前状态：用于刷新页面后立即恢复，不用等重放。"""
+        with self._lock:
+            events = list(self._events)
+        channels = []
+        tiers = {}
+        seen = set()
+        done = None
+        input_name = None
+        s = {'channels': [], 'tiers': {}, 'done': None, 'input': None}
+        for event in events:
+            kind = event.get('kind')
+            payload = event.get('payload') or {}
+            if kind == 'lifecycle' and payload.get('stage') == 'start':
+                input_name = payload.get('input')
+            elif kind == 'discovery':
+                name = payload.get('name')
+                if name and name not in seen:
+                    seen.add(name)
+                    channels.append(name)
+                    tiers[name] = payload.get('tier')
+            elif kind == 'lifecycle' and payload.get('stage') == 'done':
+                done = payload
+        s['channels'] = channels
+        s['tiers'] = tiers
+        s['done'] = done
+        s['input'] = input_name
+        return s
+
+    def summary_line(self):
+        snap = self.snapshot()
+        return '%d 条事件，%d 条通道' % (len(self.events), len(snap['channels']))
+
+
+class EventServer:
+    """把一个 EventBus 挂到 HTTP 上：/ 是页面，/events 是 SSE，/api/snapshot 是快照。"""
+
+    def __init__(self, bus, host='127.0.0.1', port=8080, max_events=50000):
+        import http.server
+        import threading
+        self.bus = bus
+        self.host = host
+        self.port = port
+        self.state = _State(max_events=max_events)
+        bus.add_listener(self.state.record)
+        self._httpd = http.server.ThreadingHTTPServer((host, port), _Handler)
+        self._httpd.state = self.state
+        self._httpd.daemon_threads = True
+        self.port = self._httpd.server_address[1]   # port=0 时拿真实端口
+        self._thread = threading.Thread(target=self._httpd.serve_forever,
+                                        name='ipcsurface-live', daemon=True)
+
+    @property
+    def url(self):
+        return 'http://%s:%d/' % (self.host, self.port)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self):
+        try:
+            self._httpd.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._httpd.server_close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def serve_forever(self):
+        """前台跑（扫描完想留页面给用户看时用）。"""
+        try:
+            self._httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop()

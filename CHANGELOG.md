@@ -2,6 +2,45 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.89.0 — 2026-11-12
+
+实时事件流 P3：`--serve` 起本地只读页面，SSE 实时追加，刷新能恢复。
+
+### 一、`--serve PORT`
+
+`--serve 8080` 起一个 `http.server.ThreadingHTTPServer`，路由四个：
+
+| 路径 | 作用 |
+| --- | --- |
+| `/` | 单页 HTML（内嵌 JS/CSS，零 CDN，离线可用） |
+| `/events` | SSE 流，支持 `Last-Event-ID` 断线续传 |
+| `/api/snapshot` | 当前完整状态（刷新页面立即恢复，不等重放） |
+| `/api/export` | 把当前事件流导出成 JSONL |
+
+扫完不退出，留着页面给人看，Ctrl+C 结束。
+
+### 二、前端
+
+原生 JS + `EventSource`，不引任何 CDN。符号和终端同一套：`þ` 绿 / `◐` 黄 /
+`¨` 灰（借来档）。测试里断言页面不含 `https://`——离线可用不是口号。
+
+### 三、SSE 细节
+
+- 帧格式 `id: <seq>\nevent: <kind>\ndata: <json>\n\n`
+- 15 秒 `: keepalive` 注释帧，防代理/浏览器断连
+- `Last-Event-ID` 补发：只发 seq 更大的，测试断言「不该重放旧的」
+- 慢客户端丢事件（`put_nowait` 满了就丢），绝不拖累扫描
+
+### 四、实测（static-asar 靶场）
+
+```
+GET /              200  2259 字节
+GET /api/snapshot  {"channels": [5 条 ledger:*], "done": {..., "channels": 5, "sinks": 18,
+                    "by_tier": {"direct": 12, "chain": 5, "name_confirmed": 1}, "unresolved": 0}}
+```
+
+质量问题照旧：375 用例、四道闸、覆盖率门禁。
+
 ## 0.88.0 — 2026-11-12
 
 实时事件流 P2：终端 `--live`，边扫边画，借来档一律灰。

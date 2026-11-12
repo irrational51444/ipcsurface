@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.88.0'
+__version__ = '0.89.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4272,7 +4272,10 @@ def main(argv=None):
                         help='把扫描过程录成事件流（JSONL，append-only）。不给就不发事件，行为和以前完全一致')
     parser.add_argument('--live', action='store_true',
                         help='把扫描过程画到终端（ANSI，80 列）。借来档一律画灰的')
+    parser.add_argument('--serve', type=int, metavar='PORT',
+                        help='起一个本地只读页面（SSE + 快照），扫完不退出，Ctrl+C 结束')
     args = parser.parse_args(argv)
+    server = None   # --serve 起的页面，只有 asar 那条分支会赋值
 
     if args.recover:
         report = inspect_leftovers(args.recover)
@@ -4317,11 +4320,12 @@ def main(argv=None):
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
-        # 实时层：--events-out 录文件、--live 画终端，两个都可以单独用。
+        # 实时层：--events-out 录文件、--live 画终端、--serve 起页面，三个都能单独用。
         # 都不给时 bus 是 None，全程零开销。
         bus = None
         renderer = None
-        if args.events_out or args.live:
+        server = None
+        if args.events_out or args.live or args.serve:
             import jsevents
             # scan_id 用输入文件的 sha256：和报告 fingerprint.input_sha256 同一个值，
             # 事件流和报告能直接对上。这是顺序读一遍文件，只在开实时时付这个开销。
@@ -4332,6 +4336,10 @@ def main(argv=None):
                 jsevents.enable_ansi()
                 renderer = jsevents.TerminalRenderer(sys.stderr)
                 bus.add_listener(renderer.on_event)
+            if args.serve:
+                server = jsevents.EventServer(bus, host='127.0.0.1',
+                                              port=args.serve).start()
+                print(f'实时页面：{server.url}', file=sys.stderr)
         try:
             facts, count, total = analyse_asar(
                 args.input, allow_eval=not args.no_eval,
@@ -4469,6 +4477,17 @@ def main(argv=None):
         order = {'high': 0, 'medium': 1, 'info': 2}
         if any(order.get(level, 9) <= order[args.fail_on] for level, _, _ in findings):
             return 2
+
+    # --serve：报告已经打完了，页面留着给人看。Ctrl+C 结束。
+    if server is not None:
+        print(f'实时页面：{server.url}（Ctrl+C 退出）', file=sys.stderr)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.stop()
+
     return 0
 
 
