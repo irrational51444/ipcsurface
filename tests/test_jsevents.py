@@ -299,6 +299,27 @@ class EventServerTests(unittest.TestCase):
         finally:
             server.stop()
 
+    def test_entity_chain_returns_structured_proof(self):
+        """P6 追问接口：一条通道的完整证据链，agent 拿去就能用，不用猜报告文本。"""
+        from urllib.parse import quote
+        self.bus.emit('discovery', {'name': 'a/b', 'tier': None})
+        self.bus.emit('warning', {'entity': 'a/b', 'rule_id': 'sink-exec',
+                                  'level': 'high', 'tier': 'direct',
+                                  'sinks': ['exec'], 'rationale': 'r'})
+        status, body = self.get('/api/entity/' + quote('a/b', safe=''))
+        self.assertEqual(status, 200)
+        chain = json.loads(body)
+        self.assertEqual(chain['entity'], 'a/b')
+        self.assertEqual(chain['tier'], 'direct')
+        self.assertEqual(chain['sinks'], ['exec'])
+        self.assertEqual([c['kind'] for c in chain['chain']],
+                         ['discovery', 'warning'])
+
+    def test_entity_chain_for_unknown_name_is_empty(self):
+        status, body = self.get('/api/entity/nope')
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)['chain'], [])
+
     def test_sse_replays_history_after_last_event_id(self):
         """断线重连：带 Last-Event-ID 只补发之后的事件。"""
         import socket
@@ -437,6 +458,47 @@ class ReconcileEndToEndTests(unittest.TestCase):
                     os.unlink(path)
                 except OSError:
                     pass
+
+
+class DashboardJsTests(unittest.TestCase):
+    """页面里那段 JS 必须能过 `node --check`。
+
+    加这条是因为真踩过：抽屉里写了内联 onclick，`\\'` 和外面的单引号字符串打架，
+    整个脚本语法错误、页面全白。而当时所有测试都是绿的——没有一条会去解析 JS。
+    """
+
+    def test_dashboard_js_parses(self):
+        import re
+        import shutil
+        import subprocess
+        import tempfile
+        if not shutil.which('node'):
+            self.skipTest('没装 node，跳过')
+        match = re.search(r'<script>(.*?)</script>', jsevents._DASHBOARD, re.S)
+        self.assertIsNotNone(match, '页面里应该有 <script>')
+        js = match.group(1)
+        fd, path = tempfile.mkstemp(suffix='.js')
+        out = tempfile.mktemp(suffix='.txt')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+                fh.write(js)
+            with open(out, 'wb') as sink:
+                run = subprocess.run(['node', '--check', path],
+                                     stdout=sink, stderr=sink)
+            detail = open(out, 'rb').read().decode('utf-8', 'replace')
+            self.assertEqual(run.returncode, 0, detail[:800])
+        finally:
+            for p in (path, out):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+
+    def test_dashboard_has_no_inline_onclick(self):
+        # 内联 onclick（HTML 属性形式 onclick="..."）是上一次白屏的元凶。
+        # 注意：JS 里 `tr.onclick = function(){}` 是属性赋值，不算内联，别误伤。
+        self.assertNotIn('onclick="', jsevents._DASHBOARD,
+                         '别用内联 onclick：引号会和 JS 字符串打架')
 
 
 if __name__ == '__main__':

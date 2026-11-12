@@ -13,6 +13,7 @@
 import json
 import os
 import time
+from urllib.parse import unquote
 from collections import deque
 
 # 事件格式的版本号。和报告 schema 分开走：事件流改了不一定要动报告 schema。
@@ -513,10 +514,21 @@ th{color:#888;font-weight:400}
 .warn.lv-low{border-left-color:#666}
 .warn .t{font-weight:600}
 .warn .why{color:#999}
+#pause{float:right;background:#222;color:#ccc;border:1px solid #444;padding:2px 10px;
+       font:inherit;cursor:pointer}
+#pause.on{color:#ffb300;border-color:#ffb300}
+#drawer{position:fixed;right:16px;bottom:16px;width:560px;max-height:70vh;overflow:auto;
+        background:#181818;border:1px solid #444;padding:10px 14px;font-size:12px}
+#drawer h2{font-size:13px;margin:0 0 6px}
+#drawer .e{border-left:3px solid #444;padding-left:8px;margin:6px 0}
+#drawer .k{color:#888}
+#drawer .x{float:right;cursor:pointer;color:#888}
 </style></head><body>
-<h1>ipcsurface live <span id="input" class="bar"></span></h1>
+<h1>ipcsurface live <span id="input" class="bar"></span>
+  <button id="pause">暂停</button></h1>
 <div class="bar" id="head">等事件…</div>
 <div id="warns"></div>
+<div id="drawer" style="display:none"></div>
 <table><thead><tr><th>档</th><th>通道</th><th>tier</th></tr></thead>
 <tbody id="rows"></tbody></table>
 <script>
@@ -528,8 +540,58 @@ function addCh(name,tier){
   var g=glyph[tier]||['·','unknown'];
   var tr=document.createElement('tr');
   tr.innerHTML='<td class="'+g[1]+'">'+g[0]+'</td><td>'+name+'</td><td class="'+g[1]+'">'+(tier||'—')+'</td>';
+  tr.style.cursor='pointer';
+  tr.onclick=function(){showChain(name);};
   rows.set(name,tr);
   document.getElementById('rows').appendChild(tr);
+}
+// 抽屉：一条通道的完整证据链（点击通道行打开）
+function showChain(name){
+  var box=document.getElementById('drawer');
+  box.style.display='block';
+  box.innerHTML='<h2>'+name+' <span class="x" id="drawer-close">关闭</span></h2>载入中…';
+  fetch('/api/entity/'+encodeURIComponent(name)).then(function(r){return r.json();}).then(function(c){
+    var html='<h2>'+name+' <span class="x" id="drawer-close">关闭</span></h2>';
+    html+='<div class="k">tier: '+(c.tier||'—')+' · sinks: '+((c.sinks||[]).join(', ')||'—')+
+          ' · 证据链 '+(c.chain||[]).length+' 条</div>';
+    (c.chain||[]).forEach(function(e){
+      var p=e.payload||{};
+      html+='<div class="e"><span class="k">seq '+e.seq+' · '+e.kind+' · '+e.phase+'</span><br>'+
+            (e.kind==='warning'
+              ? ('['+p.level+'] '+p.rule_id+' — '+(p.rationale||''))
+              : ((p.name||p.entity||'')+(p.tier?(' · '+p.tier):'')))+'</div>';
+    });
+    box.innerHTML=html;
+  });
+}
+// 抽屉关闭：事件委托，别把 onclick 塞进 innerHTML（引号会打架）
+document.getElementById('drawer').addEventListener('click', function(e){
+  if(e.target && e.target.id==='drawer-close'){this.style.display='none';}
+});
+// 暂停：冻结视图，不是暂停扫描。新事件只计数，恢复后一次铺开。
+var paused=false, pending=[];
+var pauseBtn=document.getElementById('pause');
+pauseBtn.onclick=function(){
+  paused=!paused;
+  pauseBtn.textContent=paused?('恢复 ('+pending.length+')'):'暂停';
+  pauseBtn.className=paused?'on':'';
+  if(!paused){
+    pending.forEach(function(ev){applyEvent(ev);});
+    pending=[];
+    pauseBtn.textContent='暂停';
+  }
+};
+function applyEvent(ev){
+  var p=ev.payload||{};
+  if(ev.kind==='lifecycle'&&p.stage==='start'){document.getElementById('input').textContent=p.input||'';}
+  if(ev.kind==='discovery'){addCh(p.name,p.tier);}
+  if(ev.kind==='warning'){addWarn(p);}
+  if(ev.kind==='progress'){head('files '+p.files_done+'/'+p.files_total+'  '+Math.round((p.elapsed_ms||0)/1000)+'s');}
+  if(ev.kind==='lifecycle'&&p.stage==='done'){head('done  '+p.channels+' channels  '+p.sinks+' sinks  '+p.unresolved+' unresolved');}
+}
+function onEvent(ev){
+  if(paused){pending.push(ev);pauseBtn.textContent='恢复 ('+pending.length+')';return;}
+  applyEvent(ev);
 }
 function head(t){document.getElementById('head').textContent=t;}
 var warnSeen=new Set();
@@ -550,14 +612,6 @@ function addWarn(w){
     if(({high:0,medium:1,low:2})[lv]>({high:0,medium:1,low:2})[w.level]){before=box.children[i];break;}
   }
   box.insertBefore(d,before);
-}
-function onEvent(ev){
-  var p=ev.payload||{};
-  if(ev.kind==='lifecycle'&&p.stage==='start'){document.getElementById('input').textContent=p.input||'';}
-  if(ev.kind==='discovery'){addCh(p.name,p.tier);}
-  if(ev.kind==='warning'){addWarn(p);}
-  if(ev.kind==='progress'){head('files '+p.files_done+'/'+p.files_total+'  '+Math.round((p.elapsed_ms||0)/1000)+'s');}
-  if(ev.kind==='lifecycle'&&p.stage==='done'){head('done  '+p.channels+' channels  '+p.sinks+' sinks  '+p.unresolved+' unresolved');}
 }
 fetch('/api/snapshot').then(function(r){return r.json();}).then(function(s){
   if(s.input){document.getElementById('input').textContent=s.input;}
@@ -610,6 +664,15 @@ class _Handler(__import__('http.server', fromlist=['BaseHTTPRequestHandler']).Ba
                              for e in state.events)
             self._send(200, 'application/x-ndjson; charset=utf-8',
                        body + ('\n' if body else ''))
+        elif path.startswith('/api/entity/'):
+            # 通道名可能带 /（app/getAppInfo），客户端 encodeURIComponent 过，
+            # 这里 unquote 回来。空名字直接 400，别拿空串去查。
+            name = unquote(path[len('/api/entity/'):])
+            if not name:
+                self._send(400, 'text/plain; charset=utf-8', 'need an entity name\n')
+                return
+            self._send(200, 'application/json; charset=utf-8',
+                       json.dumps(state.entity_chain(name), ensure_ascii=False))
         elif path == '/events':
             self._stream(state)
         else:
@@ -746,6 +809,44 @@ class _State:
         s['input'] = input_name
         s['warnings'] = warnings
         return s
+
+    def entity_chain(self, name):
+        """一条通道的完整证据链：它怎么被发现、后来有没有预警、档位是什么。
+
+        这是给「追问」用的：人（或 agent）拿到结构化的链，不用去猜报告文本。
+        """
+        with self._lock:
+            events = list(self._events)
+        chain = []
+        for event in events:
+            payload = event.get('payload') or {}
+            kind = event.get('kind')
+            hit = ((kind == 'discovery' and payload.get('name') == name)
+                   or (kind == 'warning' and payload.get('entity') == name)
+                   or (kind == 'evidence' and payload.get('entity') == name))
+            if not hit:
+                continue
+            chain.append({
+                'seq': event.get('seq'),
+                'ts': event.get('ts'),
+                'kind': kind,
+                'phase': event.get('phase'),
+                'payload': payload,
+            })
+        # 档位和 sink 从链里汇总，省得调用方自己拼
+        tier = None
+        sinks = []
+        for item in chain:
+            payload = item['payload']
+            if item['kind'] == 'discovery' and payload.get('tier'):
+                tier = payload['tier']
+            if item['kind'] == 'warning':
+                if payload.get('tier'):
+                    tier = payload['tier']
+                for api in payload.get('sinks') or []:
+                    if api not in sinks:
+                        sinks.append(api)
+        return {'entity': name, 'tier': tier, 'sinks': sinks, 'chain': chain}
 
     def summary_line(self):
         snap = self.snapshot()

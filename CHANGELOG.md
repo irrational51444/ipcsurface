@@ -2,6 +2,52 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.93.0 — 2026-11-12
+
+实时事件流 P6：暂停 + 追问接口 + 抽屉证据链。
+
+### 一、追问接口 `GET /api/entity/<name>`
+
+拿一条通道的完整证据链：怎么被发现、后来有没有预警、档位是什么、sink 是哪些。
+路径里的名字用 `encodeURIComponent` 编码（通道名可能带 `/`，如 `app/getAppInfo`），
+服务端 `unquote` 回来。
+
+实测（obsidian 的 `vault-move`）：
+
+```json
+{"entity": "vault-move", "tier": "name_confirmed",
+ "sinks": ["renameSync", "writeFileSync"],
+ "chain": [{"seq": 49, "kind": "discovery", "phase": "coarse"},
+           {"seq": 58, "kind": "warning", "phase": "report"}]}
+```
+
+这是给 agent 用的：拿到结构化证据链，不用去猜报告文字。
+
+### 二、抽屉
+
+点通道行 → 右下角弹出，显示 tier / sinks / 证据链逐条。关闭用事件委托，
+**不写内联 onclick**（见下面那条教训）。
+
+### 三、暂停
+
+顶栏按钮冻结视图（不是暂停扫描）：新事件只计数，按钮显示「恢复 (N)」，
+点恢复一次性铺开。
+
+### 四、教训：内联 onclick 把页面搞白了一次
+
+第一版抽屉里写了 `onclick="document.getElementById('drawer')..."`，
+在 Python 字符串里转义后是 `\'`，**和外面那层 JS 单引号字符串打架**，
+整段脚本语法错误，页面全白。
+
+而当时 402 个测试**全绿**——没有一条会去解析那段 JS。
+
+补了两条护栏：
+
+- `test_dashboard_js_parses`：把页面里的 `<script>` 抠出来跑 `node --check`
+- `test_dashboard_has_no_inline_onclick`：禁掉 HTML 属性形式的 `onclick="`
+
+质量问题照旧：406 用例、四道闸、覆盖率门禁。
+
 ## 0.92.0 — 2026-11-12
 
 录制彻底交给用户选：默认不录，页面缓冲也能设成 0。
