@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.96.0'
+__version__ = '0.97.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/21'
+SCHEMA_VERSION = 'ipcsurface/asar/22'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2447,6 +2447,9 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sink_paths': facts.get('channel_sink_paths'),
         # 语法树口径的可达性：成员调用、回调传参、别名都能连上
         'channel_sinks_ast': facts.get('channel_sinks_ast'),
+        # 软档（同名多义/仅语法树）报出来的 API：**不进结论**，
+        # 单独列出来标「这条通道认出来了，能碰到什么没分析」。
+        'channel_sinks_borrowed': facts.get('channel_sinks_borrowed'),
         # 这些结论要经过同名多义链，可能是跟错了函数，读的时候要留一分
         'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
         # 每条危险 API 的来路可信度档（direct/name_confirmed/chain/ambiguous/ast_only）
@@ -2528,6 +2531,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
     'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_profiles',
+    'channel_sinks_borrowed',
     'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
@@ -4123,15 +4127,36 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths
-        # sink 路径强度档：每条报出的危险 API 是直连还是借来的。
-        # 让机器直接筛「硬结论 vs 软结论」，不用再跑校准脚本。
+        # sink 归因只在「硬结论」档才算结论。
+        # 软档（ambiguous / ast_only）是「同名多义跟过来的」——真踩过：
+        # obsidian 的 sandbox（真阳性）和 set-menu（误报）报出来的 API 一字不差
+        # （existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync,
+        # writeFileSync），说明这一档根本没在区分通道，它的「能碰到什么」不算证据。
+        # 所以：硬档进 channel_sinks_ast，软档单独进 channel_sinks_borrowed，
+        # 报告里标「这条通道认出来了，能碰到什么没分析」——不猜，也不让人去核。
+        HARD_TIERS = ('direct', 'name_confirmed', 'chain')
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:
             tiers = {ch: {api: sink_tier(facts, ch, api) for api in apis}
                      for ch, apis in _tier_src.items() if apis}
-            facts['channel_sink_tiers'] = tiers if tiers else None
+            hard_tiers = {}
+            hard_sinks = {}
+            borrowed = {}
+            for ch, api_tiers in tiers.items():
+                h = {a: t for a, t in api_tiers.items() if t in HARD_TIERS}
+                s = sorted(a for a, t in api_tiers.items() if t not in HARD_TIERS)
+                if h:
+                    hard_tiers[ch] = h
+                    hard_sinks[ch] = sorted(h)
+                if s:
+                    borrowed[ch] = s
+            facts['channel_sink_tiers'] = hard_tiers if hard_tiers else None
+            if ast_sinks is not None:
+                facts['channel_sinks_ast'] = hard_sinks
+            facts['channel_sinks_borrowed'] = borrowed if borrowed else None
         else:
             facts['channel_sink_tiers'] = None
+            facts['channel_sinks_borrowed'] = None
         facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']

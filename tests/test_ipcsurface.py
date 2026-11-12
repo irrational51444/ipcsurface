@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/21')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/22')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -3557,6 +3557,63 @@ class AdversarialTests(unittest.TestCase):
         source = "const t = `a\nb\nc`;\nipcMain.handle('vault:unlock', f)\n"
         facts = ipc.scan_asar({'a.js': source.encode('utf-8')})
         self.assertIn(('vault:unlock', 'a.js:4'), facts['handlers'])
+
+
+class HardOnlySinkTests(unittest.TestCase):
+    """软档不进结论：这是 0.97.0 的核心改动，必须有测试盯着。
+
+    真踩过：obsidian 的 sandbox（真阳性）和 set-menu（误报）报出来的 API
+    一字不差，说明 ambiguous / ast_only 这一档根本没在区分通道。
+    那它就不该产出「能碰到什么」这种结论。
+    """
+
+    HARD = ('direct', 'name_confirmed', 'chain')
+
+    def facts(self):
+        import ipcsurface as ipc
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, _n, _b = ipc.analyse_asar(asar)
+        return facts
+
+    def test_conclusions_only_use_hard_tiers(self):
+        facts = self.facts()
+        bad = [(ch, api, tier)
+               for ch, apis in (facts.get('channel_sink_tiers') or {}).items()
+               for api, tier in apis.items()
+               if tier not in self.HARD]
+        self.assertFalse(bad, '结论里混进了软档：%r' % (bad,))
+
+    def test_ast_sinks_and_borrowed_do_not_overlap(self):
+        facts = self.facts()
+        ast = facts.get('channel_sinks_ast') or {}
+        borrowed = facts.get('channel_sinks_borrowed') or {}
+        overlap = {ch: sorted(set(ast[ch]) & set(borrowed[ch]))
+                   for ch in set(ast) & set(borrowed)}
+        overlap = {ch: v for ch, v in overlap.items() if v}
+        self.assertFalse(overlap, '同一个 API 不能既是结论又是没分析：%r' % (overlap,))
+
+    def test_report_carries_borrowed_field(self):
+        """报告里必须有 channel_sinks_borrowed——不然「没分析」这件事就没地方写。"""
+        import subprocess
+        import tempfile
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        out = tempfile.mktemp(suffix='.json')
+        try:
+            subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                            asar, '--format', 'json', '-o', out],
+                           capture_output=True, timeout=180)
+            with open(out, encoding='utf-8') as fh:
+                report = json.load(fh)
+            self.assertIn('channel_sinks_borrowed', report)
+        finally:
+            try:
+                os.unlink(out)
+            except OSError:
+                pass
 
 
 if __name__ == '__main__':

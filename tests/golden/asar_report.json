@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/21",
+  "schema": "ipcsurface/asar/22",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -273,8 +273,8 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.96.0",
-    "schema": "ipcsurface/asar/21",
+    "version": "0.97.0",
+    "schema": "ipcsurface/asar/22",
     "params": {},
     "channels": [
       "a:b"
@@ -291,6 +291,7 @@
   "channel_sinks": {},
   "channel_sink_paths": {},
   "channel_sinks_ast": {},
+  "channel_sinks_borrowed": null,
   "channel_sinks_ambiguous": [],
   "channel_sink_tiers": null,
   "channel_profiles": {},

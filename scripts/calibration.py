@@ -62,6 +62,8 @@ def main(argv=None):
     #   通道级：一个通道在同一档最多算 1 次 —— 更贴近「这条通道该不该信」
     tiers = {name: [0, 0] for name in SINK_TIER_ORDER}
     tiers_chan = {name: [0, 0] for name in SINK_TIER_ORDER}
+    dropped_tp = 0   # 被软档过滤掉的真阳性
+    dropped_fp = 0   # 被软档过滤掉的误报
 
     for name, spec in _labelled(gold):
         path = spec['asar']
@@ -81,25 +83,31 @@ def main(argv=None):
             tier_dist[item.get('strength', 0.0)] = tier_dist.get(
                 item.get('strength', 0.0), 0) + 1
 
-        # 表二：sink 层（对错按 sink 路径强度分档）
+        # 表二：sink 层。
+        # **只用固化下来的 tier**（facts['channel_sink_tiers']），不事后重算——
+        # sink_tier 依赖 facts，facts 被过滤过之后再算会得不同结果，那是自欺。
+        hard = facts.get('channel_sink_tiers') or {}
+        borrowed = facts.get('channel_sinks_borrowed') or {}
         for ch in verified:
             hit = set()
-            for api in verified[ch]:
-                if ch in ast and api in ast[ch]:
-                    tier = sink_tier(facts, ch, api)
+            for api, tier in (hard.get(ch) or {}).items():
+                if api in (verified.get(ch) or []):
                     tiers[tier][0] += 1
                     hit.add(tier)
             for tier in hit:
                 tiers_chan[tier][0] += 1
         for ch in known_fp:
             hit = set()
-            for api in known_fp[ch]:
-                if ch in ast and api in ast[ch]:
-                    tier = sink_tier(facts, ch, api)
+            for api, tier in (hard.get(ch) or {}).items():
+                if api in (known_fp.get(ch) or []):
                     tiers[tier][1] += 1
                     hit.add(tier)
             for tier in hit:
                 tiers_chan[tier][1] += 1
+            # 被砍掉的软档：单独记「这里本来会多报多少」，不混进精确率
+            dropped_fp += len(set(borrowed.get(ch) or []) & set(known_fp.get(ch) or []))
+        for ch in verified:
+            dropped_tp += len(set(borrowed.get(ch) or []) & set(verified.get(ch) or []))
 
     # 只有 unverified 的包（抖音 22、bilibili 1）：名字已人工确认是真的，
     # 工具报出的事实也写在 golden 的「依据」里，直接计入名字数，不扫 asar。
@@ -141,6 +149,12 @@ def main(argv=None):
         shown = '—' if prec is None else f'{prec:.0%}'
         shown_c = '—' if prec_c is None else f'{prec_c:.0%}'
         print(f'| {tier} | {tp} | {fp} | {shown} | {tp_c} | {fp_c} | {shown_c} |')
+
+    if dropped_tp or dropped_fp:
+        print()
+        print('（软档已不进结论：砍掉 %d 个误报、%d 个真阳性。'
+              '砍掉的这些现在写「没分析」，不报「能碰到什么」）'
+              % (dropped_fp, dropped_tp))
 
     precs = [(tier, tp, fp, prec) for tier, tp, fp, prec in rows if prec is not None]
     if not precs:

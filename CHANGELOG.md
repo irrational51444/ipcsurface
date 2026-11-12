@@ -2,6 +2,50 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.97.0 — 2026-11-12
+
+软档不再产出 sink 结论：精确率从 24% 到 **100%**，复核成本从 114 条到 0 条。
+
+### 一、铁证
+
+obsidian 的 `sandbox`（真阳性）和 `set-menu`（误报）报出来的 API **一字不差**：
+`existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, writeFileSync`，
+七个，顺序都一样。
+
+说明 `ambiguous` / `ast_only` 这两档**根本没在区分通道**——它把同一段代码一起算给了
+所有通道。真假通道拿到同一批结论，那不叫证据。
+
+### 二、改法
+
+- 硬档（`direct` / `name_confirmed` / `chain`）进 `channel_sinks_ast`，算结论
+- 软档（`ambiguous` / `ast_only`）挪进新字段 `channel_sinks_borrowed`，
+  报告里写「这条通道认出来了，它能碰到什么没分析」
+- schema 21 → **22**
+
+### 三、数字
+
+| 档 | API 对 | API 误报 | 精确率 |
+| --- | --- | --- | --- |
+| direct | 2 | 0 | 100% |
+| name_confirmed | 5 | 0 | 100% |
+| chain | 11 | 0 | 100% |
+
+**结论层 18 条，全对，误报 0。**
+
+过滤量与代价：**砍掉 87 个误报、9 个真阳性**。
+
+那 9 个「真阳性」也砍了——它们的「对」是碰巧，工具给出的证据和假通道一样，
+留着就是拿巧合当证据。这条取舍写进 `docs/calibration.md`。
+
+### 四、顺手修的一个自欺
+
+`calibration.py` 原来用 `sink_tier(facts, ...)` 事后重算档位。但 `facts` 已经被过滤过，
+重算会得到不同结果——那等于拿过滤后的数据给自己打分。
+
+改成**只用固化下来的 `channel_sink_tiers`**，不再重算。
+
+质量问题照旧：423 用例、四道闸、覆盖率门禁。
+
 ## 0.96.0 — 2026-11-12
 
 校准进基线：数字会漂，不常跑就是修辞。

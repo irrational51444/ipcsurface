@@ -307,3 +307,13 @@
 
 - 变了的字段：fingerprint
 - 理由：0.96.0 版本号
+
+## 2026-11-12 15:04
+
+- 变了的字段：fingerprint, schema
+- 理由：schema 22：软档不再进结论，单独 channel_sinks_borrowed
+
+## 2026-11-12 15:08
+
+- 变了的字段：fingerprint
+- 理由：0.97.0 版本号
