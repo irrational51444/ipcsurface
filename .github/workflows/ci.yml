@@ -122,6 +122,12 @@ jobs:
         run: |
           cd probe
           ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ npm install --registry=https://registry.npmmirror.com
+          # npm 的 postinstall 有时静默跳过二进制下载（dist/ 为空），手动补一次。
+          if [ ! -f node_modules/electron/dist/chrome-sandbox ]; then
+            cd node_modules/electron
+            ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/ node install.js
+            cd ../..
+          fi
           sudo chown root:root node_modules/electron/dist/chrome-sandbox
           sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
       - name: 跑探针
