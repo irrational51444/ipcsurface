@@ -642,5 +642,18 @@ class StaticPageTests(unittest.TestCase):
             server.stop()
 
 
+    def test_static_page_says_scanning_before_done(self):
+        """扫描还没结束时，别写「done 0 channels」——那读起来像「一条都没发现」。"""
+        bus = jsevents.EventBus(None)
+        server = jsevents.EventServer(bus, port=0).start()
+        try:
+            bus.emit('discovery', {'name': 'x', 'tier': None})
+            html = jsevents.static_page(server.state)
+        finally:
+            server.stop()
+        self.assertIn('扫描中', html)
+        self.assertNotIn('done  0 channels', html)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1094,6 +1094,9 @@ def static_page(state):
                esc(warn.get('rationale') or '')))
     head = 'done  %d channels  %d sinks  %d unresolved' % (
         done.get('channels') or 0, done.get('sinks') or 0, done.get('unresolved') or 0)
+    if not done:
+        # 扫描还没结束：别写「done 0 channels」，那读起来像「一条都没发现」
+        head = '扫描中…（tier 要等扫完才定）'
     return ('<!doctype html><html lang="zh"><head><meta charset="utf-8">'
             '<title>ipcsurface live</title><style>%s</style></head><body>'
             '<h1>ipcsurface live <span class="bar">%s</span></h1>'
