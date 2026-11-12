@@ -7,6 +7,7 @@ import sys
 
 sys.path.insert(0, r'C:\Users\irrational\Desktop\rea-lab')
 import ipcsurface as t
+import jsreport
 
 REAL = os.environ.get('IPCSURFACE_REAL_APP') or r'C:\Users\irrational\AppData\Local\Programs\DeepSeek Harness\resources\app.asar'
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -478,13 +479,17 @@ def main():
     ok = check_invariants(ok)
 
     print('== 二、schema 与规则一致性 ==')
-    ok &= check('schema 版本号是 asar/20', 'ipcsurface/asar/20' in read('ipcsurface.py'))
+    ok &= check('schema 版本号是 asar/21', 'ipcsurface/asar/21' in read('ipcsurface.py'))
     # 文档漂移：README 里写死的 schema 必须和源码一致，不然消费方会按旧版本对不上
     source_schema = re.search(r"SCHEMA_VERSION = '([^']+)'", read('ipcsurface.py')) or \
         re.search(r"'ipcsurface/asar/([0-9]+)'", read('ipcsurface.py'))
     doc_schemas = set(re.findall(r'ipcsurface/asar/[0-9]+', read('README.md') + read('README.en.md')))
-    ok &= check('README 里的 schema 和源码一致', doc_schemas == {'ipcsurface/asar/20'},
+    ok &= check('README 里的 schema 和源码一致', doc_schemas == {'ipcsurface/asar/21'},
                 str(sorted(doc_schemas)) + ' 源码 ' + (source_schema.group(0) if source_schema else '?'))
+    # 指纹里的 schema 必须和顶层一致——以前它写死 asar/17，之后升了四次都没跟上，
+    # 指纹一直报旧值。这条守着，别再漂。
+    ok &= check('指纹 schema 和顶层一致', jsreport.SCHEMA == t.SCHEMA_VERSION,
+                f'jsreport {jsreport.SCHEMA} / ipcsurface {t.SCHEMA_VERSION}')
     # 打包：九个模块缺一个，装出来的 wheel 就会悄悄降级
     pyproject = read('pyproject.toml')
     packed = re.search(r'py-modules\s*=\s*\[(.*?)\]', pyproject, re.S)

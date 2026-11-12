@@ -247,3 +247,13 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：新增 channel_sink_tiers：每条危险 API 的来路可信度档，schema 升到 asar/20
+
+## 2026-11-12 09:20
+
+- 变了的字段：channel_profiles, schema
+- 理由：新增 channel_profiles（每条通道的能力标签+代码位置+证据来源），schema 升 21
+
+## 2026-11-12 09:23
+
+- 变了的字段：fingerprint
+- 理由：修指纹硬编码：schema 从写死的 asar/17 改成注入的 SCHEMA_VERSION，指纹里的 schema 不再漂

@@ -21,6 +21,10 @@ import jslabels
 from jslabels import HARVEST_GRADES, danger_kind_of
 HIGH_RISK_HINTS = ('__', 'internal', 'debug', 'admin')
 
+# 由主模块注入覆盖（和 VERSION 一样）；这里给个和源码一致的默认值，
+# 免得指纹里的 schema 又漂回旧值。
+SCHEMA = 'ipcsurface/asar/21'
+
 
 def stamp(version=None):
     """报告里带生成时间和版本——审出来的东西要能对上号。
@@ -122,6 +126,29 @@ def sink_tier(facts, channel, api):
     if '同名多义' in via or channel in ambiguous:
         return 'ambiguous'
     return 'direct' if path.get('hops', 9) <= 1 else 'chain'
+
+
+def channel_profiles(facts, evidence):
+    """每条通道一份档案：能碰什么、什么能力、来路档、代码位置、证据来源。
+
+    报告里以前是「通道 → API」和「通道 → 来源」分开列，读的人要自己拼。
+    这里合成一份：一条通道一行，能力标签、代码位置、证据来源都在。
+    """
+    sinks = facts.get('channel_sinks_ast') or facts.get('channel_sinks') or {}
+    tiers = facts.get('channel_sink_tiers') or {}
+    profiles = {}
+    for name, apis in sinks.items():
+        if not apis:
+            continue
+        ev = evidence.get(name) or {}
+        profiles[name] = {
+            'sinks': sorted(apis),
+            'risk_labels': jslabels.risk_labels(apis),
+            'sink_tiers': tiers.get(name) or {},
+            'where': ev.get('where'),
+            'sources': ev.get('sources') or [],
+        }
+    return profiles
 
 
 def channel_sources(facts, probe=None):
@@ -593,11 +620,14 @@ def fingerprint_of(target, channel_names, params=None):
 
     同样输入 + 同样版本 + 同样参数 → 同样的值。别人重跑能对上，才叫证据；
     对不上就是有人改了输入、换了版本，或者我这边行为漂了。
+
+    注意 schema 别再写死：以前这里硬编码 'asar/17'，之后升到 18/19/20 都没跟上，
+    指纹里的 schema 一直报旧值。现在由主模块注入 SCHEMA，selfcheck 盯着两边一致。
     """
     payload = {
         'input_sha256': input_sha256(target),
         'version': VERSION,
-        'schema': 'ipcsurface/asar/17',
+        'schema': SCHEMA,
         'params': params or {},
         'channels': sorted(channel_names),
     }

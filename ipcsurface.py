@@ -36,7 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.85.0'
+__version__ = '0.86.0'
+
+# 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
+SCHEMA_VERSION = 'ipcsurface/asar/21'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -44,12 +47,13 @@ import jsreport  # noqa: E402
 from jsreport import (  # noqa: E402
     ACTION_BY_SOURCE, ACTION_STRICTNESS, ALL_SOURCES, ENUM_STRENGTH_OPEN, ENUM_STRENGTH_PROVEN,
     HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SINK_TIER_ORDER, SOURCE_STRENGTH, STATIC_SOURCES,
-    _build_independence, audit_asar, baseline_delta, channel_sources, confidence_ladder,
-    confidence_levels, corroboration_strength, fingerprint_of, independent, input_sha256,
-    refutes_if, render_asar, render_baseline, sample_sites, sink_tier,
+    _build_independence, audit_asar, baseline_delta, channel_profiles, channel_sources,
+    confidence_ladder, confidence_levels, corroboration_strength, fingerprint_of, independent,
+    input_sha256, refutes_if, render_asar, render_baseline, sample_sites, sink_tier,
 )
 
 jsreport.VERSION = __version__   # 报告层的版本号由这儿注入
+jsreport.SCHEMA = SCHEMA_VERSION  # schema 也一样，别让指纹里写死旧值
 import jslabels  # noqa: E402
 import native_imports  # noqa: E402  # noqa: E402  asar 解析层单独成文件，这里重新导出
 
@@ -2354,7 +2358,7 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
                       checks, poke_buckets, baseline_obj, merkle=None):
     """asar 路径的 JSON 报告。单独抽出来，好让契约测试直接盯它的顶层键。"""
     report = {
-        'schema': 'ipcsurface/asar/20',
+        'schema': SCHEMA_VERSION,
         'mode': 'asar',
         'subject': target,
         'files': file_count,
@@ -2395,6 +2399,8 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
         # 每条危险 API 的来路可信度档（direct/name_confirmed/chain/ambiguous/ast_only）
         'channel_sink_tiers': facts.get('channel_sink_tiers'),
+        # 每条通道一份档案：能力标签 + 代码位置 + 证据来源（静态AST/动态探针）
+        'channel_profiles': channel_profiles(facts, evidence),
         # 第二条口径：外部输入能到危险参数的通道
         'channel_tainted': facts.get('channel_tainted'),
         # 名字没解出来的注册点数：这是空档，不是零
@@ -2469,7 +2475,8 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'limits', 'runtime', 'poke', 'web_preferences', 'attack_surface', 'baseline',
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
-    'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
+    'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_profiles',
+    'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
 REPORT_TOP_LEVEL_KEYS = frozenset(REPORT_TOP_LEVEL_KEY_LIST)
