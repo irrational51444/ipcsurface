@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.98.0'
+__version__ = '0.99.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/23'
@@ -2303,9 +2303,22 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
 
         for reg in regs:
             found = set()
-            if reg.get('channel'):
-                reg_at[reg['channel']] = '%s:%s' % (rel, reg.get('line') or 0)
             span = reg.get('span')
+            # 证据里的「位置」优先给**处理函数体**的行号。包里一堆 ipcMain.on
+            # 常常挤在同一个 forEach 里，注册点全是同一行——那种位置跳到源码
+            # 只能看到一个循环，等于没给。算不出处理函数体的，才退回注册点。
+            if reg.get('channel'):
+                loc = '%s:%s' % (rel, reg.get('line') or 0)
+                if span:
+                    try:
+                        tok = tokens[span[0]]
+                        # 压缩过的包整个文件就几行，行号全是同一个数（实测
+                        # obsidian 47 条通道全落在 main.js:66）。所以再带上字符
+                        # 偏移，人才能在那一行里找到位置。`@` 后面是偏移。
+                        loc = '%s:%s@%s' % (rel, tok.line + 1, tok.start)
+                    except (IndexError, AttributeError):
+                        pass
+                reg_at[reg['channel']] = loc
             if not span and reg.get('target'):
                 # 处理函数是按名字传进来的（ipcMain.on('relaunch', relaunch)）：
                 # 把那个函数的身子当处理函数体。同一个文件里找不到就算了，不猜。

@@ -638,6 +638,72 @@ def fingerprint_of(target, channel_names, params=None):
     return payload
 
 
+def sink_table(facts, hit):
+    """把「每条 API 的凭据」渲染成一张表。
+
+    每一行都是人能直接核的：档位说这条有多硬，位置说去哪看，跳数和经过说
+    它是怎么爬过来的。报告里承诺的「跳到那一行」，靠的就是 at 这一列。
+    """
+    ev = facts.get('channel_sink_evidence') or {}
+    rows = []
+    for name in sorted(hit):
+        for api in sorted(hit[name]):
+            item = (ev.get(name) or {}).get(api) or {}
+            tier = item.get('tier') or '—'
+            at = item.get('at') or '—'
+            hops = item.get('hops')
+            via = item.get('via') or '—'
+            rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s |'
+                        % (name, api, danger_kind_of(api), tier, at,
+                           '—' if hops is None else hops, via))
+    out = ['| 通道 | API | 类别 | 档位 | 位置 | 跳数 | 经过 |',
+           '| --- | --- | --- | --- | --- | --- | --- |']
+    out.extend(rows)
+    return out
+
+
+def sink_table_legend():
+    """档位怎么读——这张表不解释，人就没法用它判断。"""
+    return [
+        '- `direct`：处理函数自己直接调，最硬',
+        '- `name_confirmed`：语法树和名字级两条口径都报，但没记下路径',
+        '- `chain`：同文件函数链爬到的，跳数见「跳数」列',
+        '- `ambiguous`：经过同名多义的函数（压缩产物里 f/y/m 满地重名），'
+        '**可能是对的，也可能跟错了身子**——「经过」列会标「同名多义」',
+        '- `ast_only`：只有语法树看见，名字级没有。这一档最不可信',
+        '',
+        '「位置」是**处理函数体**的起点，格式 `文件:行@字符偏移`。'
+        '压缩过的包整个文件就几行（obsidian 47 条通道全落在 main.js:66 那一行），'
+        '所以带偏移——拿偏移在那一行里定位，比只给行号有用得多。',
+    ]
+
+
+def count_sink_rows(md_text, section='## 按语法树再走一遍'):
+    """数某一节 sink 表格里的条目数。
+
+    这是防「报告少渲染」的尺子：md 的条目数必须等于 JSON 里
+    `channel_sink_evidence` 的条目数。加它是因为真出过一次——0.98.0 把
+    tier/at/hops 只写进了 JSON，md 那节还是一条 via 摘要，CHANGELOG 却承诺
+    「跳到那一行」。产品承诺和产品不一致，而当时 424 个用例全绿。
+    """
+    import re
+    total = 0
+    inside = False
+    for line in md_text.split('\n'):
+        if line.strip() == section:
+            inside = True
+            continue
+        if line.startswith('## ') and line.strip() != section:
+            inside = False
+            continue
+        # 只数 7 列的主表（通道/API/类别/档位/位置/跳数/经过）。
+        # 同一节后面还有个 5 列的「借来的 API」小表，那不是主结论，别混进来。
+        if inside and re.match(r'^\| `[^`]+` \| `[^`]+` \|', line):
+            if len(line.split('|')) == 9:
+                total += 1
+    return total
+
+
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
                 probe=None, poke=None, baseline=None):
     out = ['# Electron 能力面清单（粗扫）', '']
@@ -808,10 +874,12 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('## 跟了调用链之后')
         out.append('')
         out.append(f'顺着处理函数往下走（含同文件调用链和跨文件一跳、两跳），{len(hit)} 条通道能碰到危险 API。')
-        for name in sorted(hit):
-            kinds = sorted({danger_kind_of(api) for api in hit[name]})
-            out.append(f"  - `{name}`：{'、'.join(sorted(hit[name]))}（{'、'.join(kinds)}）")
-        if not hit:
+        out.append('')
+        if hit:
+            out.extend(sink_table(facts, hit))
+            out.append('')
+            out.extend(sink_table_legend())
+        else:
             out.append('  - 一条都没有。这不等于干净：可能是转发壳，也可能名字是拼出来的。')
         out.append('')
         out.append('> 这条只说明「能碰到」，不说明「能被滥用」。参数从哪来、校验拦不拦得住，'
@@ -826,16 +894,9 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append(f'这次不靠名字猜：建了语法树，成员调用、`fs["readFileSync"]`、'
                    f'别名、回调传参都算一条边。{len(hit)} 条通道能碰到危险 API。')
-        paths = facts.get('channel_sink_paths') or {}
-        for name in sorted(hit):
-            kinds = sorted({danger_kind_of(api) for api in hit[name]})
-            chain = ''
-            detail = paths.get(name) or {}
-            first = next((item.get('via') for item in detail.values() if item.get('via')), '')
-            if first:
-                chain = f'｜链路 {first}'
-            out.append(f"  - `{name}`：{'、'.join(sorted(hit[name]))}（{'、'.join(kinds)}）{chain}")
-        if not hit:
+        if hit:
+            out.extend(sink_table(facts, hit))
+        else:
             out.append('  - 一条都没有。只说明这个包里没连到，不是确认没有。')
         out.append('')
         out.append('> 树只跟同一份文件；跨文件的调用还连不过去，这条缺口写在 '
@@ -843,10 +904,24 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         ambiguous = facts.get('channel_sinks_ambiguous') or []
         if ambiguous:
             out.append('')
-            out.append('下面这些结论要**经过同名多义**的函数（压缩产物里 f/y/m 满地重名）：'
-                       '可能是对的，也可能跟错了身子，读的时候留一分。')
+            out.append('下面这些通道的结论要**经过同名多义**的函数（压缩产物里 f/y/m 满地重名）：'
+                       '可能是对的，也可能跟错了身子。列出借来的 API 和位置，'
+                       '复核时按位置逐条看——别按通道名打包信或打包不信。')
+            out.append('')
+            ev = facts.get('channel_sink_evidence') or {}
+            out.append('| 通道 | 借来的 API | 档位 | 位置 | 经过 |')
+            out.append('| --- | --- | --- | --- | --- |')
             for name in ambiguous:
-                out.append(f'  - `{name}`')
+                item = ev.get(name) or {}
+                borrowed = [(api, info) for api, info in item.items()
+                            if (info or {}).get('tier') in ('ambiguous', 'ast_only')]
+                if not borrowed:
+                    out.append(f'| `{name}` | — | — | — | — |')
+                    continue
+                for api, info in sorted(borrowed):
+                    out.append('| `%s` | `%s` | %s | %s | %s |'
+                               % (name, api, info.get('tier') or '—',
+                                  info.get('at') or '—', info.get('via') or '—'))
         out.append('')
 
     tainted = facts.get('channel_tainted')

@@ -3605,6 +3605,42 @@ class SinkEvidenceTests(unittest.TestCase):
         self.assertTrue(seen & {'ambiguous', 'ast_only'},
                         '软档被整块砍掉了，这就是漏报：%r' % (sorted(seen),))
 
+    def test_md_renders_tier_and_at_columns(self):
+        """md 里必须有档位/位置列。
+
+        CHANGELOG 承诺「tier: direct + at: main.js:66 → 跳过去看三行」，
+        那句话对着 md 读者说的。0.98.0 只把它写进了 JSON，md 还是一条
+        via 摘要——承诺和产品不一致，而当时 424 个用例全绿。
+        """
+        import ipcsurface as ipc
+        import jsreport
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, count, total = ipc.analyse_asar(asar)
+        md = ipc.render_asar(asar, facts, count, total)
+        self.assertIn('| 通道 | API | 类别 | 档位 | 位置 | 跳数 | 经过 |', md)
+        self.assertGreater(jsreport.count_sink_rows(md), 0, 'md 的 sink 表格是空的')
+
+    def test_md_rows_match_json_evidence(self):
+        """md 数出来的条目数必须等于 JSON 的 evidence 条目数。
+
+        这是防「少渲染」的尺子：一条 API 在 JSON 里有凭据、md 里没有，
+        就等于读者看不到。
+        """
+        import ipcsurface as ipc
+        import jsreport
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, count, total = ipc.analyse_asar(asar)
+        md = ipc.render_asar(asar, facts, count, total)
+        ev = facts.get('channel_sink_evidence') or {}
+        json_rows = sum(len(v) for v in ev.values())
+        self.assertEqual(jsreport.count_sink_rows(md), json_rows,
+                         'md %d 条 / json %d 条' % (jsreport.count_sink_rows(md),
+                                                    json_rows))
+
     def test_report_carries_evidence_field(self):
         import subprocess
         import tempfile

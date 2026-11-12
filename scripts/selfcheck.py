@@ -221,6 +221,16 @@ def check_output_parity(ok):
     ok &= check('通道数不含 window 暴露',
                 all(not name.startswith('window.') for name in facts['channels']),
                 f'{from_md} 条')
+    # 0.98.0 踩过：tier / at / hops 只进了 JSON，md 那节还是一条 via 摘要，
+    # 而 CHANGELOG 承诺「tier: direct + at: main.js:66 → 跳过去看三行」。
+    # 产品承诺和产品不一致，当时 424 个用例全绿——因为没有一条会去数 md。
+    import jsreport
+    ev = facts.get('channel_sink_evidence') or {}
+    json_rows = sum(len(v) for v in ev.values())
+    md_rows = jsreport.count_sink_rows(md) if json_rows else 0
+    ok &= check('md 的 sink 表格条目数 == JSON 的 evidence 条目数',
+                json_rows == md_rows,
+                f'md {md_rows} / json {json_rows}')
     return ok
 
 

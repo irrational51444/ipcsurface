@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.98.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.99.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -88,13 +88,21 @@ python ipcsurface.py app.asar --precise -o report.md
 ### 每条危险 API 的来路可信度
 
 `channel_sink_tiers` 给每条报出的危险 API 标档：直连 / 双口径证实 / 同文件链 /
-同名多义借来 / 仅语法树借来。拿 6 个真包人工对账（`scripts/calibration.py`）：
+同名多义借来 / 仅语法树借来。`channel_sink_evidence` 再给每一条配一份**凭据**：
+档位、几跳、经过哪些函数名、位置（`文件:行@字符偏移`，压缩包的整个文件常常只有
+几行，只给行号等于没给）。
+
+拿 6 个真包人工对账（`scripts/calibration.py`）：
 
 | 来路档 | 对 | 误报 | 精确率 |
 | --- | --- | --- | --- |
 | 直连 / 双口径 / 同文件链 | 18 | 0 | 100% |
 | 同名多义借来 | 8 | 7 | 53% |
 | 仅语法树借来 | 1 | 3 | 25% |
+
+**这 18 条可以直接引用，下面两档不用信也不用核**——报告里它们的「经过」列会写
+「同名多义」，md 里还有专门一节把借来的 API 按位置列出来。精确率 24% 是实话，
+但复核成本不一样了：原来 114 条逐条看，现在硬档直接读，软档扫一眼跳过。
 
 路径越可信，精确率越高，**单调成立**——这条由校准脚本断言守着，不是嘴说。
 
@@ -234,7 +242,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **424 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **426 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：python scripts/perf_check.py，固定种子造包测吞吐，低于下限 CI 红（README 的性能数字也从这个脚本复现）
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
