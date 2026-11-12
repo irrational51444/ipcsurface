@@ -209,6 +209,33 @@
 
 **这个应用静态止于桥接层，动态需要外部工具。** 工具到此为止，判断写在这里，不装能。
 
+## 案例二：抖音 —— 能 attach 到 Electron 入口，但读不到 ipcMain（2026-11-12）
+
+拿同一个工具（`scripts/probe_attach.py`）实测抖音 8.8.0，结果和 bilibili 不一样。
+
+### 拿到的（这是真进步）
+
+**`--inspect-brk` 抓到过 `electron/js2c/browser_init`**——这就是 Electron 主进程的启动脚本，
+说明抖音的主进程**是可以被 attach 的**，启动器没有完全把调试端口吃掉。
+
+### 没拿到的（边界在哪）
+
+| 探测 | 结果 |
+| --- | --- |
+| target 稳定性 | 前 3 次里 3 次是 `electron/js2c/browser_init`；之后 6 次全是 PowerShell 启动器层（反复 kill 重启后大概被 guard 接管了） |
+| 暂停状态下 `process` | `null`——`--inspect-brk` 停在 `browser_init` **最早期**，Node 全局还没建起来 |
+| 放行后再问 | `Cannot find context with specified id`——放行后那个暂停的 context 被销毁了 |
+| `require('electron').ipcMain` | 拿不到（同上） |
+
+**结论**：抖音是「**能到门口，但进不去**」——attach 到了 Electron 主进程的入口，
+但当前方法（`--inspect-brk` + 放行）拿不到 `process` 和 `ipcMain`。
+要往前一步，得用「在 `browser_init` 暂停时就能读到 Node 全局」的手段——
+比如 `Debugger.setBreakpointByUrl` 在用户代码里下断点、或者用 `--inspect`（不停）配一个
+能透传参数的启动方式。**这同样超出 ipcsurface 当前能力边界**。
+
+**这条也不写「打不通」**：拿到过 `browser_init` 的 target，就证明主进程可以被 attach，
+只是我们还没找到「停在对的时机」的办法。
+
 ## 版本锁
 
 版本：0.86.0

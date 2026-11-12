@@ -168,12 +168,27 @@ def main():
         ws.call(1, 'Runtime.enable')
         # --inspect-brk 启动的进程会停在第一行，先放行才能 evaluate
         ws.call(2, 'Runtime.runIfWaitingForDebugger')
-        print('3) 问三个问题 ...')
-        info, err = evaluate(ws, 3, 'JSON.stringify({'
-                                     'argv: typeof process === "object" ? process.argv : null, '
-                                     'ptype: typeof process === "object" ? process.type : null, '
-                                     'versions: typeof process === "object" ? process.versions : null, '
-                                     'title: typeof process === "object" ? process.title : null})')
+        print('3) 等 process 注入，然后问三个问题 ...')
+
+        # 放行后 process/require 不是立刻就有；轮询而不是死等，抓到就走。
+        # 有些目标（抖音那种带启动器的）窗口很短，慢一步就换 target 了。
+        import time as _time
+        info, err, data = None, None, {}
+        for _attempt in range(20):
+            _time.sleep(0.3)
+            info, err = evaluate(ws, 3, 'JSON.stringify({'
+                                         'argv: typeof process === "object" ? process.argv : null, '
+                                         'ptype: typeof process === "object" ? process.type : null, '
+                                         'versions: typeof process === "object" ? process.versions : null, '
+                                         'title: typeof process === "object" ? process.title : null})')
+            if err:
+                continue
+            try:
+                data = json.loads(info) if info else {}
+            except (TypeError, ValueError):
+                data = {}
+            if data.get('argv'):
+                break
         if err:
             print('   取进程信息失败：%s' % err)
         else:
