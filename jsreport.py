@@ -894,6 +894,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append(f'这次不靠名字猜：建了语法树，成员调用、`fs["readFileSync"]`、'
                    f'别名、回调传参都算一条边。{len(hit)} 条通道能碰到危险 API。')
+        out.append('')
         if hit:
             out.extend(sink_table(facts, hit))
         else:

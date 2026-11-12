@@ -4,6 +4,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, r'C:\Users\irrational\Desktop\rea-lab')
 import ipcsurface as t
@@ -17,9 +18,27 @@ def read(*parts):
     return open(os.path.join(ROOT, *parts), encoding='utf-8').read()
 
 
+# 计数和计时：结尾要报「几项通过 / 几项跳过 / 几项失败 / 多少秒」。
+# 只打一句「全部通过」不算数——人看不出这次是全跑了还是大半跳过了。
+_STATS = {'ok': 0, 'fail': 0, 'skip': 0}
+_T0 = time.time()
+
+
 def check(label, ok, detail=''):
+    _STATS['ok' if ok else 'fail'] += 1
     print(('  OK   ' if ok else '  FAIL ') + label + (('  ' + detail) if detail else ''))
     return ok
+
+
+def skip(label, why):
+    """跳过必须说明原因，并且单独计数。
+
+    一条 SKIP 如果只是 print 出去然后照样算「通过」，输出里它和 OK 一样绿，
+    人就会以为查过了。真跑过没有，得能从汇总数里看出来。
+    """
+    _STATS['skip'] += 1
+    print('  %-4s %s  %s' % ('SKIP', label, why))
+    return True
 
 
 def run_unittest_summary():
@@ -131,7 +150,7 @@ def check_targets(ok):
     """
     built = os.path.join(ROOT, 'examples', 'build')
     if not os.path.isdir(built):
-        print('  SKIP 靶场还没 build，跳过（跑 examples/build.sh 再自查）')
+        skip('靶场构建', 'examples/build 里没有产物，跑 examples/build.sh 再自查')
         return ok
     present = {name for name in os.listdir(built) if name.endswith('.asar')}
     # adv-asar 是手工造的对抗样本，仓库里没有它的生成脚本，别的机器上造不出来。
@@ -209,7 +228,7 @@ def check_output_parity(ok):
     """
     sample = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
     if not os.path.exists(sample):
-        print('  SKIP 没有靶场样本，跳过')
+        skip('靶场样本', 'examples/build 里没有 static-asar.asar')
         return ok
     facts, count, total = t.analyse_asar(sample)
     md = t.render_asar(sample, facts, count, total)
@@ -282,7 +301,7 @@ def parse_count(text):
 def check_smoke_count(ok, readme):
     bash = find_bash()
     if not bash:
-        print('  SKIP 这台机器没有 bash，跳过冒烟计数')
+        skip('冒烟计数', '这台机器没有 bash')
         return ok
     out = subprocess.run([bash, 'scripts/smoke.sh'], cwd=ROOT, capture_output=True,
                          text=True, encoding='utf-8', errors='replace', timeout=600).stdout
@@ -415,8 +434,54 @@ def check_invariants(ok):
     return ok
 
 
+def check_self_integrity(ok):
+    """自查检查自己：有没有「永远为真」的摆设检查，标签有没有撞车。
+
+    一条 check 写成恒真（check('x', True)），它永远绿，等于没查。这种摆设不会
+    自己暴露——除非有人去读源码。同理，两条 check 用同一个标签，失败的时候
+    你分不清是哪一条红的。
+    """
+    import ast as _ast
+    tree = _ast.parse(read('scripts', 'selfcheck.py'))
+    always_true = []
+    labels = []
+    for node in _ast.walk(tree):
+        if not isinstance(node, _ast.Call):
+            continue
+        if not (isinstance(node.func, _ast.Name) and node.func.id == 'check'):
+            continue
+        if len(node.args) < 2:
+            continue
+        second = node.args[1]
+        if isinstance(second, _ast.Constant) and second.value is True:
+            label = ''
+            if node.args and isinstance(node.args[0], _ast.Constant):
+                label = str(node.args[0].value)
+            always_true.append((node.lineno, label))
+        if node.args and isinstance(node.args[0], _ast.Constant):
+            labels.append(node.args[0].value)
+    ok &= check('没有恒真的摆设检查 check(..., True)', not always_true,
+                str(always_true[:3]))
+    dupes = sorted({x for x in labels if labels.count(x) > 1})
+    ok &= check('检查项的标签不重复', not dupes, str(dupes[:3]))
+    # 这个字面量得拼出来：直接写进源码的话，这条检查会把自己数进去。
+    bad_skip = 'print(' + "'" + '  SKIP'
+    hits = text_of_selfcheck().count(bad_skip)
+    ok &= check('跳过要走 skip()，别只 print', hits == 0,
+                '还有 %d 处 print 形式的 SKIP' % hits)
+    return ok
+
+
+def text_of_selfcheck():
+    return read('scripts', 'selfcheck.py')
+
+
 def main():
     ok = True
+    # --fast：跳过最慢的两块（真包扫描 ~40s、冒烟 ~30s），CI 和本地改一行
+    # 就想知道有没有捅坏东西时用。跳过的一定要走 skip() 打出来，
+    # 不能让「这次没验」和「验过了没事」长得一样。
+    fast = '--fast' in sys.argv
     print('== 一、版本与文档口径 ==')
     version = t.__version__
     ok &= check('version 与 badge 一致', version in read('docs', 'badges', 'version.svg'), version)
@@ -519,8 +584,11 @@ def main():
         ok &= check(f'聚合字段 {field} 的 must_not 有出处', agg['must_not'] in banned)
 
     print('== 三、真包实测 ==')
-    if not os.path.exists(REAL):
-        print('  SKIP 没有真包，跳过这一节（CI 或别的机器上正常）')
+    if fast:
+        skip('真包那一节', '--fast 跳过（扫真包约 40 秒）')
+        facts = count = total = None
+    elif not os.path.exists(REAL):
+        skip('真包那一节', '没有真包可扫（CI 或别的机器上正常）')
         facts = count = total = None
     else:
         facts, count, total = t.analyse_asar(REAL)
@@ -561,7 +629,10 @@ def main():
     ok = check_output_side(ok)
 
     print('== 八、冒烟项数与文档一致 ==')
-    ok = check_smoke_count(ok, readme)
+    if fast:
+        skip('冒烟计数', '--fast 跳过（跑完整冒烟约 30 秒）')
+    else:
+        ok = check_smoke_count(ok, readme)
 
     print('== 九、基线闸门 ==')
     import tempfile
@@ -578,7 +649,10 @@ def main():
     finally:
         os.unlink(bad)
 
-    print('== 十、工作区状态 ==')
+    print('== 十、自查自己 ==')
+    ok &= check_self_integrity(ok)
+
+    print('== 十一、工作区状态 ==')
     status = subprocess.run(['git', 'status', '--porcelain'], cwd=ROOT,
                             capture_output=True, text=True).stdout.strip()
     ok &= check('工作区干净', status == '', status[:80])
@@ -587,6 +661,11 @@ def main():
     ok &= check('有 v' + version + ' 的 tag', 'v' + version in tags)
 
     print()
+    elapsed = time.time() - _T0
+    print('汇总：%d 项通过 / %d 项跳过 / %d 项失败，用时 %.1f 秒'
+          % (_STATS['ok'], _STATS['skip'], _STATS['fail'], elapsed))
+    if _STATS['skip'] and not _STATS['fail']:
+        print('注意：有 %d 项是跳过的，那些地方这次没验。' % _STATS['skip'])
     print('全部通过' if ok else '有项目没过')
     return 0 if ok else 1
 
