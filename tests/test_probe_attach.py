@@ -71,5 +71,26 @@ class EvaluateTests(unittest.TestCase):
         self.assertIn('boom', err)
 
 
+class BreakpointScriptTests(unittest.TestCase):
+    def test_module_imports_and_has_main(self):
+        import probe_breakpoint as pb
+
+        self.assertTrue(callable(pb.main))
+        self.assertTrue(callable(pb.recv_event))
+
+    def test_recv_event_returns_none_on_timeout(self):
+        import probe_breakpoint as pb
+
+        a, b = socket.socketpair()
+        try:
+            ws = object.__new__(pa.WS)
+            ws.sock = a
+            # 对端不发数据，应当在超时后返回 None，而不是抛异常
+            self.assertIsNone(pb.recv_event(ws, timeout=0.1))
+        finally:
+            a.close()
+            b.close()
+
+
 if __name__ == '__main__':
     unittest.main()

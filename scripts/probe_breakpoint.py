@@ -15,9 +15,7 @@ import json
 import socket
 import sys
 
-sys.path.insert(0, __file__.rsplit('\\', 1)[0].rsplit('/', 1)[0])
-sys.path.insert(0, '.')
-
+# 脚本目录本身就在 sys.path[0]，probe_attach 是同目录的模块，直接 import
 import probe_attach as pa  # noqa: E402
 
 
