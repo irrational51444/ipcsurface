@@ -30,7 +30,14 @@
 （通道数 / 碰危险 API / 能力标签 / 候选 / 强混淆），可写 md 和 json。单个包跑不动
 单独跳过并出声，不混进结果当 0。
 
-质量问题照旧：334 用例、四道闸、覆盖率门禁。
+### 五、解混淆（obfuscator.io 字符串数组还原）
+
+`scripts/deobfuscate.py`：混淆里藏着的字符串，用 Node 跑一遍解码函数捞出来。
+bilibili 实测：桥接层从 1 条认不出 → 解出 **49 个通道名**（`app/getAppInfo`、
+`system/isWin`、`window/isPinned` 这一批）。主进程 `main/index.js` 多层包装还没理顺，
+写在 `docs/deobfuscate.md` 的边界里。需要 node；零依赖默认路径不受影响。
+
+质量问题照旧：345 用例、四道闸、覆盖率门禁。
 
 ## 0.85.0 — 2026-11-11
 
