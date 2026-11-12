@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.100.0'
+__version__ = '0.101.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/23'
@@ -4167,6 +4167,15 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 fallback_at = (reg_at or {}).get(ch) or ''
                 for api, tier in api_tiers.items():
                     step = paths_for_ch.get(api) or {}
+                    has_path = bool(step.get('via')) and step.get('hops') is not None
+                    has_at = bool(step.get('at') or fallback_at)
+                    # 证据完整度分三段，不是只有「可信 / 不可信」两档：
+                    #   full        跳数和经过都记下来了，能复现这条链
+                    #   locate_only 有位置能跳过去看，但链路没记全
+                    #   name_only   只有 API 名和档位，连位置都没有
+                    # 软档本来就不可信，但「不可信到什么程度」要能看出来。
+                    depth = ('full' if has_path else
+                             'locate_only' if has_at else 'name_only')
                     evidence.setdefault(ch, {})[api] = {
                         'tier': tier,
                         'hops': step.get('hops'),
@@ -4174,6 +4183,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                         # 没有路径的档位（name_confirmed 这种）也要给出注册点，
                         # 不然人得自己去全包里找——那就不叫「减少复核成本」了。
                         'at': step.get('at') or fallback_at,
+                        'depth': depth,
                     }
             facts['channel_sink_evidence'] = evidence if evidence else None
         else:

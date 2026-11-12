@@ -653,11 +653,12 @@ def sink_table(facts, hit):
             at = item.get('at') or '—'
             hops = item.get('hops')
             via = item.get('via') or '—'
-            rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s |'
-                        % (name, api, danger_kind_of(api), tier, at,
+            depth = item.get('depth') or '—'
+            rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s | %s |'
+                        % (name, api, danger_kind_of(api), tier, depth, at,
                            '—' if hops is None else hops, via))
-    out = ['| 通道 | API | 类别 | 档位 | 位置 | 跳数 | 经过 |',
-           '| --- | --- | --- | --- | --- | --- | --- |']
+    out = ['| 通道 | API | 类别 | 档位 | 证据 | 位置 | 跳数 | 经过 |',
+           '| --- | --- | --- | --- | --- | --- | --- | --- |']
     out.extend(rows)
     return out
 
@@ -671,6 +672,10 @@ def sink_table_legend():
         '- `ambiguous`：经过同名多义的函数（压缩产物里 f/y/m 满地重名），'
         '**可能是对的，也可能跟错了身子**——「经过」列会标「同名多义」',
         '- `ast_only`：只有语法树看见，名字级没有。这一档最不可信',
+        '',
+        '「证据」三段的区别：`full` 跳数和经过都记下来了，能复现这条链；'
+        '`locate_only` 有位置能跳过去看，但链路没记全；`name_only` 只有 API 名，'
+        '连位置都没有。软档本来就不可信，但不可信到什么程度得能看出来。',
         '',
         '「位置」是**处理函数体**的起点，格式 `文件:行@字符偏移`。'
         '压缩过的包整个文件就几行（obsidian 47 条通道全落在 main.js:66 那一行），'
@@ -699,7 +704,7 @@ def count_sink_rows(md_text, section='## 按语法树再走一遍'):
         # 只数 7 列的主表（通道/API/类别/档位/位置/跳数/经过）。
         # 同一节后面还有个 5 列的「借来的 API」小表，那不是主结论，别混进来。
         if inside and re.match(r'^\| `[^`]+` \| `[^`]+` \|', line):
-            if len(line.split('|')) == 9:
+            if len(line.split('|')) == 10:
                 total += 1
     return total
 
