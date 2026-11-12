@@ -350,7 +350,7 @@ def check_output_side(ok):
 
 PRODUCT_MODULES = ('ipcsurface.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
                    'jssem.py', 'jsast.py', 'jsreport.py', 'native_imports.py',
-                   'precise_engine.py', 'jsevents.py')
+                   'precise_engine.py', 'jsevents.py', 'jswarn.py')
 
 # precise_engine 是 opt-in 的精查层，唯一被允许 import tree_sitter。
 # 默认路径零依赖不变；precise 装不上，粗扫照跑，所以这一层豁免零依赖扫描。
