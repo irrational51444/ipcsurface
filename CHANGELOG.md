@@ -2,6 +2,35 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.87.0 — 2026-11-12
+
+实时事件流 P1：`--events-out` 把扫描过程录成 JSONL，可回放、可对账。
+
+### 一、事件流（`jsevents.py`）
+
+`--events-out events.jsonl` 就能把整个过程录下来：`lifecycle` / `progress` /
+`discovery` / `stats` 四类事件，信封里带 `seq`、`ts`、`scan_id`、`phase`、`kind`。
+
+- `scan_id` = 输入文件的 sha256，和报告 `fingerprint.input_sha256` 同一个值
+- 有界队列 10 000 条，溢出只丢 `progress`/`stats`，其余一条不许丢
+- **不加 `--events-out` 时零开销**：`bus` 是 `None`，输出字节级不变
+
+### 二、对账（这条是设计的命门）
+
+`jsevents.diff_summary(events, report)` 用和 `analyse_asar` 同一口径重算
+`channels` / `sinks` / `by_tier` / `unresolved`，和事件流末条逐项比。
+**事件流不能成为第二套真相**——对不上就是设计坏了。
+
+### 三、实测（obsidian.asar 26.8 MB）
+
+- 开销 **0.5%**（不带 4.77s / 带 4.79s，3 次中位数），设计门槛是 5%
+- 54 条事件、14 KB
+- 对账：channels 47 / sinks 116 / by_tier 五档 / unresolved 0，**逐项一致**
+
+448 MB 包还没测，这是交接时要说清的缺口（写在 `docs/live-events.md`）。
+
+质量问题照旧：363 用例、四道闸、覆盖率门禁。
+
 ## 0.86.0 — 2026-11-12
 
 新增四项：给通道打能力标签、每条通道一份档案、候选误报分类器、批量扫描脚本。schema 21。

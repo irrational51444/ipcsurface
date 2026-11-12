@@ -350,7 +350,7 @@ def check_output_side(ok):
 
 PRODUCT_MODULES = ('ipcsurface.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
                    'jssem.py', 'jsast.py', 'jsreport.py', 'native_imports.py',
-                   'precise_engine.py')
+                   'precise_engine.py', 'jsevents.py')
 
 # precise_engine 是 opt-in 的精查层，唯一被允许 import tree_sitter。
 # 默认路径零依赖不变；precise 装不上，粗扫照跑，所以这一层豁免零依赖扫描。
@@ -490,13 +490,13 @@ def main():
     # 指纹一直报旧值。这条守着，别再漂。
     ok &= check('指纹 schema 和顶层一致', jsreport.SCHEMA == t.SCHEMA_VERSION,
                 f'jsreport {jsreport.SCHEMA} / ipcsurface {t.SCHEMA_VERSION}')
-    # 打包：九个模块缺一个，装出来的 wheel 就会悄悄降级
+    # 打包：十个模块缺一个，装出来的 wheel 就会悄悄降级
     pyproject = read('pyproject.toml')
     packed = re.search(r'py-modules\s*=\s*\[(.*?)\]', pyproject, re.S)
     names = set(re.findall(r'"([a-z_]+)"', packed.group(1))) if packed else set()
     required = {'ipcsurface', 'jsasar', 'jslabels', 'jsparse', 'jssem',
-                'jsast', 'jsreport', 'native_imports', 'precise_engine'}
-    ok &= check('pyproject 打进去九个模块', names >= required,
+                'jsast', 'jsreport', 'native_imports', 'precise_engine', 'jsevents'}
+    ok &= check('pyproject 打进去十个模块', names >= required,
                 str(sorted(names)))
     rules = {r['id'] for r in t.RULES}
     tests = read('tests', 'test_ipcsurface.py')

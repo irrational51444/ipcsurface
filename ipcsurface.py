@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.86.0'
+__version__ = '0.87.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -1383,8 +1383,12 @@ def restore_all(text, allow_eval=True, extra=None, members=None, original_size=N
     return text, passes, unstable
 
 
-def scan_asar(files, allow_eval=True, max_passes=1):
-    """按字符串扫一遍源码。粗，但不用装任何东西。"""
+def scan_asar(files, allow_eval=True, max_passes=1, events=None):
+    """按字符串扫一遍源码。粗，但不用装任何东西。
+
+    events 传一个 jsevents.EventBus 就能把过程录成事件流；传 None 时零开销
+    （每个 emit 点第一行就是 `if events is None`）。
+    """
     exposes, handlers, invokes = [], [], []
     dynamic, prefs, preloads = [], {}, []
     obfuscation = []
@@ -1394,10 +1398,20 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     enumerated = []    # 穷举出来的名字，(名字, 位置, 依据)
     enumerated_sites = set()
     scanned = 0
+    total_files = len(files)
+    started_at = time.monotonic()
     # 先收一遍全包的常量，跨文件那种才配得上
     global_consts, global_members = build_global_tables(files)
 
-    for rel, blob in files.items():
+    for index, (rel, blob) in enumerate(files.items(), start=1):
+        # 实时进度：每 100 个文件报一次，或者最后一个文件必报。
+        # 采样是为了不拖慢扫描——设计文档要求实时开销 < 5%。
+        if events is not None and (index % 100 == 0 or index == total_files):
+            events.emit('progress', {
+                'files_done': index,
+                'files_total': total_files,
+                'elapsed_ms': int((time.monotonic() - started_at) * 1000),
+            }, phase='coarse')
         if not rel.endswith(TEXT_EXT):
             continue
         # 先用字节找标记。解成字符串再找，慢十倍不止。
@@ -1494,7 +1508,7 @@ def scan_asar(files, allow_eval=True, max_passes=1):
     # 已经穷举出来的调用点不再算「名字是算的」——那处现在有名字了。
     dynamic = [item for item in dynamic if item[1] not in enumerated_sites]
 
-    return {
+    facts = {
         'scanned': scanned,
         'exposes': sorted(set(exposes)),
         'handlers': sorted(set(handlers)),
@@ -1514,6 +1528,24 @@ def scan_asar(files, allow_eval=True, max_passes=1):
         # 口径要和报告里「N 条通道」一致，否则基线存一份、报告说另一份。
         'channels': sorted({name for name, _w in handlers} | {name for name, _w in invokes}),
     }
+
+    # 实时层：把这一遍扫出来的东西逐条发出去。
+    # discovery 用最终 channels（口径和报告一致），stats 带分层计数。
+    if events is not None:
+        for name in facts['channels']:
+            events.emit('discovery', {
+                'entity': 'channel', 'name': name, 'tier': None,
+            }, phase='coarse')
+        events.emit('stats', {
+            'channels': len(facts['channels']),
+            'sinks': 0,   # sink 要等 channel_sinks_map 跑完，在 analyse_asar 里补
+            'unresolved': len(facts['dynamic']),
+            'files_done': total_files,
+            'files_total': total_files,
+            'elapsed_ms': int((time.monotonic() - started_at) * 1000),
+        }, phase='coarse')
+
+    return facts
 
 
 
@@ -4046,12 +4078,25 @@ def grade_harvested(files, harvested, channel_names):
     return grades
 
 
-def analyse_asar(path, allow_eval=True, max_passes=1):
+def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
+    """扫一个 asar。
+
+    events 传 jsevents.EventBus 时，过程会被录成事件流（--events-out）；
+    传 None 时一行事件都不发，行为和以前完全一样。
+    """
     header, files = read_asar(path)
+    started_at = time.monotonic()
     # 文件表是开着源文件按需切的，用完得自己关。Windows 上不关，
     # 这个包删都删不掉。
     try:
-        facts = scan_asar(files, allow_eval=allow_eval, max_passes=max_passes)
+        if events is not None:
+            events.emit('lifecycle', {
+                'stage': 'start',
+                'input': os.path.basename(path),
+                'size': files.total_bytes() if hasattr(files, 'total_bytes') else None,
+            }, phase='coarse')
+        facts = scan_asar(files, allow_eval=allow_eval, max_passes=max_passes,
+                          events=events)
         recovered = scan_sourcemaps(files)
         if recovered:
             extra = scan_asar(recovered)
@@ -4095,6 +4140,25 @@ def analyse_asar(path, allow_eval=True, max_passes=1):
         recovered = None if unattr is None else recover_const_channels(files, unattr['samples'])
         facts['channel_names_recovered'] = recovered
         total = files.total_bytes()
+        if events is not None:
+            # lifecycle.done 必须是最后一条，统计字段要和报告顶层逐项对得上
+            # （设计守则 4：实时视图和最终报告必须可对账）。
+            tiers = facts.get('channel_sink_tiers') or {}
+            by_tier = {}
+            for ch_tiers in tiers.values():
+                for tier in ch_tiers.values():
+                    by_tier[tier] = by_tier.get(tier, 0) + 1
+            sink_src = facts.get('channel_sinks_ast') or facts.get('channel_sinks') or {}
+            events.emit('lifecycle', {
+                'stage': 'done',
+                'input': os.path.basename(path),
+                'exit_code': 0,
+                'channels': len(facts['channels']),
+                'sinks': sum(len(v) for v in sink_src.values() if v),
+                'by_tier': by_tier,
+                'unresolved': len(facts.get('dynamic') or []),
+                'elapsed_ms': int((time.monotonic() - started_at) * 1000),
+            }, phase='report')
         return facts, len(files), total
     finally:
         files.close()
@@ -4204,6 +4268,8 @@ def main(argv=None):
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
     parser.add_argument('--precise', action='store_true',
                         help='用 tree-sitter 精查层补一列（跨文件/类方法）。需要 pip install ipcsurface[precise]')
+    parser.add_argument('--events-out', metavar='JSONL',
+                        help='把扫描过程录成事件流（JSONL，append-only）。不给就不发事件，行为和以前完全一致')
     args = parser.parse_args(argv)
 
     if args.recover:
@@ -4249,8 +4315,21 @@ def main(argv=None):
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
-        facts, count, total = analyse_asar(args.input, allow_eval=not args.no_eval,
-                                           max_passes=6 if args.deep_restore else 1)
+        # 实时事件流：只有给了 --events-out 才建 bus，否则全程零开销。
+        bus = None
+        if args.events_out:
+            import jsevents
+            # scan_id 用输入文件的 sha256：和报告 fingerprint.input_sha256 同一个值，
+            # 事件流和报告能直接对上。这是顺序读一遍文件，只在开实时时付这个开销。
+            bus = jsevents.EventBus(args.events_out,
+                                   scan_id='sha256:' + (input_sha256(args.input) or ''))
+        try:
+            facts, count, total = analyse_asar(
+                args.input, allow_eval=not args.no_eval,
+                max_passes=6 if args.deep_restore else 1, events=bus)
+        finally:
+            if bus is not None:
+                bus.close()
         # precise：tree-sitter 精查层，opt-in，装不上就降级不硬撑
         if args.precise:
             try:

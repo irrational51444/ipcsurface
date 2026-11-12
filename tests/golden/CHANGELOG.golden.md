@@ -257,3 +257,8 @@
 
 - 变了的字段：fingerprint
 - 理由：修指纹硬编码：schema 从写死的 asar/17 改成注入的 SCHEMA_VERSION，指纹里的 schema 不再漂
+
+## 2026-11-12 13:28
+
+- 变了的字段：fingerprint
+- 理由：0.87.0 版本号 + jsevents 模块
