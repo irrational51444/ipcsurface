@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.97.0'
+__version__ = '0.98.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/22'
+SCHEMA_VERSION = 'ipcsurface/asar/23'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2266,6 +2266,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     ast_out = {}
     ast_ambiguous = set()
     ast_supported = True
+    reg_at = {}   # 通道 -> '文件:行'，给证据用的注册点位置
     for rel in targets:
         blob = files[rel]
         if not blob:
@@ -2302,6 +2303,8 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
 
         for reg in regs:
             found = set()
+            if reg.get('channel'):
+                reg_at[reg['channel']] = '%s:%s' % (rel, reg.get('line') or 0)
             span = reg.get('span')
             if not span and reg.get('target'):
                 # 处理函数是按名字传进来的（ipcMain.on('relaunch', relaunch)）：
@@ -2339,8 +2342,11 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                 except Exception:
                     ast_supported = False
             for api, count in hops.items():
-                paths.setdefault(reg['channel'], {})[api] = {
-                    'hops': count, 'via': vias.get(api, '')}
+                slot = paths.setdefault(reg['channel'], {})
+                slot['__at__'] = reg_at.get(reg['channel']) or ''
+                slot[api] = {
+                    'hops': count, 'via': vias.get(api, ''),
+                    'at': reg_at.get(reg['channel']) or ''}
             if found:
                 out.setdefault(reg['channel'], set()).update(found)
 
@@ -2449,7 +2455,9 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         'channel_sinks_ast': facts.get('channel_sinks_ast'),
         # 软档（同名多义/仅语法树）报出来的 API：**不进结论**，
         # 单独列出来标「这条通道认出来了，能碰到什么没分析」。
-        'channel_sinks_borrowed': facts.get('channel_sinks_borrowed'),
+        # 每条 sink 结论的凭据：档位、几跳、经过哪些函数名、注册点在哪一行。
+        # 摆证据 > 报数字：人看到 at 就能跳过去核，几秒钟的事。
+        'channel_sink_evidence': facts.get('channel_sink_evidence'),
         # 这些结论要经过同名多义链，可能是跟错了函数，读的时候要留一分
         'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
         # 每条危险 API 的来路可信度档（direct/name_confirmed/chain/ambiguous/ast_only）
@@ -2531,7 +2539,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
     'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_profiles',
-    'channel_sinks_borrowed',
+    'channel_sink_evidence',
     'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
@@ -4127,36 +4135,36 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
         facts['channel_sink_paths'] = sink_paths
-        # sink 归因只在「硬结论」档才算结论。
-        # 软档（ambiguous / ast_only）是「同名多义跟过来的」——真踩过：
-        # obsidian 的 sandbox（真阳性）和 set-menu（误报）报出来的 API 一字不差
-        # （existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync,
-        # writeFileSync），说明这一档根本没在区分通道，它的「能碰到什么」不算证据。
-        # 所以：硬档进 channel_sinks_ast，软档单独进 channel_sinks_borrowed，
-        # 报告里标「这条通道认出来了，能碰到什么没分析」——不猜，也不让人去核。
-        HARD_TIERS = ('direct', 'name_confirmed', 'chain')
+        # 全部档位都报，但每一条都带「凭什么」。
+        #
+        # 0.97.0 曾把软档（ambiguous / ast_only）整块砍掉，精确率好看但漏了 9 条
+        # 人工核过的真阳性——那是拿漏报换数字，不做。
+        # 现在的做法：档位照报，另外给每条结论配一份证据（档位、几跳、经过哪些
+        # 函数名、注册点在哪个文件哪一行）。人看到 `at` 就能跳到源码，几秒钟判断
+        # 这条结论对不对——这才是「摆证据，减少复核成本」。
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:
             tiers = {ch: {api: sink_tier(facts, ch, api) for api in apis}
                      for ch, apis in _tier_src.items() if apis}
-            hard_tiers = {}
-            hard_sinks = {}
-            borrowed = {}
+            facts['channel_sink_tiers'] = tiers if tiers else None
+            evidence = {}
             for ch, api_tiers in tiers.items():
-                h = {a: t for a, t in api_tiers.items() if t in HARD_TIERS}
-                s = sorted(a for a, t in api_tiers.items() if t not in HARD_TIERS)
-                if h:
-                    hard_tiers[ch] = h
-                    hard_sinks[ch] = sorted(h)
-                if s:
-                    borrowed[ch] = s
-            facts['channel_sink_tiers'] = hard_tiers if hard_tiers else None
-            if ast_sinks is not None:
-                facts['channel_sinks_ast'] = hard_sinks
-            facts['channel_sinks_borrowed'] = borrowed if borrowed else None
+                paths_for_ch = sink_paths.get(ch) or {}
+                fallback_at = paths_for_ch.get('__at__') or ''
+                for api, tier in api_tiers.items():
+                    step = paths_for_ch.get(api) or {}
+                    evidence.setdefault(ch, {})[api] = {
+                        'tier': tier,
+                        'hops': step.get('hops'),
+                        'via': step.get('via') or '',
+                        # 没有路径的档位（name_confirmed 这种）也要给出注册点，
+                        # 不然人得自己去全包里找——那就不叫「减少复核成本」了。
+                        'at': step.get('at') or fallback_at,
+                    }
+            facts['channel_sink_evidence'] = evidence if evidence else None
         else:
             facts['channel_sink_tiers'] = None
-            facts['channel_sinks_borrowed'] = None
+            facts['channel_sink_evidence'] = None
         facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']

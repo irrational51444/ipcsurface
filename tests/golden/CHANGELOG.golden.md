@@ -317,3 +317,13 @@
 
 - 变了的字段：fingerprint
 - 理由：0.97.0 版本号
+
+## 2026-11-12 15:18
+
+- 变了的字段：fingerprint, schema
+- 理由：schema 23：全档位照报 + channel_sink_evidence
+
+## 2026-11-12 15:21
+
+- 变了的字段：fingerprint
+- 理由：0.98.0 版本号

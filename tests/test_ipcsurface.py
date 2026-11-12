@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/22')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/23')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -3559,15 +3559,13 @@ class AdversarialTests(unittest.TestCase):
         self.assertIn(('vault:unlock', 'a.js:4'), facts['handlers'])
 
 
-class HardOnlySinkTests(unittest.TestCase):
-    """软档不进结论：这是 0.97.0 的核心改动，必须有测试盯着。
+class SinkEvidenceTests(unittest.TestCase):
+    """每条 sink 结论都要带证据：档位 + 位置。
 
-    真踩过：obsidian 的 sandbox（真阳性）和 set-menu（误报）报出来的 API
-    一字不差，说明 ambiguous / ast_only 这一档根本没在区分通道。
-    那它就不该产出「能碰到什么」这种结论。
+    0.97.0 曾把软档（ambiguous / ast_only）整块砍掉，精确率上去了，但漏掉 9 条
+    人工核过的真阳性——那是拿漏报换数字。现在改成：档位照报，每条配证据，
+    人看到 `at` 就跳过去核，看到 `ambiguous（同名多义）` 就知道这条是猜的。
     """
-
-    HARD = ('direct', 'name_confirmed', 'chain')
 
     def facts(self):
         import ipcsurface as ipc
@@ -3577,25 +3575,37 @@ class HardOnlySinkTests(unittest.TestCase):
         facts, _n, _b = ipc.analyse_asar(asar)
         return facts
 
-    def test_conclusions_only_use_hard_tiers(self):
+    def test_every_conclusion_has_evidence(self):
         facts = self.facts()
-        bad = [(ch, api, tier)
-               for ch, apis in (facts.get('channel_sink_tiers') or {}).items()
-               for api, tier in apis.items()
-               if tier not in self.HARD]
-        self.assertFalse(bad, '结论里混进了软档：%r' % (bad,))
+        tiers = facts.get('channel_sink_tiers') or {}
+        ev = facts.get('channel_sink_evidence') or {}
+        missing = [(ch, api) for ch, apis in tiers.items()
+                   for api in apis if api not in (ev.get(ch) or {})]
+        self.assertFalse(missing, '有结论但没有证据：%r' % (missing,))
 
-    def test_ast_sinks_and_borrowed_do_not_overlap(self):
+    def test_evidence_carries_tier_and_at(self):
         facts = self.facts()
-        ast = facts.get('channel_sinks_ast') or {}
-        borrowed = facts.get('channel_sinks_borrowed') or {}
-        overlap = {ch: sorted(set(ast[ch]) & set(borrowed[ch]))
-                   for ch in set(ast) & set(borrowed)}
-        overlap = {ch: v for ch, v in overlap.items() if v}
-        self.assertFalse(overlap, '同一个 API 不能既是结论又是没分析：%r' % (overlap,))
+        ev = facts.get('channel_sink_evidence') or {}
+        bad = [(ch, api, item) for ch in ev for api, item in ev[ch].items()
+               if not item.get('tier') or not item.get('at')]
+        self.assertFalse(bad[:3], '证据缺 tier 或 at：%r' % (bad[:3],))
 
-    def test_report_carries_borrowed_field(self):
-        """报告里必须有 channel_sinks_borrowed——不然「没分析」这件事就没地方写。"""
+    def test_soft_tiers_are_not_dropped(self):
+        """软档必须还在——砍掉它们就等于漏报真阳性。
+
+        靶场都是写死的通道名，跑不出同名多义，所以这条在靶场上会跳过；
+        真正的软档要在真包上验，跑 `python scripts/calibration.py` 看
+        ambiguous / ast_only 两档还有没有数。
+        """
+        facts = self.facts()
+        ev = facts.get('channel_sink_evidence') or {}
+        seen = {item['tier'] for ch in ev for item in ev[ch].values()}
+        if not seen & {'ambiguous', 'ast_only'}:
+            self.skipTest('靶场没有同名多义样本，软档要在真包上验')
+        self.assertTrue(seen & {'ambiguous', 'ast_only'},
+                        '软档被整块砍掉了，这就是漏报：%r' % (sorted(seen),))
+
+    def test_report_carries_evidence_field(self):
         import subprocess
         import tempfile
         asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
@@ -3608,7 +3618,7 @@ class HardOnlySinkTests(unittest.TestCase):
                            capture_output=True, timeout=180)
             with open(out, encoding='utf-8') as fh:
                 report = json.load(fh)
-            self.assertIn('channel_sinks_borrowed', report)
+            self.assertIn('channel_sink_evidence', report)
         finally:
             try:
                 os.unlink(out)

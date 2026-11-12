@@ -621,10 +621,16 @@ def ipc_registrations(tokens, objects=None, const_strings=None):
                         channel = only
                     break
         target, calls, guards = None, [], []
+        # start_i/end_i 是 _window 的来源，必须两个分支都赋值——
+        # 之前只在 else 分支赋，`ipcMain.on('x', handler)`（第二个参数是单个标识符）
+        # 会走到第 642 行 UnboundLocalError 直接崩。抓样例时撞上的。
+        start_i = end_i = 0
         if len(args) >= 2:
             second = args[1]
             if len(second) == 1 and second[0].kind == 'ident':
                 target = second[0].text
+                start_i = tokens.index(second[0])
+                end_i = start_i + 1
             else:
                 start_i = tokens.index(second[0]) if second else 0
                 start = second[0].start if second else 0
