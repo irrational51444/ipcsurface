@@ -273,7 +273,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.103.0",
+    "version": "0.104.0",
     "schema": "ipcsurface/asar/24",
     "params": {},
     "channels": [
@@ -302,6 +302,11 @@
       "count": 0,
       "samples": [],
       "what": "这里有注册，但名字是变量，静态读不到它等于什么"
+    },
+    "cross-file-depth-exceeded": {
+      "count": 0,
+      "samples": [],
+      "what": "调用链撞到跳数上限（4 跳）就停了，后面还有没有危险 API，静态这条看不见"
     },
     "harvested-only": {
       "count": 0,

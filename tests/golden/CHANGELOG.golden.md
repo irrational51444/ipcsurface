@@ -357,3 +357,13 @@
 
 - 变了的字段：fingerprint
 - 理由：unresolved_reasons 新增 dynamic-registration 桶：名字是变量的 IPC 注册从静默跳过改成记进归因，带 at/expr 样本。下游读 unresolved_reasons 的消费方会多看到一个 key，schema 号不变（24 已含容器）
+
+## 2026-11-13 00:32
+
+- 变了的字段：unresolved_reasons
+- 理由：unresolved_reasons 新增 cross-file-depth-exceeded：调用链撞 max_depth=4 的条数从静默变成单独计数，带 通道/API/跳数 样本。下游会多看到一个 key，schema 24 不变
+
+## 2026-11-13 00:32
+
+- 变了的字段：fingerprint
+- 理由：0.104.0 版本号与 CHANGELOG

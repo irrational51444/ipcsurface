@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.103.0'
+__version__ = '0.104.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -4173,6 +4173,19 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # 归因：没看清的东西要分得清「为什么」没看清。
         # 11 个 reason 是早就定下的名单，现在**只有两个有数据源**——
         # 其余九个留着位置但如实报 0，不假装接了。
+        # 调用链撞天花板：reachable_sinks 默认 max_depth=4，hops 到 4 就是
+        # 「跟不下去了」。以前这种情况是静默的——报出来的数和真数一样，
+        # 没人知道后面还断着多少。现在单独记一桶。
+        depth_limit = 4
+        capped_paths = facts.get('channel_sink_paths') or {}
+        depth_samples = []
+        for _ch, _apis in sorted(capped_paths.items()):
+            for _api, _step in sorted(_apis.items()):
+                if isinstance(_step, dict) and (_step.get('hops') or 0) >= depth_limit:
+                    depth_samples.append('%s / %s / %d 跳'
+                                         % (_ch, _api, _step.get('hops')))
+        depth_capped = len(depth_samples)
+
         harvested = facts.get('harvested') or []
         seen_names = set(facts.get('channels') or [])
         # harvested 是 {名字: 信息} 的字典，不是列表——踩过一次，
@@ -4189,6 +4202,12 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 'samples': ['%s  %s' % (d['at'], d['expr'])
                             for d in dynamic_regs[:5]],
                 'what': '这里有注册，但名字是变量，静态读不到它等于什么',
+            },
+            'cross-file-depth-exceeded': {
+                'count': depth_capped,
+                'samples': depth_samples[:5],
+                'what': '调用链撞到跳数上限（%d 跳）就停了，'
+                        '后面还有没有危险 API，静态这条看不见' % depth_limit,
             },
             'harvested-only': {
                 'count': len(harvested_only),
