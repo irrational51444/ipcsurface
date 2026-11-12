@@ -47,15 +47,16 @@ class BaselineFileTests(unittest.TestCase):
             self.assertEqual(item['fp'], 0, '%s 档不该有误报' % tier)
             self.assertEqual(item['precision'], 1.0, '%s 档应该是 100%%' % tier)
 
-    def test_borrowed_tiers_are_worse_than_hard_ones(self):
-        """借来两档必须明显差于硬结论——不然分层就没意义。"""
-        hard = min(self.data['tiers_chan'][t]['precision']
-                   for t in ('direct', 'name_confirmed', 'chain'))
+    def test_borrowed_tiers_have_no_conclusions(self):
+        """软档不再产出结论：baseline 里这两档应该**没有**精确率。
+
+        0.97.0 起，ambiguous / ast_only 报出来的 API 挪进了 channel_sinks_borrowed，
+        不参与结论。它们要是又出现在精度表里，说明过滤被绕过去了。
+        """
         for tier in ('ambiguous', 'ast_only'):
-            borrow = self.data['tiers_chan'][tier]['precision']
-            self.assertLess(borrow, hard - 0.3,
-                            '%s 档精确率 %.2f 没比硬结论低多少，分层失效'
-                            % (tier, borrow))
+            item = self.data['tiers_chan'][tier]
+            self.assertIsNone(item['precision'],
+                              '%s 档不该再有精确率——它已经不产结论了' % tier)
 
 
 if __name__ == '__main__':
