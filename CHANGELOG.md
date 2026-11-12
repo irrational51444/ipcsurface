@@ -2,6 +2,48 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.94.0 — 2026-11-12
+
+实时事件流 P7：webhook + 截图（两样都不进默认依赖）。
+
+### 一、`--webhook URL`
+
+只推 `high` 及以上的预警，POST JSON。三条约束：
+
+- 只推 `warning`，级别不够不推
+- 失败不重试，只记数
+- **不阻塞扫描**：投递进后台队列，请求在独立线程做
+
+实测：喂 high/medium/low 各一条 + 一条非 warning，只收到 high 那条。
+
+### 二、`--screenshot PNG`
+
+扫完截一张页面图。本机没浏览器就跳过，**不算失败**。
+
+### 三、这里踩了两个坑，都不是小坑
+
+**坑一：Edge 不在 PATH**。`shutil.which('msedge')` 在 Windows 上是空的，
+Edge 装在 `C:\Program Files (x86)\Microsoft\Edge\Application\`。补了常见安装路径。
+
+**坑二：headless 截出来是白页**。`--screenshot` 是「load 事件一到就截」，
+而我们的页面是「load 之后 fetch snapshot 再渲染」。`--virtual-time-budget` 也救不了
+真实网络请求。
+
+解法：加了个 `/static.html`——**服务端渲染**的快照页，把 snapshot 直接拼成 HTML，
+浏览器一加载就有内容，不需要任何 JS。截图走这个页面。
+
+**坑三（顺序）**：截图用的 server 必须在**扫描前**建好。第一版是扫完再建，
+事件早就发完了没人收，画面里是 `done 0 channels`。
+
+### 四、实测（obsidian.asar）
+
+```
+截图 70654 字节，6.9 秒
+画面：done 47 channels 116 sinks 0 unresolved + 40 条预警（high 红条 / medium 橙条）
+```
+
+质量问题照旧：414 用例、四道闸、覆盖率门禁。
+
 ## 0.93.0 — 2026-11-12
 
 实时事件流 P6：暂停 + 追问接口 + 抽屉证据链。

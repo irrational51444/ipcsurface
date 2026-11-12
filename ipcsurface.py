@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.93.0'
+__version__ = '0.94.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4293,6 +4293,10 @@ def main(argv=None):
                         help='起一个本地只读页面（SSE + 快照），扫完不退出，Ctrl+C 结束')
     parser.add_argument('--max-buffer', type=int, default=50000, metavar='N',
                         help='页面在内存里留多少条事件用于刷新/断线补发，默认 50000；0 = 一条不留')
+    parser.add_argument('--webhook', metavar='URL',
+                        help='把 high 及以上的预警 POST 到这个地址（失败不重试、不阻塞扫描）')
+    parser.add_argument('--screenshot', metavar='PNG',
+                        help='扫完截一张页面图（要本机有 Edge/Chrome；没有就跳过，不算失败）')
     parser.add_argument('--replay', metavar='JSONL',
                         help='不扫描，回放一份事件流（配 --live / --serve 用）')
     parser.add_argument('--replay-speed', type=float, default=1.0,
@@ -4377,7 +4381,8 @@ def main(argv=None):
         bus = None
         renderer = None
         server = None
-        if args.events_out or args.live or args.serve:
+        if (args.events_out or args.live or args.serve
+                or args.webhook or args.screenshot):
             import jsevents
             # scan_id 用输入文件的 sha256：和报告 fingerprint.input_sha256 同一个值，
             # 事件流和报告能直接对上。这是顺序读一遍文件，只在开实时时付这个开销。
@@ -4393,6 +4398,15 @@ def main(argv=None):
                                               port=args.serve,
                                               max_events=args.max_buffer).start()
                 print(f'实时页面：{server.url}', file=sys.stderr)
+            elif args.screenshot:
+                # 只截图：也要**扫描前**就把 server 建好，否则事件发完了没人收，
+                # 画面里就是 0 条通道。
+                server = jsevents.EventServer(bus, host='127.0.0.1', port=0,
+                                              max_events=max(args.max_buffer, 1000)).start()
+            if args.webhook:
+                sink = jsevents.WebhookSink(args.webhook)
+                bus.add_listener(sink)
+                print(f'预警推送到 {args.webhook}（只推 high 及以上）', file=sys.stderr)
         try:
             facts, count, total = analyse_asar(
                 args.input, allow_eval=not args.no_eval,
@@ -4530,6 +4544,17 @@ def main(argv=None):
         order = {'high': 0, 'medium': 1, 'info': 2}
         if any(order.get(level, 9) <= order[args.fail_on] for level, _, _ in findings):
             return 2
+
+    # --screenshot：server 在扫描前就建好了（没 --serve 时是临时端口），直接用它截。
+    if args.screenshot and server is not None:
+        import jsevents as _js
+        # 走服务端渲染的 /static.html：headless 浏览器不等 JS，用 / 截出来是白页。
+        ok, info = _js.screenshot(server.url + 'static.html', args.screenshot)
+        print(('截图：' + info) if ok else ('截图跳过：' + info), file=sys.stderr)
+        if not args.serve:
+            # 临时页面：截完就关，后面不该继续挂着
+            server.stop()
+            server = None
 
     # --serve：报告已经打完了，页面留着给人看。Ctrl+C 结束。
     if server is not None:

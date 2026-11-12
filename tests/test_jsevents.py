@@ -485,7 +485,8 @@ class DashboardJsTests(unittest.TestCase):
             with open(out, 'wb') as sink:
                 run = subprocess.run(['node', '--check', path],
                                      stdout=sink, stderr=sink)
-            detail = open(out, 'rb').read().decode('utf-8', 'replace')
+            with open(out, 'rb') as fh:
+                detail = fh.read().decode('utf-8', 'replace')
             self.assertEqual(run.returncode, 0, detail[:800])
         finally:
             for p in (path, out):
@@ -499,6 +500,146 @@ class DashboardJsTests(unittest.TestCase):
         # 注意：JS 里 `tr.onclick = function(){}` 是属性赋值，不算内联，别误伤。
         self.assertNotIn('onclick="', jsevents._DASHBOARD,
                          '别用内联 onclick：引号会和 JS 字符串打架')
+
+
+class OptionalSinkTests(unittest.TestCase):
+    """P7：webhook 和截图。两个都「不进默认依赖」。"""
+
+    def setUp(self):
+        import http.server
+        import threading
+        self.received = []
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get('Content-Length') or 0)
+                body = self.rfile.read(length)
+                try:
+                    outer.received.append(json.loads(body))
+                except ValueError:
+                    outer.received.append({})
+                self.send_response(204)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.httpd = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = 'http://127.0.0.1:%d/hook' % self.httpd.server_address[1]
+
+    def tearDown(self):
+        self.httpd.shutdown()
+        self.httpd.server_close()
+
+    def test_webhook_only_pushes_high(self):
+        import time
+        sink = jsevents.WebhookSink(self.url)
+        bus = jsevents.EventBus(None)
+        bus.add_listener(sink)
+        try:
+            bus.emit('warning', {'level': 'high', 'entity': 'a', 'rule_id': 'r'})
+            bus.emit('warning', {'level': 'medium', 'entity': 'b', 'rule_id': 'r'})
+            bus.emit('warning', {'level': 'low', 'entity': 'c', 'rule_id': 'r'})
+            bus.emit('discovery', {'name': 'not-a-warning'})
+            for _ in range(60):
+                if self.received:
+                    break
+                time.sleep(0.05)
+            time.sleep(0.3)   # 再等一会儿，确认没有别的偷偷进来
+        finally:
+            sink.close()
+        entities = [item.get('payload', {}).get('entity') for item in self.received]
+        self.assertEqual(entities, ['a'], '只该推 high，且只推 warning')
+
+    def test_webhook_stats_track_success(self):
+        import time
+        sink = jsevents.WebhookSink(self.url)
+        try:
+            sink({'kind': 'warning', 'payload': {'level': 'high'}})
+            for _ in range(60):
+                if sink.stats()['sent']:
+                    break
+                time.sleep(0.05)
+            stats = sink.stats()
+        finally:
+            sink.close()
+        self.assertEqual(stats['sent'], 1)
+        self.assertEqual(stats['failed'], 0)
+
+    def test_webhook_bad_url_does_not_raise(self):
+        import time
+        sink = jsevents.WebhookSink('http://127.0.0.1:1/nope', timeout=0.5)
+        try:
+            sink({'kind': 'warning', 'payload': {'level': 'high'}})
+            for _ in range(60):
+                if sink.stats()['failed']:
+                    break
+                time.sleep(0.05)
+            stats = sink.stats()
+        finally:
+            sink.close()
+        self.assertEqual(stats['failed'], 1, '失败要计数，不许抛出去')
+
+    def test_find_browser_returns_str_or_none(self):
+        found = jsevents.find_browser()
+        self.assertTrue(found is None or isinstance(found, str))
+
+    def test_screenshot_reports_failure_for_missing_browser(self):
+        ok, info = jsevents.screenshot('http://127.0.0.1:1/', 'nowhere.png',
+                                       browser='definitely-not-a-browser-xyz')
+        self.assertFalse(ok)
+        self.assertTrue(info)
+
+
+class StaticPageTests(unittest.TestCase):
+    """/static.html：服务端渲染的快照页，给截图用（headless 不等 JS）。"""
+
+    def make_state(self):
+        bus = jsevents.EventBus(None)
+        server = jsevents.EventServer(bus, port=0).start()
+        bus.emit('lifecycle', {'stage': 'start', 'input': 'demo.asar'})
+        bus.emit('discovery', {'name': 'a<b', 'tier': None})
+        bus.emit('warning', {'entity': 'a<b', 'rule_id': 'sink-exec', 'level': 'high',
+                             'tier': 'direct', 'sinks': ['exec'], 'rationale': 'r'})
+        bus.emit('lifecycle', {'stage': 'done', 'channels': 1, 'sinks': 1,
+                               'unresolved': 0, 'by_tier': {'direct': 1},
+                               'channel_tiers': {'a<b': 'direct'}})
+        return server
+
+    def test_static_page_renders_channel_and_warning(self):
+        server = self.make_state()
+        try:
+            html = jsevents.static_page(server.state)
+        finally:
+            server.stop()
+        self.assertIn('ipcsurface live', html)
+        self.assertIn('done  1 channels', html)
+        self.assertIn('sink-exec', html)
+        self.assertIn('hard', html, 'direct 档该用绿的 class')
+
+    def test_static_page_escapes_html(self):
+        server = self.make_state()
+        try:
+            html = jsevents.static_page(server.state)
+        finally:
+            server.stop()
+        self.assertIn('a&lt;b', html, '通道名里的 < 必须转义')
+        self.assertNotIn('a<b', html)
+
+    def test_static_page_route_serves_html(self):
+        server = self.make_state()
+        try:
+            import urllib.request
+            url = 'http://127.0.0.1:%d/static.html' % server.port
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                body = resp.read().decode('utf-8')
+            self.assertIn('text/html', resp.headers.get('Content-Type', ''))
+            self.assertIn('ipcsurface live', body)
+        finally:
+            server.stop()
 
 
 if __name__ == '__main__':

@@ -618,6 +618,8 @@ fetch('/api/snapshot').then(function(r){return r.json();}).then(function(s){
   (s.channels||[]).forEach(function(c){addCh(c,s.tiers?s.tiers[c]:null);});
   (s.warnings||[]).forEach(addWarn);
   if(s.done){head('done  '+s.done.channels+' channels  '+s.done.sinks+' sinks');}
+  // ?static=1：截图模式。只渲染快照，不连 SSE——长连接会让 headless 浏览器不退出。
+  if(location.search.indexOf('static=1')>=0){return;}
   var es=new EventSource('/events');
   ['lifecycle','progress','discovery','stats','warning'].forEach(function(k){
     es.addEventListener(k,function(e){onEvent(JSON.parse(e.data));});
@@ -655,6 +657,9 @@ class _Handler(__import__('http.server', fromlist=['BaseHTTPRequestHandler']).Ba
         path = self.path.split('?', 1)[0]
         if path == '/':
             self._send(200, 'text/html; charset=utf-8', _DASHBOARD)
+        elif path == '/static.html':
+            # 服务端渲染的快照页：给截图用（headless 不等 JS）
+            self._send(200, 'text/html; charset=utf-8', static_page(state))
         elif path == '/api/snapshot':
             self._send(200, 'application/json; charset=utf-8',
                        json.dumps(state.snapshot(), ensure_ascii=False))
@@ -897,3 +902,203 @@ class EventServer:
             pass
         finally:
             self.stop()
+
+
+# ---------------------------------------------------------------- 可选出口
+# 这两样都**不进默认依赖**：webhook 用标准库但会发网络请求；
+# 截图要外部浏览器，只在 dev/演示时用。
+
+LEVEL_RANK = {'high': 0, 'medium': 1, 'low': 2, 'info': 3}
+
+
+class WebhookSink:
+    """把「够级别」的预警 POST 出去。
+
+    三条约束照设计文档：
+    - 只推 warning，且 level >= min_level（默认只推 high）
+    - 失败不重试
+    - **不阻塞扫描**：投递进后台队列，真正的请求在独立线程里做
+    """
+
+    def __init__(self, url, min_level='high', timeout=2.0, max_queue=64):
+        import queue
+        import threading
+        self.url = url
+        self.min_level = min_level
+        self.timeout = timeout
+        self._queue = queue.Queue(maxsize=max_queue)
+        self._sent = 0
+        self._failed = 0
+        self._dropped = 0
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._worker, daemon=True,
+                                        name='ipcsurface-webhook')
+        self._thread.start()
+
+    @property
+    def threshold(self):
+        return LEVEL_RANK.get(self.min_level, 0)
+
+    def __call__(self, event):
+        if event.get('kind') != 'warning':
+            return
+        payload = event.get('payload') or {}
+        level = payload.get('level') or 'info'
+        if LEVEL_RANK.get(level, 9) > self.threshold:
+            return
+        try:
+            self._queue.put_nowait(event)
+        except Exception:   # queue.Full
+            with self._lock:
+                self._dropped += 1
+
+    def _worker(self):
+        import queue
+        import urllib.request
+        while True:
+            try:
+                item = self._queue.get(timeout=30)
+            except queue.Empty:
+                continue
+            if item is None:
+                return
+            body = json.dumps(item, ensure_ascii=False).encode('utf-8')
+            req = urllib.request.Request(
+                self.url, data=body, method='POST',
+                headers={'Content-Type': 'application/json'})
+            try:
+                urllib.request.urlopen(req, timeout=self.timeout).close()
+                with self._lock:
+                    self._sent += 1
+            except Exception:   # noqa: BLE001 —— 失败不重试，只记数
+                with self._lock:
+                    self._failed += 1
+
+    def stats(self):
+        with self._lock:
+            return {'sent': self._sent, 'failed': self._failed,
+                    'dropped': self._dropped, 'queued': self._queue.qsize()}
+
+    def close(self):
+        try:
+            self._queue.put_nowait(None)
+        except Exception:   # noqa: BLE001
+            pass
+
+
+def find_browser():
+    """找一个能无头截图的浏览器。找不到返回 None，不猜路径。
+
+    Windows 上 Edge 一般不在 PATH 里（shutil.which 找不到），所以要把
+    几个常见安装位置也看一遍——不然这个功能在 Windows 上等于没有。
+    """
+    import shutil
+    for name in ('msedge', 'msedge.exe', 'chrome', 'chrome.exe',
+                 'chromium', 'chromium-browser', 'google-chrome'):
+        found = shutil.which(name)
+        if found:
+            return found
+    for path in (r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+                 r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+                 r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+                 r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe'):
+        if os.path.exists(path):
+            return path
+    return None
+
+
+def screenshot(url, out_path, size='1400,900', timeout=60, browser=None,
+               headless_flag='--headless=new'):
+    """用浏览器的 headless 模式截一张页面图。
+
+    返回 (成功?, 说明)。浏览器不在、或者超时，都当失败，不硬撑。
+    """
+    exe = browser or find_browser()
+    if not exe:
+        return False, '没找到浏览器（Edge/Chrome/Chromium 都没有），跳过截图'
+    import subprocess
+    args = [exe, headless_flag, '--disable-gpu', '--hide-scrollbars',
+            '--window-size=%s' % size,
+            # 页面是「先 fetch snapshot 再渲染」的，一加载完就截会是白的。
+            # virtual-time-budget 让浏览器把这几秒的 JS/网络也跑完再截。
+            '--virtual-time-budget=4000',
+            '--screenshot=%s' % os.path.abspath(out_path),
+            url]
+    try:
+        run = subprocess.run(args, timeout=timeout,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except subprocess.TimeoutExpired:
+        return False, '截图超时（%.0f 秒）' % timeout
+    except OSError as exc:
+        return False, '跑浏览器失败：%s' % exc
+    if not os.path.exists(out_path):
+        detail = (run.stderr or b'')[-300:].decode('utf-8', 'replace')
+        return False, '浏览器没产出图（退出码 %s）%s' % (run.returncode, detail)
+    return True, os.path.abspath(out_path)
+
+
+# ---------------------------------------------------------------- 静态快照页
+# 为什么需要这个：headless 浏览器的 --screenshot 是「load 事件一到就截」，
+# 而我们的页面是「load 之后再去 fetch snapshot 再渲染」——截出来永远是白页。
+# --virtual-time-budget 也救不了真实网络请求。所以截图走服务端渲染：
+# 把 snapshot 直接拼成 HTML，浏览器一加载就有内容，不需要任何 JS。
+
+_TIER_GLYPH_TEXT = {
+    'direct': ('þ', 'hard'),
+    'name_confirmed': ('þ', 'hard'),
+    'chain': ('◐', 'chain'),
+    'ambiguous': ('¨', 'borrowed'),
+    'ast_only': ('¨', 'borrowed'),
+}
+
+_STATIC_CSS = """
+body{font:13px/1.5 ui-monospace,Consolas,monospace;background:#111;color:#ddd;margin:0;padding:14px}
+h1{font-size:13px;font-weight:600;margin:0 0 6px}
+.bar{color:#888}
+table{border-collapse:collapse;width:100%;margin-top:10px}
+td,th{padding:2px 8px;text-align:left;border-bottom:1px solid #222}
+th{color:#888;font-weight:400}
+.hard{color:#4caf50}.chain{color:#ffb300}.borrowed{color:#777}.unknown{color:#777}
+.warn{padding:4px 8px;margin-bottom:4px;border-left:3px solid #444;background:#1a1a1a}
+.warn.lv-high{border-left-color:#e53935}
+.warn.lv-medium{border-left-color:#fb8c00}
+.warn.lv-low{border-left-color:#666}
+.warn .t{font-weight:600}
+.warn .why{color:#999}
+"""
+
+
+def static_page(state):
+    """把当前 snapshot 渲染成一页纯 HTML（无 JS），给截图用。"""
+    import html as _html
+    snap = state.snapshot()
+    esc = _html.escape
+    tiers = snap.get('tiers') or {}
+    done = snap.get('done') or {}
+    rows = []
+    for name in snap.get('channels') or []:
+        tier = tiers.get(name)
+        glyph, cls = _TIER_GLYPH_TEXT.get(tier or '', ('·', 'unknown'))
+        rows.append('<tr><td class="%s">%s</td><td>%s</td><td class="%s">%s</td></tr>'
+                    % (cls, glyph, esc(name), cls, esc(tier or '—')))
+    warns = []
+    order = {'high': 0, 'medium': 1, 'low': 2}
+    for warn in sorted(snap.get('warnings') or [],
+                       key=lambda w: order.get(w.get('level'), 9)):
+        warns.append(
+            '<div class="warn lv-%s"><span class="t">[%s] %s → %s</span> '
+            '<span class="why">tier %s · %s</span><br><span class="why">%s</span></div>'
+            % (esc(warn.get('level') or 'low'), esc(warn.get('level') or ''),
+               esc(warn.get('entity') or ''), esc(', '.join(warn.get('sinks') or [])),
+               esc(warn.get('tier') or ''), esc(warn.get('rule_id') or ''),
+               esc(warn.get('rationale') or '')))
+    head = 'done  %d channels  %d sinks  %d unresolved' % (
+        done.get('channels') or 0, done.get('sinks') or 0, done.get('unresolved') or 0)
+    return ('<!doctype html><html lang="zh"><head><meta charset="utf-8">'
+            '<title>ipcsurface live</title><style>%s</style></head><body>'
+            '<h1>ipcsurface live <span class="bar">%s</span></h1>'
+            '<div class="bar">%s</div>%s'
+            '<table><thead><tr><th>档</th><th>通道</th><th>tier</th></tr></thead>'
+            '<tbody>%s</tbody></table></body></html>'
+            % (_STATIC_CSS, esc(snap.get('input') or ''), esc(head),
+               ''.join(warns), ''.join(rows)))
