@@ -1,11 +1,31 @@
-"""最小成本的 attach 探测：连上 Electron 主进程的 inspector，问三个问题。
+"""attach 探测：连 Electron 主进程的 CDP 端口，最小成本判断「能不能挂上去」。
 
-不是全量探针。只回答「值不值得投入做定向探针」：
-1. inspector 端口连得上吗？
-2. 连上的是不是**主进程**（`process.argv` 里有目标 exe、`process.type` 是 browser）？
-3. `require('electron').ipcMain` 拿得到吗？拿得到就能挂 `handle` 记录调用。
+这是一个**资产**，不是一次性脚本。手写 WebSocket、纯标准库、零依赖——它证明了
+「动态能力零依赖」这条路的第一层（连 CDP）是可行的。
 
-全都不需要第三方库：WebSocket 握手和帧是手写的。
+## 能做什么
+
+- 连接 inspector/CDP 端口（`http://127.0.0.1:<port>/json` 拿目标，WebSocket 连上去）
+- 枚举 target（title / type / webSocketDebuggerUrl）
+- 执行 `Runtime.evaluate`，读 `process.argv` / `process.type` / `process.versions`
+- 判断 `require('electron').ipcMain` 在不在——在，就能挂 `handle`/`on` 记录调用
+
+## 不能做什么
+
+- **绕过启动器**：如果 exe 是启动器、`--inspect-brk` 被它消费掉，attach 到的只是启动器层
+- **穿透加密壳**：目标代码加密在别的文件里（如 `.biliapp`），连上了也读不到明文
+- 不判断「有没有漏洞」，只判断「能不能连上、连上的是谁」
+
+## 这次在 bilibili 上遇到了什么（2026-11-12，1.17.2）
+
+- 不带参数启动：进程 1.5 秒退出，无输出
+- `--inspect-brk=PORT`：端口开了、能连上
+- 但 target 是 `title=C:_Windows_..._powershell.exe[...]`，**启动器层**
+- `process` 为 `null`，`require` 不存在（`no-require`）
+- 结论：`--inspect-brk` 被启动器消费，**未触及 Electron 主进程** → 探针不可用
+
+换一个「没有启动器拦截」的目标（自己打包的 Electron 应用、或启动器不消费 `--inspect-brk`
+的应用），这个脚本就能用。下次遇到同类目标，先跑它，别直接上全量探针。
 
 用法：
     python scripts/probe_attach.py --port 9232
