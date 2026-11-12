@@ -342,3 +342,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.101.0 版本号
+
+## 2026-11-12 23:45
+
+- 变了的字段：fingerprint, schema, unresolved_reasons
+- 理由：0.102.0 unresolved_reasons

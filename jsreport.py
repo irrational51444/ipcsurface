@@ -998,6 +998,26 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
     out.append('')
     out.append('这张表只能证明哪些看清了，不能证明没有什么。')
     out.append('')
+    reasons = facts.get('unresolved_reasons') or {}
+    if reasons:
+        out.append('### 为什么没看清')
+        out.append('')
+        out.append('「漏了」不是一个数，是有原因的。按原因分：')
+        out.append('')
+        out.append('| 原因 | 条数 | 这是什么 | 样本 |')
+        out.append('| --- | --- | --- | --- |')
+        for key in sorted(reasons, key=lambda k: -reasons[k].get('count', 0)):
+            item = reasons[key]
+            samples = '、'.join('`%s`' % s for s in (item.get('samples') or [])[:3])
+            out.append('| `%s` | %d | %s | %s |'
+                       % (key, item.get('count', 0), item.get('what') or '', samples or '—'))
+        out.append('')
+        out.append('> 现在只有两个原因有数据源，另外九个（`dynamic-registration`、'
+                   '`cross-file-depth-exceeded`、`member-call-unresolved`、'
+                   '`lexer-unrecognized-char`、`unterminated-template-string`、'
+                   '`non-ascii-number`、`encrypted-payload`、`launcher-blocked-attach`、'
+                   '`non-main-process`）名单定了但还没接数据，报 0 不代表没发生。')
+        out.append('')
     if facts['native_files']:
         out.append(f"- 这包带着 {len(facts['native_files'])} 个 native 模块，越界、泄漏只可能在它们里面：")
         for rel in facts['native_files'][:8]:

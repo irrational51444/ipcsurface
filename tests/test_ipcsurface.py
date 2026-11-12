@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/23')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/24')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))

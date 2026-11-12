@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.101.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.102.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -153,7 +153,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **2. Evidence records provenance, never a verdict.** Every channel carries where the name came from, how strong it is, and **what observations would refute it**. Strength orders review effort, not probability.
 
-**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/23`. If it does not match, stop.
+**3. Consumers check `schema` first.** Today it is `ipcsurface/asar/24`. If it does not match, stop.
 
 ---
 

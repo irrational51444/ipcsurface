@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.101.0'
+__version__ = '0.102.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/23'
+SCHEMA_VERSION = 'ipcsurface/asar/24'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2471,6 +2471,9 @@ def build_asar_report(target, facts, file_count, total_bytes, names, evidence,
         # 每条 sink 结论的凭据：档位、几跳、经过哪些函数名、注册点在哪一行。
         # 摆证据 > 报数字：人看到 at 就能跳过去核，几秒钟的事。
         'channel_sink_evidence': facts.get('channel_sink_evidence'),
+        # 没看清的东西按原因分：现在只有 runtime-computed-name 和
+        # harvested-only 两个有数据源，其余九个 reason 还没接。
+        'unresolved_reasons': facts.get('unresolved_reasons'),
         # 这些结论要经过同名多义链，可能是跟错了函数，读的时候要留一分
         'channel_sinks_ambiguous': facts.get('channel_sinks_ambiguous'),
         # 每条危险 API 的来路可信度档（direct/name_confirmed/chain/ambiguous/ast_only）
@@ -2552,7 +2555,7 @@ REPORT_TOP_LEVEL_KEY_LIST = (
     'fingerprint', 'sites', 'archive_merkle', 'content_digest',
     'channel_sinks', 'channel_sink_paths', 'channel_sinks_ast',
     'channel_sinks_ambiguous', 'channel_sink_tiers', 'channel_profiles',
-    'channel_sink_evidence',
+    'channel_sink_evidence', 'unresolved_reasons',
     'channel_tainted', 'channel_unattributed', 'channel_unattributed_samples',
     'channel_names_recovered', 'channel_dynamic_in_deps',
 )
@@ -4156,6 +4159,28 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # 现在的做法：档位照报，另外给每条结论配一份证据（档位、几跳、经过哪些
         # 函数名、注册点在哪个文件哪一行）。人看到 `at` 就能跳到源码，几秒钟判断
         # 这条结论对不对——这才是「摆证据，减少复核成本」。
+        # 归因：没看清的东西要分得清「为什么」没看清。
+        # 11 个 reason 是早就定下的名单，现在**只有两个有数据源**——
+        # 其余九个留着位置但如实报 0，不假装接了。
+        harvested = facts.get('harvested') or []
+        seen_names = set(facts.get('channels') or [])
+        # harvested 是 {名字: 信息} 的字典，不是列表——踩过一次，
+        # 写成列表推导式直接 KeyError: slice。
+        harvested_only = [name for name in harvested if name not in seen_names]
+        reasons = {
+            'runtime-computed-name': {
+                'count': len(facts.get('dynamic') or []),
+                'samples': (facts.get('dynamic') or [])[:5],
+                'what': '名字是运行时算出来的，静态读不到它等于什么',
+            },
+            'harvested-only': {
+                'count': len(harvested_only),
+                'samples': harvested_only[:5],
+                'what': '打捞到像通道名的字符串，但没确认它就是通道',
+            },
+        }
+        facts['unresolved_reasons'] = reasons
+
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:
             tiers = {ch: {api: sink_tier(facts, ch, api) for api in apis}
