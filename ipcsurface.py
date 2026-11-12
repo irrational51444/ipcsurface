@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.102.0'
+__version__ = '0.103.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -2267,6 +2267,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     ast_ambiguous = set()
     ast_supported = True
     reg_at = {}   # 通道 -> '文件:行'，给证据用的注册点位置
+    dynamic_regs = []   # 名字是变量的注册：看得见这里有个门，读不到它叫什么
     for rel in targets:
         blob = files[rel]
         if not blob:
@@ -2302,6 +2303,15 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                 continue
 
         for reg in regs:
+            if not reg.get('channel'):
+                # 名字是算的/是变量：**记下来**，不能静默跳过。
+                # 「没看见」和「看见了但读不出名字」是两件不同的事，
+                # 后者至少能告诉人去哪一行看。
+                dynamic_regs.append({
+                    'at': '%s:%s' % (rel, reg.get('line') or 0),
+                    'expr': reg.get('first_expr') or '',
+                })
+                continue
             found = set()
             span = reg.get('span')
             # 证据里的「位置」优先给**处理函数体**的行号。包里一堆 ipcMain.on
@@ -2365,7 +2375,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     if with_paths:
         # reg_at 单独返回：塞进 paths 会被下游「遍历每条通道的每个 API」的代码
         # 当成一条 API 处理（真的崩过：AttributeError: 'str' object has no 'get'）。
-        return sinks, paths, ast_out, sorted(ast_ambiguous), reg_at
+        return sinks, paths, ast_out, sorted(ast_ambiguous), reg_at, dynamic_regs
     return sinks
 
 
@@ -4146,8 +4156,9 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         if collected is None:
             sinks, sink_paths, ast_sinks, ast_amb = None, None, None, []
             reg_at = {}
+            dynamic_regs = []
         else:
-            sinks, sink_paths, ast_sinks, ast_amb, reg_at = collected
+            sinks, sink_paths, ast_sinks, ast_amb, reg_at, dynamic_regs = collected
         facts['channel_sinks_ambiguous'] = ast_amb
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
@@ -4172,6 +4183,12 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 'count': len(facts.get('dynamic') or []),
                 'samples': (facts.get('dynamic') or [])[:5],
                 'what': '名字是运行时算出来的，静态读不到它等于什么',
+            },
+            'dynamic-registration': {
+                'count': len(dynamic_regs),
+                'samples': ['%s  %s' % (d['at'], d['expr'])
+                            for d in dynamic_regs[:5]],
+                'what': '这里有注册，但名字是变量，静态读不到它等于什么',
             },
             'harvested-only': {
                 'count': len(harvested_only),

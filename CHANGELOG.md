@@ -2,6 +2,32 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.103.0 — 名字是变量的注册，现在会记下来
+
+`ipcMain.on(chName, ...)` 里名字是变量时，以前直接跳过——**看得见这里有个门，
+读不到它叫什么，然后当没看见**。
+
+这不对。「没看见」和「看见了但读不出」是两件不同的事：后者至少能告诉人去哪一行看。
+
+### 改法
+
+- `jsparse` 在名字解不出时，把**那个表达式本身**记进 `first_expr`
+  （比如 `ch`、`DESKTOP_IPC[k]`）
+- `channel_sinks_map` 收集这些，不再静默 `continue`
+- 进 `unresolved_reasons['dynamic-registration']`，带位置和表达式样本
+
+实测 obsidian 和 dsh 都报 0——这两个包没有动态注册。**造样例验过**：
+`const ch = 'dyn-' + Math.random(); ipcMain.on(ch, ...)` 能被抓出来，
+`first_expr='ch'`、位置第 4 行；静态那条 `static-one` 不受影响。
+
+### 现在 11 个 reason 里接了 3 个
+
+`runtime-computed-name`、`harvested-only`、`dynamic-registration`。
+剩下 8 个还是 0，报告里明写「报 0 不代表没发生」。
+
+429 用例、四道闸。
+
+
 ## 0.102.0 — 没看清的东西，现在知道为什么没看清
 
 unresolved 以前只有一个数字。数字告诉你漏了，不告诉你漏在哪。

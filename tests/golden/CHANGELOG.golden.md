@@ -347,3 +347,13 @@
 
 - 变了的字段：fingerprint, schema, unresolved_reasons
 - 理由：0.102.0 unresolved_reasons
+
+## 2026-11-13 00:14
+
+- 变了的字段：unresolved_reasons
+- 理由：dynamic-registration 归因
+
+## 2026-11-13 00:15
+
+- 变了的字段：fingerprint
+- 理由：unresolved_reasons 新增 dynamic-registration 桶：名字是变量的 IPC 注册从静默跳过改成记进归因，带 at/expr 样本。下游读 unresolved_reasons 的消费方会多看到一个 key，schema 号不变（24 已含容器）

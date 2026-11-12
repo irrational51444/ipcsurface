@@ -3662,5 +3662,50 @@ class SinkEvidenceTests(unittest.TestCase):
                 pass
 
 
+class DynamicRegistrationTests(unittest.TestCase):
+    """名字是变量的注册，看得见门、读不出名字——不能当没看见。
+
+    「没看见」和「看见了但读不出」是两件不同的事：后者至少能告诉人去哪一行看。
+    """
+
+    SRC = """
+const {ipcMain} = require('electron');
+const ch = 'dyn-' + Math.random();
+ipcMain.on(ch, (e, x) => { require('fs').writeFileSync(x, '1'); });
+ipcMain.on('static-one', (e) => { require('fs').rmSync('/x'); });
+"""
+
+    def parse(self):
+        import jsparse
+        tokens = jsparse.tokenize(self.SRC)
+        return jsparse.ipc_registrations(tokens, {}, set())
+
+    def test_dynamic_channel_keeps_its_expression(self):
+        regs = self.parse()
+        dynamic = [r for r in regs if not r.get('channel')]
+        self.assertEqual(len(dynamic), 1, '动态注册应该被记下来，不是跳过')
+        self.assertEqual(dynamic[0].get('first_expr'), 'ch')
+        self.assertEqual(dynamic[0].get('line'), 4)
+
+    def test_static_channel_is_unaffected(self):
+        regs = self.parse()
+        names = [r.get('channel') for r in regs if r.get('channel')]
+        self.assertEqual(names, ['static-one'])
+        static = [r for r in regs if r.get('channel') == 'static-one'][0]
+        self.assertEqual(static.get('first_expr'), '', '静态的名字不该记成表达式')
+
+    def test_reason_bucket_exists_in_report(self):
+        """报告里要有这个归因桶，哪怕这包一个动态注册都没有。"""
+        import ipcsurface as ipc
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, _n, _b = ipc.analyse_asar(asar)
+        reasons = facts.get('unresolved_reasons') or {}
+        self.assertIn('dynamic-registration', reasons)
+        self.assertIn('count', reasons['dynamic-registration'])
+        self.assertTrue(reasons['dynamic-registration'].get('what'))
+
+
 if __name__ == '__main__':
     unittest.main()

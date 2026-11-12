@@ -643,9 +643,15 @@ def ipc_registrations(tokens, objects=None, const_strings=None):
         span = None
         if len(args) >= 2 and args[1]:
             span = (tokens.index(args[1][0]), tokens.index(args[1][-1]))
+        # 名字是变量（ipcMain.on(chName, ...)）时 channel 是 None。这种注册
+        # **确实存在**，只是静态读不到它等于什么——所以不能当没看见，要把那个
+        # 表达式本身记下来，回头进 unresolved_reasons['dynamic-registration']。
+        first_expr = ' '.join(t.text for t in first) if (channel is None and first) else ''
         found.append({'channel': channel, 'target': target, 'span': span,
                       'calls': list(dict.fromkeys(calls)),
-                      'guards': list(dict.fromkeys(guards)), '_window': [t.text for t in tokens[start_i:end_i]], 'line': token.line + 1})
+                      'guards': list(dict.fromkeys(guards)),
+                      'first_expr': first_expr,
+                      '_window': [t.text for t in tokens[start_i:end_i]], 'line': token.line + 1})
     # 来源校验常常写成内联比较（event.sender !== window.webContents），
     # 只按被调函数名找会把它漏成「没有校验」。这里按 token 兜一遍。
     GUARD_NAME = ('assert', 'check', 'validate', 'verify', 'ensure', 'require')

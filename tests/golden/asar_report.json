@@ -273,7 +273,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.102.0",
+    "version": "0.103.0",
     "schema": "ipcsurface/asar/24",
     "params": {},
     "channels": [
@@ -297,6 +297,11 @@
       "count": 0,
       "samples": [],
       "what": "名字是运行时算出来的，静态读不到它等于什么"
+    },
+    "dynamic-registration": {
+      "count": 0,
+      "samples": [],
+      "what": "这里有注册，但名字是变量，静态读不到它等于什么"
     },
     "harvested-only": {
       "count": 0,
