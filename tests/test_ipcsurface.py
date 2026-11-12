@@ -353,7 +353,15 @@ class RuntimeTests(unittest.TestCase):
                               'sandbox': True, 'preload': 'p.js'}]}
         text = '\n'.join(ipc.render_runtime(probe, {'a:1'}))
         self.assertIn('`b:2`', text)
-        self.assertIn('静态那边没看见', text)
+        # 分层报告：b:2 静态没认出，应当落在「仅动态」那一层
+        self.assertIn('仅动态', text)
+        self.assertIn('静态的漏', text)
+
+    def test_crosscheck_layers_split(self):
+        layers = ipc.crosscheck_layers(['a:1', 'b:2'], {'a:1', 'c:3'})
+        self.assertEqual(layers['both'], ['a:1'])
+        self.assertEqual(layers['static_only'], ['c:3'])
+        self.assertEqual(layers['runtime_only'], ['b:2'])
 
     def test_probe_error_is_reported(self):
         text = '\n'.join(ipc.render_runtime({'error': '调试口没开'}))

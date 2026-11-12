@@ -62,9 +62,18 @@ def main():
           f'对齐率 {align:.0%}')
     print(f'应用通道 {len(app_runtime)} 条，静态认得 {len(app_found)} 条，'
           f'对齐率 {app_align:.0%}')
-    missed = runtime - static
-    if missed:
-        print('静态没认到的：', ', '.join(sorted(missed)[:20]))
+
+    # 分层：动态不是替代静态，是印证。三层一起看才知道差在哪。
+    layers = t.crosscheck_layers(runtime, static)
+    print()
+    print(f"  双向印证 {len(layers['both'])} 条（静态认得，运行时也注册）")
+    print(f"  仅静态   {len(layers['static_only'])} 条（静态认得，这次没跑起来）")
+    print(f"  仅动态   {len(layers['runtime_only'])} 条（运行时注册，静态没认出）")
+    if layers['runtime_only']:
+        print('  仅动态是静态的漏：', ', '.join(layers['runtime_only'][:20]))
+    if layers['static_only']:
+        print('  仅静态不是错（懒加载/条件分支没走到）：',
+              ', '.join(layers['static_only'][:10]))
 
     if min_align and align < min_align:
         print(f'对齐率 {align:.0%} 低于门禁 {min_align:.0%}，静态漏了应用通道')

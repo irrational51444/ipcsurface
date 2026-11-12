@@ -3625,24 +3625,64 @@ def render_diff(old_facts, new_facts, old_name, new_name):
     return '\n'.join(out)
 
 
+def crosscheck_layers(runtime_names, static_names):
+    """静态和动态的名字对账，分三层。
+
+    动态不是用来替代静态的，是用来印证静态的：
+    - both         静态认得、运行时也注册了 → 两条独立的路对上，最可信
+    - static_only  静态认得、运行时没看到 → 可能懒加载/条件分支没触发，不是错
+    - runtime_only 运行时注册了、静态没认出 → 静态的漏（拼装名、动态注册、加壳）
+    """
+    runtime = set(runtime_names or ())
+    static = set(static_names or ())
+    return {
+        'both': sorted(runtime & static),
+        'static_only': sorted(static - runtime),
+        'runtime_only': sorted(runtime - static),
+    }
+
+
 def render_runtime(probe, static_channels=None):
-    """把探针跑出来的东西并进来。这一段是程序自己报的，不是猜的。"""
-    out = ['', '## 跑起来之后看见的', '']
+    """把探针跑出来的东西并进来，按「双向印证 / 仅静态 / 仅动态」分层。
+
+    动态在这里的角色是**印证**静态，不是替代它：静态认得、运行时也注册的，
+    才敢说这条路是实的；只有静态认得的，写「没触发」；只有运行时看到的，
+    才是静态真漏了的。
+    """
+    out = ['', '## 跑起来之后看见的（动态印证静态）', '']
     if probe.get('error'):
         out.append(f'- 没跑起来：{probe["error"]}')
         out.append('')
         return out
     handlers = probe.get('handlers') or []
-    out.append(f'- 主进程上挂着 {len(handlers)} 条 invoke 通道')
-    missing = 0
-    for name in handlers:
-        mark = ''
-        if static_channels is not None and name not in static_channels:
-            mark = '  ← 静态那边没看见'
-            missing += 1
-        out.append(f'  - `{name}`{mark}')
-    if missing:
-        out.append(f'- 其中 {missing} 条静态没看见。可能是算出来的名字，也可能是 Electron 自己的，得看一眼')
+    listeners = probe.get('listeners') or []
+    runtime = list(handlers) + list(listeners)
+    out.append(f'- 主进程上挂着 {len(handlers)} 条 invoke 通道、{len(listeners)} 条 listener')
+
+    if static_channels is not None:
+        layers = crosscheck_layers(runtime, static_channels)
+        out.append('')
+        out.append(f"  - **双向印证**：{len(layers['both'])} 条（静态认得，运行时也注册了）")
+        for name in layers['both']:
+            out.append(f'    - `{name}`')
+        out.append(f"  - **仅静态**：{len(layers['static_only'])} 条（静态认得，这次没跑起来）")
+        for name in layers['static_only'][:10]:
+            out.append(f'    - `{name}`')
+        if len(layers['static_only']) > 10:
+            out.append(f'    - …还有 {len(layers["static_only"]) - 10} 条')
+        out.append(f"  - **仅动态**：{len(layers['runtime_only'])} 条（运行时注册了，静态没认出）")
+        for name in layers['runtime_only'][:10]:
+            out.append(f'    - `{name}`')
+        if len(layers['runtime_only']) > 10:
+            out.append(f'    - …还有 {len(layers["runtime_only"]) - 10} 条')
+        if layers['runtime_only']:
+            out.append('- 仅动态那批是静态的漏：可能是名字拼出来的、动态注册的，或者加壳读不出')
+        if layers['static_only']:
+            out.append('- 仅静态那批不是错：懒加载、条件分支没走到，都会这样；别读成「不存在」')
+    else:
+        for name in handlers:
+            out.append(f'  - `{name}`')
+
     for win in probe.get('windows') or []:
         out.append(f"- 窗口：contextIsolation={win.get('contextIsolation')} "
                    f"nodeIntegration={win.get('nodeIntegration')} sandbox={win.get('sandbox')}")
