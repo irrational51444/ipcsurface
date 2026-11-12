@@ -1,11 +1,11 @@
-﻿# ipcsurface
+# ipcsurface
 
 [![version](docs/badges/version.svg)](https://github.com/irrational51444/ipcsurface/releases)
 [![tests](docs/badges/tests.svg)](tests/test_ipcsurface.py)
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.89.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.90.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -197,7 +197,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **376 test cases**
+- **394 test cases**
 - **67% branch coverage**, only up, never down: python scripts/coverage_check.py, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **Input parser fuzz**: `python scripts/fuzz_smoke.py` byte-level mutation of asar headers / PE imports; CI also runs 30 s of real atheris fuzz

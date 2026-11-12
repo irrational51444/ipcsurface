@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.89.0'
+__version__ = '0.90.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4156,6 +4156,14 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                         vals, key=lambda x: (SINK_TIER_ORDER.index(x)
                                              if x in SINK_TIER_ORDER else 99))
             sink_src = facts.get('channel_sinks_ast') or facts.get('channel_sinks') or {}
+            # 预警要在 done 之前发（design 3.3：discovery 先于引用它的 warning，
+            # 而 done 必须是最后一条）。预警只是「提醒你看」，不改 tier。
+            try:
+                import jswarn
+                for warn in jswarn.build_warnings(facts):
+                    events.emit('warning', warn, phase='report')
+            except Exception:  # noqa: BLE001 —— 预警引擎炸了不能把扫描带崩
+                pass
             events.emit('lifecycle', {
                 'stage': 'done',
                 'input': os.path.basename(path),

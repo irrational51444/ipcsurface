@@ -2,6 +2,54 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.90.0 — 2026-11-12
+
+实时事件流 P4：预警引擎 + 页面预警流。
+
+### 一、预警引擎（`jswarn.py`）
+
+`(证据强度, 能力类别)` → 级别。三条硬规矩：
+
+1. 预警必须指回已有通道（`entity`）
+2. 同一 `(entity, rule_id)` 只发一次
+3. **预警不得改变 tier**
+
+### 二、级别怎么定
+
+| tier | sink 类别 | level |
+| --- | --- | --- |
+| direct / name_confirmed | exec / file-write / eval | **high** |
+| direct / name_confirmed | file-read / network | medium |
+| chain | 任何 | medium |
+| **ambiguous / ast_only** | **任何（含 exec）** | **low** |
+
+最后一行是底线：**借来档永远是 low**，`ambiguous` 53%、`ast_only` 25%，
+把这两档染成 high 等于在视觉上说谎。`level_of()` 里先判借来档、再判 sink，
+顺序本身就是为了防这个。
+
+### 三、实测（obsidian.asar）
+
+```
+47 channels · 40 条预警
+[high]   copy-asar → copyFileSync            tier name_confirmed · sink-file-write
+[high]   print-to-pdf → writeFile            tier name_confirmed · sink-file-write
+[high]   register-cli → appendFileSync,...   tier name_confirmed · sink-file-write
+[high]   vault-remove → unlinkSync,...       tier direct
+[medium] cli → writeFileSync                 tier chain
+[medium] open-file → existsSync,readFileSync tier chain · sink-file-read
+```
+
+high 全是 direct / name_confirmed，medium 全是 chain，没有一条借来档混进 high。
+
+### 四、顺手修的两件事
+
+- `pyproject.toml`、`README`、`coverage_check.py`、`selfcheck.py` 被 PowerShell 的
+  `Set-Content` 写进了 BOM（`\xef\xbb\xbf`），**去掉 BOM** 并复查了八个文件。
+  BOM 会让「只 import 标准库」那条自查认不出文件开头，是实打实的坏味道。
+- 端到端测试里「循环内断言」改成了「收集后一次断言」（项目的断言卫生规则）。
+
+质量问题照旧：394 用例、四道闸、覆盖率门禁。
+
 ## 0.89.0 — 2026-11-12
 
 实时事件流 P3：`--serve` 起本地只读页面，SSE 实时追加，刷新能恢复。

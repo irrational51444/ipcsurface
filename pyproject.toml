@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipcsurface"
-version = "0.89.0"
+version = "0.90.0"
 description = "把 REA 的 Electron 证据包压成一页能力面清单"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -23,7 +23,7 @@ ipcsurface = "ipcsurface:main"
 # native_imports 是 PE 导入表、precise_engine 是 opt-in 精查层。
 # 只写 ipcsurface 的话，装出来的 wheel 会缺这些文件，而代码里 except ImportError
 # 会把它们变成 None——用户装完就在悄悄降级，这个坑必须封住。
-py-modules = ["ipcsurface", "jsasar", "jslabels", "jsparse", "jssem", "jsast", "jsreport", "native_imports", "precise_engine", "jsevents"]
+py-modules = ["ipcsurface", "jsasar", "jslabels", "jsparse", "jssem", "jsast", "jsreport", "native_imports", "precise_engine", "jsevents", "jswarn"]
 
 [project.optional-dependencies]
 precise = ["tree-sitter", "tree-sitter-javascript"]

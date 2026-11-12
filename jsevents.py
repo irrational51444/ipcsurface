@@ -431,9 +431,17 @@ table{border-collapse:collapse;width:100%;margin-top:10px}
 td,th{padding:2px 8px;text-align:left;border-bottom:1px solid #222}
 th{color:#888;font-weight:400}
 .hard{color:#4caf50}.chain{color:#ffb300}.borrowed{color:#777}.unknown{color:#777}
+#warns{margin-top:10px}
+.warn{padding:4px 8px;margin-bottom:4px;border-left:3px solid #444;background:#1a1a1a}
+.warn.lv-high{border-left-color:#e53935}
+.warn.lv-medium{border-left-color:#fb8c00}
+.warn.lv-low{border-left-color:#666}
+.warn .t{font-weight:600}
+.warn .why{color:#999}
 </style></head><body>
 <h1>ipcsurface live <span id="input" class="bar"></span></h1>
 <div class="bar" id="head">等事件…</div>
+<div id="warns"></div>
 <table><thead><tr><th>档</th><th>通道</th><th>tier</th></tr></thead>
 <tbody id="rows"></tbody></table>
 <script>
@@ -449,19 +457,40 @@ function addCh(name,tier){
   document.getElementById('rows').appendChild(tr);
 }
 function head(t){document.getElementById('head').textContent=t;}
+var warnSeen=new Set();
+function addWarn(w){
+  var key=w.entity+'|'+w.rule_id;
+  if(warnSeen.has(key))return;
+  warnSeen.add(key);
+  var box=document.getElementById('warns');
+  var d=document.createElement('div');
+  d.className='warn lv-'+(w.level||'low');
+  d.innerHTML='<span class="t">['+w.level+'] '+w.entity+' → '+w.sinks.join(', ')+
+              '</span> <span class="why">tier '+w.tier+' · '+w.rule_id+'</span><br>'+
+              '<span class="why">'+w.rationale+'</span>';
+  // 高的排前面
+  var before=null;
+  for(var i=0;i<box.children.length;i++){
+    var lv=box.children[i].className.replace('warn lv-','');
+    if(({high:0,medium:1,low:2})[lv]>({high:0,medium:1,low:2})[w.level]){before=box.children[i];break;}
+  }
+  box.insertBefore(d,before);
+}
 function onEvent(ev){
   var p=ev.payload||{};
   if(ev.kind==='lifecycle'&&p.stage==='start'){document.getElementById('input').textContent=p.input||'';}
   if(ev.kind==='discovery'){addCh(p.name,p.tier);}
+  if(ev.kind==='warning'){addWarn(p);}
   if(ev.kind==='progress'){head('files '+p.files_done+'/'+p.files_total+'  '+Math.round((p.elapsed_ms||0)/1000)+'s');}
   if(ev.kind==='lifecycle'&&p.stage==='done'){head('done  '+p.channels+' channels  '+p.sinks+' sinks  '+p.unresolved+' unresolved');}
 }
 fetch('/api/snapshot').then(function(r){return r.json();}).then(function(s){
   if(s.input){document.getElementById('input').textContent=s.input;}
   (s.channels||[]).forEach(function(c){addCh(c,s.tiers?s.tiers[c]:null);});
+  (s.warnings||[]).forEach(addWarn);
   if(s.done){head('done  '+s.done.channels+' channels  '+s.done.sinks+' sinks');}
   var es=new EventSource('/events');
-  ['lifecycle','progress','discovery','stats'].forEach(function(k){
+  ['lifecycle','progress','discovery','stats','warning'].forEach(function(k){
     es.addEventListener(k,function(e){onEvent(JSON.parse(e.data));});
   });
 });
@@ -606,7 +635,8 @@ class _State:
         seen = set()
         done = None
         input_name = None
-        s = {'channels': [], 'tiers': {}, 'done': None, 'input': None}
+        warnings = []
+        s = {'channels': [], 'tiers': {}, 'done': None, 'input': None, 'warnings': []}
         for event in events:
             kind = event.get('kind')
             payload = event.get('payload') or {}
@@ -618,6 +648,8 @@ class _State:
                     seen.add(name)
                     channels.append(name)
                     tiers[name] = payload.get('tier')
+            elif kind == 'warning':
+                warnings.append(payload)
             elif kind == 'lifecycle' and payload.get('stage') == 'done':
                 done = payload
                 # done 里带「每条通道的代表档」：discovery 当时 tier 还是 None
@@ -631,6 +663,7 @@ class _State:
         s['tiers'] = tiers
         s['done'] = done
         s['input'] = input_name
+        s['warnings'] = warnings
         return s
 
     def summary_line(self):
