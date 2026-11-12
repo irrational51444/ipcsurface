@@ -88,5 +88,46 @@ problems = jsevents.diff_summary('events.jsonl', report)
 
 - `evidence` / `warning` / `unresolved` 三类事件现在是空的：P1 只录 lifecycle/progress/discovery/stats
 - 归因枚举（`lexer-unrecognized-char` 等 11 个）**代码里还没有**，要先落地
-- 没有 TUI、没有 SSE、没有 Web、没有回放 CLI
+- 没有 SSE、没有 Web、没有回放 CLI
 - `--events-out` 会多读一遍输入文件算 sha256，这是开实时才付的代价
+
+## P2：终端 `--live`
+
+```bash
+python ipcsurface.py app.asar --format json -o report.json --live
+```
+
+80 列、ANSI、0.5 秒节流重绘。扫描中显示阶段 / 文件进度 / 速率 / 已发现通道；
+扫完显示 tier 分档表。
+
+### 符号约定
+
+| 符号 | 含义 | 颜色 |
+| --- | --- | --- |
+| `þ` | 硬结论（direct / name_confirmed） | 绿 |
+| `◐` | 同文件链（chain） | 黄 |
+| `¨` | **借来档**（ambiguous / ast_only） | **灰** |
+| `·` | tier 未定（扫描中） | 灰 |
+
+**借来档必须是灰的**，这条写进测试 `test_borrowed_tiers_never_use_red_or_yellow`：
+借来那一行不许出现 `\033[31m` / `\033[33m` / `\033[91m`。`ambiguous` 53%、
+`ast_only` 25%，染红就是骗人。
+
+### 实测（obsidian.asar 26.8 MB）
+
+```
+--live 4.87s / 不带 4.77s  开销约 2%
+最终画面：47 channels  116 sinks  0 unresolved
+  þ direct            1
+  þ name_confirmed    9
+  ◐ chain            15
+  ¨ ambiguous        41 借来
+  ¨ ast_only         50 借来
+```
+
+### P2 的缺口
+
+- **扫描中看不出 tier**：tier 要等 `channel_sinks_map` 跑完才有，所以扫描期间
+  通道那一列是 `·`（灰点），扫完才出五档。要么把 sink 分析拆到扫描中途，要么接受。
+- 没有 warnings 区（P4）、没有 unresolved 分组（P2 只打了总数）
+- 没有暂停 / 追问（P6）

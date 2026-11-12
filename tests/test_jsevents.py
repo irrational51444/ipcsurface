@@ -140,5 +140,70 @@ class ReconcileTests(unittest.TestCase):
         self.assertIn('lifecycle.done', problems[0])
 
 
+class TerminalRenderTests(unittest.TestCase):
+    """终端渲染：80 列、符号、以及最要紧的一条——借来档必须灰。"""
+
+    DONE_PAYLOAD = {
+        'stage': 'done', 'input': 'demo.asar', 'channels': 47, 'sinks': 116,
+        'unresolved': 10,
+        'by_tier': {'direct': 1, 'name_confirmed': 9, 'chain': 15,
+                    'ambiguous': 41, 'ast_only': 50},
+    }
+
+    def make(self, use_color=True, width=80):
+        r = jsevents.TerminalRenderer(stream=None, width=width, use_color=use_color)
+        r.on_event({'kind': 'lifecycle', 'phase': 'coarse',
+                    'payload': {'stage': 'start', 'input': 'demo.asar', 'size': 1048576}})
+        return r
+
+    def test_tier_glyph_colors(self):
+        # 硬结论绿、同文件黄、借来灰——这是全局约定，不是渲染细节
+        self.assertEqual(jsevents.tier_glyph('direct'), ('þ', '32'))
+        self.assertEqual(jsevents.tier_glyph('name_confirmed'), ('þ', '32'))
+        self.assertEqual(jsevents.tier_glyph('chain'), ('◐', '33'))
+        self.assertEqual(jsevents.tier_glyph('ambiguous'), ('¨', '90'))
+        self.assertEqual(jsevents.tier_glyph('ast_only'), ('¨', '90'))
+
+    def test_unknown_tier_is_grey_not_green(self):
+        glyph, code = jsevents.tier_glyph('whatever')
+        self.assertEqual(code, '90', '不认识的档位必须给灰的，不许借绿')
+
+    def test_borrowed_tiers_never_use_red_or_yellow(self):
+        r = self.make()
+        r.on_event({'kind': 'lifecycle', 'phase': 'report',
+                    'payload': self.DONE_PAYLOAD})
+        text = r.render()
+        bad = [line for line in text.splitlines()
+               if '借来' in line
+               and any(code in line for code in ('\033[31m', '\033[33m', '\033[91m'))]
+        self.assertFalse(bad, '借来档不许用红/黄：%r' % (bad,))
+
+    def test_done_line_carries_the_three_numbers(self):
+        r = self.make()
+        r.on_event({'kind': 'lifecycle', 'phase': 'report',
+                    'payload': self.DONE_PAYLOAD})
+        text = r.render()
+        self.assertIn('47 channels', text)
+        self.assertIn('116 sinks', text)
+        self.assertIn('10 unresolved', text)
+
+    def test_width_is_respected(self):
+        r = self.make(width=60)
+        r.on_event({'kind': 'discovery', 'phase': 'coarse',
+                    'payload': {'name': 'a' * 200, 'tier': None}})
+        text = r.render()
+        longest = max(len(line) for line in text.splitlines())
+        self.assertLessEqual(longest, 60, '每一行都不许超过 width')
+
+    def test_progress_line_shows_files_and_rate(self):
+        r = self.make()
+        r.on_event({'kind': 'progress', 'phase': 'coarse',
+                    'payload': {'files_done': 300, 'files_total': 369,
+                                'elapsed_ms': 3209}})
+        text = r.render()
+        self.assertIn('files 300/369', text)
+        self.assertIn('MB/s', text)
+
+
 if __name__ == '__main__':
     unittest.main()

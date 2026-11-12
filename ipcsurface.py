@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.87.0'
+__version__ = '0.88.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4270,6 +4270,8 @@ def main(argv=None):
                         help='用 tree-sitter 精查层补一列（跨文件/类方法）。需要 pip install ipcsurface[precise]')
     parser.add_argument('--events-out', metavar='JSONL',
                         help='把扫描过程录成事件流（JSONL，append-only）。不给就不发事件，行为和以前完全一致')
+    parser.add_argument('--live', action='store_true',
+                        help='把扫描过程画到终端（ANSI，80 列）。借来档一律画灰的')
     args = parser.parse_args(argv)
 
     if args.recover:
@@ -4315,14 +4317,21 @@ def main(argv=None):
         old_set, new_set = set(old['channels']), set(new['channels'])
         summary_line = f'新增 {len(new_set - old_set)} 条，消失 {len(old_set - new_set)} 条'
     elif looks_like_asar(args.input):
-        # 实时事件流：只有给了 --events-out 才建 bus，否则全程零开销。
+        # 实时层：--events-out 录文件、--live 画终端，两个都可以单独用。
+        # 都不给时 bus 是 None，全程零开销。
         bus = None
-        if args.events_out:
+        renderer = None
+        if args.events_out or args.live:
             import jsevents
             # scan_id 用输入文件的 sha256：和报告 fingerprint.input_sha256 同一个值，
             # 事件流和报告能直接对上。这是顺序读一遍文件，只在开实时时付这个开销。
-            bus = jsevents.EventBus(args.events_out,
-                                   scan_id='sha256:' + (input_sha256(args.input) or ''))
+            bus = jsevents.EventBus(
+                args.events_out or None,
+                scan_id='sha256:' + (input_sha256(args.input) or ''))
+            if args.live:
+                jsevents.enable_ansi()
+                renderer = jsevents.TerminalRenderer(sys.stderr)
+                bus.add_listener(renderer.on_event)
         try:
             facts, count, total = analyse_asar(
                 args.input, allow_eval=not args.no_eval,
@@ -4330,6 +4339,9 @@ def main(argv=None):
         finally:
             if bus is not None:
                 bus.close()
+            if renderer is not None:
+                # 最后一面留在屏幕上，接着就是报告本身
+                renderer.paint()
         # precise：tree-sitter 精查层，opt-in，装不上就降级不硬撑
         if args.precise:
             try:

@@ -62,12 +62,22 @@ class EventBus:
         self._dropped = 0
         self._bytes = 0
         self._last_flush = time.monotonic()
+        self._listeners = []
         self._fh = None
         if path:
             folder = os.path.dirname(os.path.abspath(path))
             if folder and not os.path.isdir(folder):
                 os.makedirs(folder, exist_ok=True)
             self._fh = open(path, 'w', encoding='utf-8', newline='\n')
+
+    def add_listener(self, fn):
+        """挂一个订阅者（终端渲染器之类）。返回 fn，方便链式写。
+
+        订阅者必须是 O(1) 的：它在扫描线程上同步调用，慢了就是拖慢扫描。
+        需要重绘的东西自己攒着、按时间节流。
+        """
+        self._listeners.append(fn)
+        return fn
 
     # ---------------------------------------------------------------- 发射
     def emit(self, kind, payload=None, phase='coarse'):
@@ -101,6 +111,12 @@ class EventBus:
             'payload': payload if payload is not None else {},
         }
         self._queue.append(event)
+        # 订阅者同步调用：它们必须 O(1)，快的几微秒，慢的自己节流。
+        for fn in self._listeners:
+            try:
+                fn(event)
+            except Exception:  # noqa: BLE001 —— 渲染器炸了不能把扫描带崩
+                pass
         if len(self._queue) >= self.flush_every:
             self.flush()
         elif time.monotonic() - self._last_flush >= self.flush_interval:
@@ -181,6 +197,182 @@ def last_summary(path):
             except ValueError:
                 continue
     return last
+
+
+# ---------------------------------------------------------------- 终端渲染
+# 符号和颜色是全局约定，Web 端以后也用这一套。
+# 最要紧的一条：**借来档必须是灰的**。ambiguous（53%）和 ast_only（25%）
+# 如果被染成黄/红，就等于在视觉上把「可能错」伪装成「很可能对」。
+TIER_GLYPH = {
+    'direct': ('þ', '32'),          # 绿
+    'name_confirmed': ('þ', '32'),  # 绿
+    'chain': ('◐', '33'),           # 黄
+    'ambiguous': ('¨', '90'),       # 灰（借来档）
+    'ast_only': ('¨', '90'),        # 灰（借来档）
+}
+GLYPH_UNKNOWN = ('·', '90')
+# 借来档白名单：这两个档位在任何视图里都不许用红/黄
+BORROWED_TIERS = frozenset(('ambiguous', 'ast_only'))
+
+
+def enable_ansi():
+    """Windows 上打开 VT 转义。失败就静默：大不了没颜色，不能把扫描搞崩。"""
+    if os.name != 'nt':
+        return True
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_ulong()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        # ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:  # noqa: BLE001 —— 拿不到控制台就算了
+        return False
+
+
+def colorize(text, code, use_color=True):
+    if not use_color or not code:
+        return text
+    return '\033[%sm%s\033[0m' % (code, text)
+
+
+def tier_glyph(tier):
+    """档位 → (符号, ANSI 码)。不认识的档位给灰点，不给绿色。"""
+    return TIER_GLYPH.get(tier or '', GLYPH_UNKNOWN)
+
+
+class TerminalRenderer:
+    """把事件流画到终端：80 列、ANSI、借来档必须灰。
+
+    订阅者是同步调用的，所以 on_event 只做 O(1) 的记账，重绘按时间节流
+    （默认 0.5 秒一次）。这样扫描不会被渲染拖慢。
+    """
+
+    def __init__(self, stream=None, width=80, interval=0.5, use_color=True,
+                 max_rows=12, clock=None):
+        self.stream = stream
+        self.width = max(40, width)
+        self.interval = interval
+        self.use_color = use_color
+        self.max_rows = max_rows
+        self._clock = clock or time.monotonic
+        self._last_paint = 0.0
+        self._input = ''
+        self._size = None
+        self._phase = 'coarse'
+        self._files_done = 0
+        self._files_total = 0
+        self._elapsed_ms = 0
+        self._channels = []
+        self._seen_channels = set()
+        self._stats = {}
+        self._done = None
+
+    # ------------------------------------------------------------ 事件入口
+    def on_event(self, event):
+        kind = event.get('kind')
+        payload = event.get('payload') or {}
+        if kind == 'lifecycle':
+            stage = payload.get('stage')
+            if stage == 'start':
+                self._input = payload.get('input') or ''
+                self._size = payload.get('size')
+            elif stage == 'done':
+                self._done = payload
+                self._phase = 'report'
+        elif kind == 'progress':
+            self._files_done = payload.get('files_done') or 0
+            self._files_total = payload.get('files_total') or 0
+            self._elapsed_ms = payload.get('elapsed_ms') or 0
+        elif kind == 'discovery':
+            name = payload.get('name')
+            if name and name not in self._seen_channels:
+                self._seen_channels.add(name)
+                self._channels.append((name, payload.get('tier')))
+        elif kind == 'stats':
+            self._stats = payload
+        self._phase = event.get('phase') or self._phase
+
+        now = self._clock()
+        if now - self._last_paint >= self.interval:
+            self.paint()
+            self._last_paint = now
+
+    # ---------------------------------------------------------------- 绘制
+    def _line(self, text):
+        if len(text) > self.width:
+            text = text[:self.width - 1] + '…'
+        return text
+
+    def _rate(self):
+        if not self._elapsed_ms or not self._size:
+            return ''
+        seconds = self._elapsed_ms / 1000.0
+        if seconds <= 0:
+            return ''
+        return '%.1f MB/s' % (self._size / 1048576.0 / seconds)
+
+    def render(self):
+        """返回要打印的整段文本（测试直接拿这个比对）。"""
+        out = []
+        size = ''
+        if self._size:
+            size = '  %.1f MB' % (self._size / 1048576.0)
+        out.append(self._line('ipcsurface live | %s%s' % (self._input or '?', size)))
+        if self._done is not None:
+            out.append(self._line(self._render_done()))
+        else:
+            progress = 'files %d/%d' % (self._files_done, self._files_total)
+            parts = [self._phase, progress]
+            rate = self._rate()
+            if rate:
+                parts.append(rate)
+            out.append(self._line('  '.join(parts)))
+        out.append('─' * self.width)
+        if self._done is not None:
+            out.extend(self._render_tiers())
+        else:
+            out.append(self._line('channels %d  (tier 要等扫完才定)' % len(self._channels)))
+            for name, tier in self._channels[-self.max_rows:]:
+                glyph, code = tier_glyph(tier)
+                out.append(self._line('  %s %s' % (
+                    colorize(glyph, code, self.use_color), name)))
+        return '\n'.join(out)
+
+    def _render_done(self):
+        done = self._done or {}
+        return 'done  %d channels  %d sinks  %d unresolved' % (
+            done.get('channels') or 0, done.get('sinks') or 0,
+            done.get('unresolved') or 0)
+
+    def _render_tiers(self):
+        done = self._done or {}
+        by_tier = done.get('by_tier') or {}
+        rows = []
+        # 按「硬结论在前」排，借来档垫底：排序本身也是一种分层表达
+        order = ('direct', 'name_confirmed', 'chain', 'ambiguous', 'ast_only')
+        for tier in order:
+            count = by_tier.get(tier)
+            if not count:
+                continue
+            glyph, code = tier_glyph(tier)
+            mark = ' 借来' if tier in BORROWED_TIERS else ''
+            rows.append(self._line('  %s %-16s %3d%s' % (
+                colorize(glyph, code, self.use_color), tier, count, mark)))
+        return rows
+
+    def paint(self):
+        """把当前状态打到流上。清屏 + 重绘，光标回到左上。"""
+        if self.stream is None:
+            return
+        text = self.render()
+        try:
+            self.stream.write('\033[2J\033[H' + text + '\n')
+            self.stream.flush()
+        except (OSError, ValueError):
+            pass
 
 
 def report_summary(report):
