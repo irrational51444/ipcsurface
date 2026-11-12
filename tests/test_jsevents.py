@@ -276,6 +276,29 @@ class EventServerTests(unittest.TestCase):
             urllib.request.urlopen(self.base + '/nope', timeout=5)
         self.assertEqual(ctx.exception.code, 404)
 
+    def test_zero_buffer_keeps_nothing_in_memory(self):
+        """--max-buffer 0：页面照常推送，但一条都不留在内存里。"""
+        bus = jsevents.EventBus(None)
+        server = jsevents.EventServer(bus, port=0, max_events=0).start()
+        try:
+            bus.emit('discovery', {'name': 'a:b', 'tier': None})
+            bus.emit('lifecycle', {'stage': 'done', 'channels': 1, 'sinks': 0,
+                                   'unresolved': 0, 'by_tier': {}})
+            self.assertEqual(server.state.events, [], '不该留任何事件')
+            snap = server.state.snapshot()
+            self.assertEqual(snap['channels'], [], '快照也不该有东西')
+        finally:
+            server.stop()
+
+    def test_default_buffer_keeps_events(self):
+        bus = jsevents.EventBus(None)
+        server = jsevents.EventServer(bus, port=0).start()
+        try:
+            bus.emit('discovery', {'name': 'c:d', 'tier': None})
+            self.assertEqual(len(server.state.events), 1)
+        finally:
+            server.stop()
+
     def test_sse_replays_history_after_last_event_id(self):
         """断线重连：带 Last-Event-ID 只补发之后的事件。"""
         import socket

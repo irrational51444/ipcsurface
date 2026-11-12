@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.91.0'
+__version__ = '0.92.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4291,6 +4291,8 @@ def main(argv=None):
                         help='把扫描过程画到终端（ANSI，80 列）。借来档一律画灰的')
     parser.add_argument('--serve', type=int, metavar='PORT',
                         help='起一个本地只读页面（SSE + 快照），扫完不退出，Ctrl+C 结束')
+    parser.add_argument('--max-buffer', type=int, default=50000, metavar='N',
+                        help='页面在内存里留多少条事件用于刷新/断线补发，默认 50000；0 = 一条不留')
     parser.add_argument('--replay', metavar='JSONL',
                         help='不扫描，回放一份事件流（配 --live / --serve 用）')
     parser.add_argument('--replay-speed', type=float, default=1.0,
@@ -4310,7 +4312,8 @@ def main(argv=None):
             bus.add_listener(renderer.on_event)
         if args.serve:
             server = jsevents.EventServer(bus, host='127.0.0.1',
-                                          port=args.serve).start()
+                                          port=args.serve,
+                                          max_events=args.max_buffer).start()
             print(f'回放页面：{server.url}', file=sys.stderr)
         sent = jsevents.replay(args.replay, bus, speed=args.replay_speed)
         print(f'回放了 {sent} 条事件', file=sys.stderr)
@@ -4387,7 +4390,8 @@ def main(argv=None):
                 bus.add_listener(renderer.on_event)
             if args.serve:
                 server = jsevents.EventServer(bus, host='127.0.0.1',
-                                              port=args.serve).start()
+                                              port=args.serve,
+                                              max_events=args.max_buffer).start()
                 print(f'实时页面：{server.url}', file=sys.stderr)
         try:
             facts, count, total = analyse_asar(

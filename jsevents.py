@@ -669,12 +669,18 @@ class _State:
             return list(self._events)
 
     def record(self, event):
-        """EventBus 的订阅者。必须快：扫描线程上同步调用。"""
+        """EventBus 的订阅者。必须快：扫描线程上同步调用。
+
+        max_events=0 表示**不缓冲**：事件只往当前连着的订阅者推，一条不存。
+        这样刷新页面就从头开始（没有历史可恢复），断线也补不回来——
+        有人不想让工具在内存里留东西，那就给他这个选法。
+        """
         import queue as _queue
         with self._lock:
-            self._events.append(event)
-            if len(self._events) > self.max_events:
-                del self._events[:len(self._events) - self.max_events]
+            if self.max_events > 0:
+                self._events.append(event)
+                if len(self._events) > self.max_events:
+                    del self._events[:len(self._events) - self.max_events]
             subs = list(self._subs)
         for box in subs:
             try:

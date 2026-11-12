@@ -5,7 +5,7 @@
   "substitutive": 0,
   "allowed_substitutive": 0,
   "locked_at_ratio": 0.8333,
-  "locked_at_version": "0.91.0",
+  "locked_at_version": "0.92.0",
   "policy": "门禁只挂在「替代型」条数上（allowed_substitutive，默认 0）；总比率是背景报告，不构成失败条件。版本号对不上也红。",
   "reason": "0.80.0 新增的用例都是对具体名字列表与档位字符串做 assertEqual，没新增 vacuous 断言，比率仍是 5/6。",
   "note": "比率仅供观察：protected/total 的分子分母都只算 vacuous 断言。"
