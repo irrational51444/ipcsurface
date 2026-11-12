@@ -2,6 +2,31 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.102.0 — 没看清的东西，现在知道为什么没看清
+
+unresolved 以前只有一个数字。数字告诉你漏了，不告诉你漏在哪。
+
+现在加 unresolved_reasons：按原因分，每条带样本。
+
+实测 obsidian：
+
+| 原因 | 条数 | 样本 |
+| --- | --- | --- |
+| `harvested-only` | 394 | `xmlns:xlink`、`xlink:href`、`xml:id` |
+| `runtime-computed-name` | 0 | — |
+
+394 这个数一摆出来，样本跟着一摆，人一眼就知道——这些是 SVG 命名空间，不是通道名，整批可以跳过。**这就是「减少复核成本」**：不用核，看一眼就知道。
+
+### 11 个原因名单定了，但现在只有 2 个接了数据
+
+剩下九个——`dynamic-registration`、`cross-file-depth-exceeded`、`member-call-unresolved`、`lexer-unrecognized-char`、`unterminated-template-string`、`non-ascii-number`、`encrypted-payload`、`launcher-blocked-attach`、`non-main-process`——报 0 **不代表没发生**，只是还没接数据源。这句也印在报告里。
+
+### 顺手修的一个
+
+`harvested` 是字典不是列表，我第一版写成列表推导式，直接 `KeyError: slice`。
+
+426 用例、四道闸。
+
 ## 0.101.0 — 2026-11-12
 
 「不可信」不是二值的：每条结论多一个「证据完整度」三段。
@@ -2487,27 +2512,3 @@ ipcMain.handle(DESKTOP_IPC.boot, …);
 ## 0.1.0
 
 - 第一版。读 REA 的 Evidence，出一页能力面清单。
-## 0.102.0 — 没看清的东西，现在知道为什么没看清
-
-unresolved 以前只有一个数字。数字告诉你漏了，不告诉你漏在哪。
-
-现在加 unresolved_reasons：按原因分，每条带样本。
-
-实测 obsidian：
-
-| 原因 | 条数 | 样本 |
-| --- | --- | --- |
-| `harvested-only` | 394 | `xmlns:xlink`、`xlink:href`、`xml:id` |
-| `runtime-computed-name` | 0 | — |
-
-394 这个数一摆出来，样本跟着一摆，人一眼就知道——这些是 SVG 命名空间，不是通道名，整批可以跳过。**这就是「减少复核成本」**：不用核，看一眼就知道。
-
-### 11 个原因名单定了，但现在只有 2 个接了数据
-
-剩下九个——`dynamic-registration`、`cross-file-depth-exceeded`、`member-call-unresolved`、`lexer-unrecognized-char`、`unterminated-template-string`、`non-ascii-number`、`encrypted-payload`、`launcher-blocked-attach`、`non-main-process`——报 0 **不代表没发生**，只是还没接数据源。这句也印在报告里。
-
-### 顺手修的一个
-
-`harvested` 是字典不是列表，我第一版写成列表推导式，直接 `KeyError: slice`。
-
-426 用例、四道闸。
