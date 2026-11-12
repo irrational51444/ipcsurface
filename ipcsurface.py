@@ -2342,9 +2342,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                 except Exception:
                     ast_supported = False
             for api, count in hops.items():
-                slot = paths.setdefault(reg['channel'], {})
-                slot['__at__'] = reg_at.get(reg['channel']) or ''
-                slot[api] = {
+                paths.setdefault(reg['channel'], {})[api] = {
                     'hops': count, 'via': vias.get(api, ''),
                     'at': reg_at.get(reg['channel']) or ''}
             if found:
@@ -2352,7 +2350,9 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
 
     sinks = {name: sorted(apis) for name, apis in out.items()}
     if with_paths:
-        return sinks, paths, ast_out, sorted(ast_ambiguous)
+        # reg_at 单独返回：塞进 paths 会被下游「遍历每条通道的每个 API」的代码
+        # 当成一条 API 处理（真的崩过：AttributeError: 'str' object has no 'get'）。
+        return sinks, paths, ast_out, sorted(ast_ambiguous), reg_at
     return sinks
 
 
@@ -4129,8 +4129,9 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # 报告里写 null 才是老实的语义（「没分析」不等于「没有」）。
         if collected is None:
             sinks, sink_paths, ast_sinks, ast_amb = None, None, None, []
+            reg_at = {}
         else:
-            sinks, sink_paths, ast_sinks, ast_amb = collected
+            sinks, sink_paths, ast_sinks, ast_amb, reg_at = collected
         facts['channel_sinks_ambiguous'] = ast_amb
         facts['channel_sinks_ast'] = ast_sinks
         facts['channel_sinks'] = sinks
@@ -4150,7 +4151,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
             evidence = {}
             for ch, api_tiers in tiers.items():
                 paths_for_ch = sink_paths.get(ch) or {}
-                fallback_at = paths_for_ch.get('__at__') or ''
+                fallback_at = (reg_at or {}).get(ch) or ''
                 for api, tier in api_tiers.items():
                     step = paths_for_ch.get(api) or {}
                     evidence.setdefault(ch, {})[api] = {
