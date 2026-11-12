@@ -79,6 +79,18 @@ class EventBus:
         self._listeners.append(fn)
         return fn
 
+    def deliver(self, event):
+        """投递一条**已有**事件，不重新编号。
+
+        回放用这个：录制文件里的 seq / ts / scan_id 原样保留，
+        否则回放出来的东西和当初录的不是一条流，也就谈不上「行为一致」。
+        """
+        for fn in self._listeners:
+            try:
+                fn(event)
+            except Exception:  # noqa: BLE001
+                pass
+
     # ---------------------------------------------------------------- 发射
     def emit(self, kind, payload=None, phase='coarse'):
         """发一条事件。返回 True 表示接受了，False 表示被丢弃。"""
@@ -373,6 +385,69 @@ class TerminalRenderer:
             self.stream.flush()
         except (OSError, ValueError):
             pass
+
+
+def load_events(path):
+    """读一条 JSONL 事件流，返回 list。坏行跳过，不整份失败。"""
+    events = []
+    with open(path, encoding='utf-8') as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue
+    return events
+
+
+def _parse_ts(text):
+    """把事件里的 ISO 时间戳转成秒（浮点）。解析不了返回 None。"""
+    if not text:
+        return None
+    import calendar
+    head = text.replace('Z', '')
+    if '.' in head:
+        base, _, frac = head.partition('.')
+    else:
+        base, frac = head, ''
+    try:
+        stamp = calendar.timegm(time.strptime(base, '%Y-%m-%dT%H:%M:%S'))
+    except ValueError:
+        return None
+    if frac:
+        try:
+            stamp += float('0.' + frac)
+        except ValueError:
+            pass
+    return stamp
+
+
+def replay(path, bus, speed=1.0, max_sleep=2.0):
+    """从 JSONL 回放事件，驱动挂在上面的渲染器 / 服务器。
+
+    speed=1.0 按录制时的时间差节流；speed=0 全速（测试用）。
+    单次最多睡 max_sleep 秒：录制里如果有长时间空档，回放不该跟着干等。
+    返回回放了多少条。
+    """
+    events = load_events(path)
+    if not events:
+        return 0
+    prev = None
+    sent = 0
+    for event in events:
+        if speed > 0:
+            stamp = _parse_ts(event.get('ts'))
+            if stamp is not None and prev is not None:
+                gap = (stamp - prev) / speed
+                if gap > 0:
+                    time.sleep(min(gap, max_sleep))
+            if stamp is not None:
+                prev = stamp
+        bus.deliver(event)
+        sent += 1
+    return sent
 
 
 def report_summary(report):

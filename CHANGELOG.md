@@ -2,6 +2,42 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.91.0 — 2026-11-12
+
+实时事件流 P5：回放 + fixture + 对账测试。
+
+### 一、回放
+
+```bash
+python ipcsurface.py --replay events.jsonl --serve 8080
+python ipcsurface.py --replay events.jsonl --live --replay-speed 4
+```
+
+`EventBus.deliver()` 原样投递，**不重新编号**——`seq`/`ts`/`scan_id` 都保留。
+回放出来的必须和当初录的是同一条流，否则谈不上「行为一致」。
+`--replay-speed 0` 全速，单次睡眠上限 2 秒（录制里有长空档时不跟着干等）。
+
+### 二、fixtures（`tests/fixtures/events/`）
+
+三份脱敏的事件流，路径和 sha 都替换成 `demo.asar` / `sha256:fixture`：
+
+| 文件 | 内容 | 条数 |
+| --- | --- | --- |
+| `normal.jsonl` | 一次正常扫描 | 19 |
+| `warnings.jsonl` | 同上 + high/medium/low 各一条预警 | 22 |
+| `crash.jsonl` | 截断的，没有 `done`（模拟中途崩） | 18 |
+
+### 三、对账测试（守则 4 的自动化）
+
+`test_cli_events_match_cli_report`：真跑一次 CLI（`--events-out` + `--format json`），
+把事件流末条和报告 JSON 逐项比。对不上就红——这是「实时视图不能成为第二套真相」
+唯一的可执行版本。
+
+另一条 `test_no_events_flag_leaves_output_identical`：同一输入跑两次，输出必须
+**字节级一致**，挡的是「加了实时功能悄悄改了默认输出」。
+
+质量问题照旧：400 用例、四道闸、覆盖率门禁。
+
 ## 0.90.0 — 2026-11-12
 
 实时事件流 P4：预警引擎 + 页面预警流。

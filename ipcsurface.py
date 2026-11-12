@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.90.0'
+__version__ = '0.91.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/21'
@@ -4291,8 +4291,40 @@ def main(argv=None):
                         help='把扫描过程画到终端（ANSI，80 列）。借来档一律画灰的')
     parser.add_argument('--serve', type=int, metavar='PORT',
                         help='起一个本地只读页面（SSE + 快照），扫完不退出，Ctrl+C 结束')
+    parser.add_argument('--replay', metavar='JSONL',
+                        help='不扫描，回放一份事件流（配 --live / --serve 用）')
+    parser.add_argument('--replay-speed', type=float, default=1.0,
+                        help='回放倍速，默认 1.0 按录制节奏；0 = 全速')
     args = parser.parse_args(argv)
     server = None   # --serve 起的页面，只有 asar 那条分支会赋值
+
+    # 回放：不需要 asar，直接把录下来的事件喂给渲染器/页面。
+    # 前端的行为必须和实时一致——这是它唯一的 e2e 测法。
+    if args.replay:
+        import jsevents
+        bus = jsevents.EventBus(None, scan_id='replay')
+        renderer = None
+        if args.live:
+            jsevents.enable_ansi()
+            renderer = jsevents.TerminalRenderer(sys.stderr)
+            bus.add_listener(renderer.on_event)
+        if args.serve:
+            server = jsevents.EventServer(bus, host='127.0.0.1',
+                                          port=args.serve).start()
+            print(f'回放页面：{server.url}', file=sys.stderr)
+        sent = jsevents.replay(args.replay, bus, speed=args.replay_speed)
+        print(f'回放了 {sent} 条事件', file=sys.stderr)
+        if renderer is not None:
+            renderer.paint()
+        if server is not None:
+            print(f'回放页面：{server.url}（Ctrl+C 退出）', file=sys.stderr)
+            try:
+                server.serve_forever()
+            except KeyboardInterrupt:
+                pass
+            finally:
+                server.stop()
+        return 0
 
     if args.recover:
         report = inspect_leftovers(args.recover)

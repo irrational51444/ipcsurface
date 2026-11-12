@@ -304,5 +304,117 @@ class EventServerTests(unittest.TestCase):
         self.assertNotIn('id: 2', chunk)
 
 
+FIXTURES = os.path.join(ROOT, 'tests', 'fixtures', 'events')
+
+
+class ReplayTests(unittest.TestCase):
+    """P5：回放必须和当初录的那条流一模一样——seq 不许重排。"""
+
+    def path(self, name):
+        p = os.path.join(FIXTURES, name)
+        if not os.path.exists(p):
+            self.skipTest('fixture 不存在：' + name)
+        return p
+
+    def test_replay_keeps_seq_and_order(self):
+        p = self.path('normal.jsonl')
+        expected = jsevents.load_events(p)
+        got = []
+        bus = jsevents.EventBus(None)
+        bus.add_listener(got.append)
+        sent = jsevents.replay(p, bus, speed=0)
+        self.assertEqual(sent, len(expected))
+        self.assertEqual([e['seq'] for e in got], [e['seq'] for e in expected])
+        self.assertEqual([e['kind'] for e in got], [e['kind'] for e in expected])
+
+    def test_replay_drives_snapshot(self):
+        p = self.path('warnings.jsonl')
+        bus = jsevents.EventBus(None)
+        server = jsevents.EventServer(bus, port=0).start()
+        try:
+            jsevents.replay(p, bus, speed=0)
+            snap = server.state.snapshot()
+            self.assertTrue(snap['channels'], '回放后应该有通道')
+            self.assertTrue(snap['warnings'], 'warnings fixture 里应该有预警')
+        finally:
+            server.stop()
+
+    def test_crash_fixture_has_no_done(self):
+        p = self.path('crash.jsonl')
+        events = jsevents.load_events(p)
+        done = [e for e in events
+                if e['kind'] == 'lifecycle' and e['payload'].get('stage') == 'done']
+        self.assertFalse(done, 'crash fixture 不该有 done')
+
+    def test_replay_of_empty_file_returns_zero(self):
+        import tempfile
+        path = tempfile.mktemp(suffix='.jsonl')
+        open(path, 'w').close()
+        try:
+            bus = jsevents.EventBus(None)
+            self.assertEqual(jsevents.replay(path, bus, speed=0), 0)
+        finally:
+            os.unlink(path)
+
+
+class ReconcileEndToEndTests(unittest.TestCase):
+    """P5：跑一次真扫描，事件流末条统计必须和报告 JSON 逐项相等（守则 4）。"""
+
+    def test_cli_events_match_cli_report(self):
+        import subprocess
+        import tempfile
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        ev = tempfile.mktemp(suffix='.jsonl')
+        rp = tempfile.mktemp(suffix='.json')
+        try:
+            run = subprocess.run(
+                [sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                 asar, '--format', 'json', '-o', rp, '--events-out', ev],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, encoding='utf-8', errors='replace', timeout=180)
+            self.assertEqual(run.returncode, 0, (run.stderr or '')[-400:])
+            with open(rp, encoding='utf-8') as fh:
+                report = json.load(fh)
+            problems = jsevents.diff_summary(ev, report)
+            self.assertEqual(problems, [], '事件流和报告对不上：%r' % (problems,))
+        finally:
+            for path in (ev, rp):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+    def test_no_events_flag_leaves_output_identical(self):
+        """同一份输入跑两次（都不带 --events-out），输出必须字节级一致。
+
+        这条挡的是「加了实时功能之后悄悄改了默认输出」——设计约束第 5 条。
+        """
+        import subprocess
+        import tempfile
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        a = tempfile.mktemp(suffix='.json')
+        b = tempfile.mktemp(suffix='.json')
+        try:
+            for out in (a, b):
+                subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                                asar, '--format', 'json', '-o', out],
+                               capture_output=True, timeout=180)
+            with open(a, 'rb') as fh:
+                first = fh.read()
+            with open(b, 'rb') as fh:
+                second = fh.read()
+            self.assertEqual(first, second, '同一输入跑两次，输出该字节级一致')
+        finally:
+            for path in (a, b):
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+
+
 if __name__ == '__main__':
     unittest.main()
