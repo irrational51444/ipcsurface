@@ -236,6 +236,36 @@
 **这条也不写「打不通」**：拿到过 `browser_init` 的 target，就证明主进程可以被 attach，
 只是我们还没找到「停在对的时机」的办法。
 
+### 补测：`--inspect`（不带 brk）也走不通（2026-11-12）
+
+按「先低成本后高成本」的次序，又试了两条：
+
+| 尝试 | 结果 |
+| --- | --- |
+| `--inspect=PORT` + 延迟 20 秒 attach | **端口始终没开**，而且抖音进程直接退出（列表里 0 个） |
+| `--inspect-brk=PORT` + 不 kill，5/12/25/40 秒分段采样 | 全程同一个 PowerShell 启动器层（PID 不变），**40 秒都没换成 Electron** |
+
+所以之前拿到的 3 次 `browser_init` 是**特定时机**（大概是 guard 还没起来的那一下），
+不是稳定行为。反复 kill 之后，启动器接管，就再也拿不到 Electron 层了。
+
+## 两种失败模式：启动器架构对 L3 探针的两条断头路
+
+把 bilibili 和抖音放在一起看，是**两种不同的失败**，不是「都打不通」一句话能盖的：
+
+| | bilibili | 抖音 |
+| --- | --- | --- |
+| 启动器是否吃掉参数 | **完全吃掉**：`--inspect-brk` 只让 PowerShell 停下 | **部分吃掉**：偶尔让 Electron 先起来（`electron/js2c/browser_init`） |
+| attach 到的层 | 启动器（PowerShell） | 有时是 Electron 入口，有时是启动器 |
+| `process` 可用吗 | 否（`null`） | 否（`--inspect-brk` 停在最早期） |
+| 放行后 | `Cannot find context with specified id` | 同样 `Cannot find context with specified id` |
+| 稳定性 | 稳定失败（每次都 PowerShell） | 不稳定：前 3 次成功，之后全失败 |
+| 失败模式 | **参数被启动器吃掉** | **能到门口，但停不对时机** |
+
+**这两条合起来的结论**：`--inspect*` 这一层对「带启动器的 Electron 应用」不可靠——
+启动器可以（a）把参数吃了，（b）让 Electron 起在 `--inspect-brk` 停不住的位置。
+要穿透，得走「不依赖启动器参数」的路（比如 Frida 注入、或者直接找到 Electron 可执行文件
+绕过 shell 启动），**这超出 ipcsurface 当前能力边界**。
+
 ## 版本锁
 
 版本：0.86.0
