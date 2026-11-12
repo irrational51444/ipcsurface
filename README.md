@@ -251,7 +251,7 @@ python ipcsurface.py --recover out.md
 - **可信度校准**：`python scripts/calibration.py`，按证据强度档和 sink 来路档分层算精确率，照出「哪个档名不副实」
 - **运行时对齐**：`python scripts/probe_align.py probe.json app.asar`，静态认得几条运行时通道；应用通道要全对齐
 - **端到端**：`python scripts/e2e_check.py`，走装好的命令行，验 schema、口径、退出码、确定性，再跑一遍人工标注对账
-- **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限
+- **自查**：版本 / 打包元数据 / schema / 规则注册表 / 文档与实现一致 / 工作区干净 / 已知会错清单的下限；--fast 跳过真包和冒烟，116 秒降到 20 秒（CI 用，发版门禁仍跑全量）
 - 三道闸一条命令：`bash scripts/verify.sh`，CI 也跑它
 
 CI 六个任务，缺一不可：

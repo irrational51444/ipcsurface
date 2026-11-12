@@ -59,13 +59,22 @@ is now a CI job (alignment below the gate fails the build).
 ### Sink provenance tier per dangerous API
 
 `channel_sink_tiers` tags every reported dangerous API: direct / name-confirmed /
-same-file chain / ambiguous-name borrow / AST-only borrow. Hand-checked on 6 real apps:
+same-file chain / ambiguous-name borrow / AST-only borrow. `channel_sink_evidence`
+adds the receipt for each one: tier, hop count, which function names it went through,
+and the location (`file:line@char-offset` — a minified bundle is often a single line,
+so a bare line number tells you nothing). Hand-checked on 6 real apps:
 
 | Provenance tier | Right | False | Precision |
 | --- | --- | --- | --- |
 | direct / name-confirmed / chain | 18 | 0 | 100% |
 | ambiguous-name borrow | 8 | 7 | 53% |
 | AST-only borrow | 1 | 3 | 25% |
+
+**Those 18 can be cited as-is; the two borrow tiers you neither trust nor need to
+verify** — their `via` column says "same-name-ambiguous", and the md report lists
+the borrowed APIs by location in its own section. 24% precision is the honest number,
+but the review cost is different: previously 114 rows to read one by one, now the hard
+tiers are read directly and the soft ones are skipped at a glance.
 
 The more direct the path, the higher the precision — **monotone**, and the calibration
 script asserts it rather than claiming it.
@@ -205,7 +214,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 - **Calibration**: `python scripts/calibration.py` — per-tier precision on evidence strength and sink provenance, catching tiers that do not live up to their name
 - **Runtime alignment**: `python scripts/probe_align.py probe.json app.asar` — app channels must align
 - **End to end**: `python scripts/e2e_check.py` — installed CLI, schema, md/json agreement, exit codes, determinism, ground-truth scoring
-- **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list
+- **Self-check**: version, packaging metadata, schema, rule registry, docs-vs-code, clean worktree, lower bounds on the known-wrong list; --fast skips the real-app scan and smoke run (116s -> 20s, for CI; the release gate still runs everything)
 - All in one command: `bash scripts/verify.sh`, which CI runs too
 
 CI runs six jobs: `check` (Linux, gates + coverage + perf), `windows` (same gates plus Windows-specific assertions), `fuzz` (30 s atheris), `probe` (xvfb + Electron runtime alignment), `signal` (exit-code contract and SARIF), `e2e` (install and reconcile).
