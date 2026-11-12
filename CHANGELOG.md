@@ -37,7 +37,15 @@ bilibili 实测：桥接层从 1 条认不出 → 解出 **49 个通道名**（`
 `system/isWin`、`window/isPinned` 这一批）。主进程 `main/index.js` 多层包装还没理顺，
 写在 `docs/deobfuscate.md` 的边界里。需要 node；零依赖默认路径不受影响。
 
-质量问题照旧：345 用例、四道闸、覆盖率门禁。
+### 六、attach 可行性探测
+
+`scripts/probe_attach.py`：连 Electron 主进程的 inspector，只回答三件事——端口连得上吗、
+拿到的是不是主进程、`require('electron').ipcMain` 在不在。手写 WebSocket 帧，零依赖。
+bilibili 实测：`--inspect-brk` 能连但拿到的是启动器层（`process` 为 null、`no-require`），
+不带参数启动 1.5 秒退出——**探针不可用，但不是反调试**。写在 `docs/known-wrong.md` 的
+bilibili 案例里。
+
+质量问题照旧：350 用例、四道闸、覆盖率门禁。
 
 ## 0.85.0 — 2026-11-11
 
