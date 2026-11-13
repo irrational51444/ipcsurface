@@ -397,3 +397,8 @@
 
 - 变了的字段：fingerprint, unresolved_reasons
 - 理由：0.109.0 新增 encrypted-payload 归因桶与 detect_encrypted_payload；靶场没有大块 hex 所以计数为 0，报告多一个 key
+
+## 2026-11-13 15:46
+
+- 变了的字段：fingerprint
+- 理由：0.110.0 module_aliases 支持解构式 require，跨文件直接调用能跟下去；target 靶场里有解构 require 的话 channel_sinks 会变多

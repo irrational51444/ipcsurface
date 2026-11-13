@@ -606,6 +606,20 @@ def member_calls(tokens, start, end):
     return out
 
 
+def calls_name(tokens, start, end, name):
+    """span 里有没有 `name(` 这种裸调用。
+
+    只看「标识符紧跟着左括号」这一种形状。`obj.name()` 不算——那是成员调用，
+    走另一条路。宁可漏，不把成员调用误算成直接调用。
+    """
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit):
+        if tokens[i].kind == 'ident' and tokens[i].text == name:
+            if tokens[i + 1].text == '(':
+                return True
+    return False
+
+
 def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens,
                             depth=2, _visited=None):
     """跨文件跟成员调用：handler 里 `svc.read(...)`，就看那个文件里的 read。
@@ -646,6 +660,38 @@ def cross_file_member_sinks(tokens, start, end, from_rel, files_tokens,
                     out.extend(cross_file_member_sinks(
                         other, item['body_start'], item['body_end'], rel,
                         files_tokens, depth - 1, visited))
+
+    # 跨文件的另一半：具名导入的**直接调用**。
+    #   import { doSave } from './h';  doSave(p);      ← 这条以前一直是漏的
+    #   const { doSave } = require('./h'); doSave(p);
+    # 只认 local == imported 的那种。别名导入（import { a as b }）先不做——
+    # 解不清 b 到底绑到谁就直接跳过，比猜一个错的好。
+    for (local, imported), rel in targets.items():
+        if imported is None or local != imported:
+            continue
+        if not calls_name(tokens, start, end, imported):
+            continue
+        other = files_tokens.get(rel)
+        if other is None:
+            continue
+        try:
+            defs = jsparse.function_defs(other)
+        except Exception:
+            continue
+        for item in defs:
+            if item['name'] != imported:
+                continue
+            key = (rel, imported)
+            if key in visited:
+                continue
+            visited.add(key)
+            sinks = sinks_in_span(other, item['body_start'], item['body_end'])
+            if sinks:
+                out.append((rel, imported, sinks))
+            if depth > 1:
+                out.extend(cross_file_member_sinks(
+                    other, item['body_start'], item['body_end'], rel,
+                    files_tokens, depth - 1, visited))
     return out
 
 def resolve_spec(spec, from_rel, known):
@@ -755,6 +801,23 @@ def module_aliases(tokens):
                     k -= 1
             elif tokens[j].text == '=' and j >= 1 and tokens[j - 1].kind == 'ident':
                 aliases.setdefault(tokens[j - 1].text, (source.text, None))
+            elif tokens[j].text == '=' and j >= 2 and tokens[j - 1].text == '}':
+                # `const { doSave } = require('./h')`——等式左边是解构，不是单个名字。
+                # 这个分支以前是漏的：`=` 前面是 `}`，走不到上面那条 ident 分支，
+                # 结果整条别名都没解出来，后面的「跨文件直接调用」全跟不下去。
+                depth = 0
+                k = j - 1
+                while k >= 0:
+                    if tokens[k].text == '}':
+                        depth += 1
+                    elif tokens[k].text == '{':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    elif tokens[k].kind == 'ident' and depth == 1:
+                        aliases.setdefault(tokens[k].text,
+                                           (source.text, tokens[k].text))
+                    k -= 1
             continue
         # import { a, b } from './x'  /  import X from './x'
         source = tokens[i + 1] if i + 1 < len(tokens) and tokens[i + 1].kind == 'string' else None

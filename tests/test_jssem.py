@@ -138,5 +138,71 @@ class CrossFileTests(unittest.TestCase):
         self.assertIn('src/util.js', [item[0] for item in found])
 
 
+class CrossFileDirectCallTests(unittest.TestCase):
+    """具名导入的直接调用要能跨文件跟下去。
+
+    `import { doSave } from './h'; doSave(p)` 这条以前一直是漏的：
+    `module_aliases` 解不出解构式 require（`=` 前面是 `}`，走不到 ident 分支），
+    于是下游一个名字都拿不到。
+    """
+
+    MAIN = """
+const {ipcMain} = require('electron');
+const { doSave } = require('./helper');
+ipcMain.on('save', (e, p) => { doSave(p); });
+"""
+
+    HELPER = """
+const fs = require('fs');
+function doSave(q) { fs.writeFileSync(q, 'x'); }
+module.exports = { doSave };
+"""
+
+    def test_destructured_require_yields_alias(self):
+        import jssem
+        import jsparse
+        tokens = jsparse.tokenize(self.MAIN)
+        aliases = jssem.module_aliases(tokens)
+        self.assertIn('doSave', aliases, '解构式 require 必须解出本地名')
+        self.assertEqual(aliases['doSave'][1], 'doSave')
+
+    def test_direct_call_reaches_other_file(self):
+        import jssem
+        import jsparse
+        mt = jsparse.tokenize(self.MAIN)
+        ht = jsparse.tokenize(self.HELPER)
+        files = {'main.js': mt, 'helper.js': ht}
+        reg = jsparse.ipc_registrations(mt, {}, set())[0]
+        sinks = jssem.cross_file_member_sinks(
+            mt, reg['span'][0], reg['span'][1], 'main.js', files)
+        self.assertTrue(sinks, '跨文件直接调用必须跟得下去')
+        files_hit = [s[0] for s in sinks]
+        self.assertIn('helper.js', files_hit)
+
+    def test_member_call_still_works(self):
+        """别把原来那条路弄坏。"""
+        import jssem
+        import jsparse
+        main = """
+const {ipcMain} = require('electron');
+const svc = require('./svc');
+ipcMain.on('save', (e, p) => { svc.doSave(p); });
+"""
+        # 用函数声明写，不用 `exports.x = function`——`function_defs` 只认声明，
+        # 那是另一条已知边界，不该混进这个测试里。
+        svc = """
+const fs = require('fs');
+function doSave(q) { fs.writeFileSync(q, 'x'); }
+exports.doSave = doSave;
+"""
+        mt = jsparse.tokenize(main)
+        st = jsparse.tokenize(svc)
+        files = {'main.js': mt, 'svc.js': st}
+        reg = jsparse.ipc_registrations(mt, {}, set())[0]
+        sinks = jssem.cross_file_member_sinks(
+            mt, reg['span'][0], reg['span'][1], 'main.js', files)
+        self.assertTrue(sinks, '成员调用那条路不能坏')
+
+
 if __name__ == '__main__':
     unittest.main()
