@@ -427,3 +427,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.115.0 新增 docs/audit-obsidian.md 与 terminology 里 direct 定义改准；报告字段不变
+
+## 2026-11-13 17:10
+
+- 变了的字段：fingerprint
+- 理由：0.116.0 audit-obsidian.md 补成完整版（25 条全覆盖）+ CHANGELOG；报告字段不变
