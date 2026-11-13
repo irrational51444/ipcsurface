@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.108.0'
+__version__ = '0.109.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -1199,6 +1199,30 @@ def attach_poke(verdicts, gated=(), swallowed=(), other=()):
             state = 'untested'
         out[name] = {'verdict': verdict, 'poke': state}
     return out
+
+
+def detect_encrypted_payload(files, min_run=4096):
+    """找大块的、看起来被编码过的载荷。
+
+    这不是「猜它加密了」——是**量出来的**：一段连续的十六进制字符超过 4 KB，
+    正常人不会手写这种东西。碰到它，静态就到这里为止，后面解不开。
+
+    报出来比不报强：静默算不出来，读报告的人以为「这个包没有别的通道」；
+    写清楚「这里有一块 3 MB 的 hex，我打不开」，他才知道该去找谁。
+    """
+    import re as _re
+    hits = []
+    hex_run = _re.compile(r'[0-9a-fA-F]{%d,}' % min_run)
+    for rel, blob in files.items():
+        if not blob or len(blob) < min_run:
+            continue
+        text = blob.decode('utf-8', 'ignore')
+        if len(text) < min_run:
+            continue
+        m = hex_run.search(text)
+        if m:
+            hits.append({'at': rel, 'kind': 'hex', 'size': len(m.group(0))})
+    return hits
 
 
 def detect_obfuscation(blob, rel):
@@ -4187,6 +4211,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                                          % (_ch, _api, _step.get('hops')))
         depth_capped = len(depth_samples)
 
+        encrypted = detect_encrypted_payload(files)
         harvested = facts.get('harvested') or []
         seen_names = set(facts.get('channels') or [])
         # harvested 是 {名字: 信息} 的字典，不是列表——踩过一次，
@@ -4219,6 +4244,13 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 'samples': depth_samples[:5],
                 'what': '调用链撞到跳数上限（%d 跳）就停了，'
                         '后面还有没有危险 API，静态这条看不见' % depth_limit,
+            },
+            'encrypted-payload': {
+                'count': len(encrypted),
+                'samples': ['%s  一块 %d 字节的 %s' % (e['at'], e['size'], e['kind'])
+                            for e in encrypted[:5]],
+                'what': '这里有成块的编码过的载荷（hex 长串），静态解不开；'
+                        '不是「没有通道」，是「这段看不见」',
             },
             'harvested-namespaced': {
                 'count': len(namespaced_only),

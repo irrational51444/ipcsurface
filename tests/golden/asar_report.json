@@ -273,7 +273,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.108.0",
+    "version": "0.109.0",
     "schema": "ipcsurface/asar/24",
     "params": {},
     "channels": [
@@ -307,6 +307,11 @@
       "count": 0,
       "samples": [],
       "what": "调用链撞到跳数上限（4 跳）就停了，后面还有没有危险 API，静态这条看不见"
+    },
+    "encrypted-payload": {
+      "count": 0,
+      "samples": [],
+      "what": "这里有成块的编码过的载荷（hex 长串），静态解不开；不是「没有通道」，是「这段看不见」"
     },
     "harvested-namespaced": {
       "count": 0,

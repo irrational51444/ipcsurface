@@ -2,6 +2,36 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.109.0 — 加密载荷，现在会量出来报出去
+
+bilibili 那种壳，静态永远进不去。以前是**静默算不出来**——读报告的人会以为
+「这个包没有别的通道」。
+
+现在加 `detect_encrypted_payload`：扫每个文件，找长度超过 4096 的连续十六进制串。
+找到就进 `unresolved_reasons['encrypted-payload']`，**带上位置和字节数**。
+
+```
+| `encrypted-payload` | 1 | main/.biliapp  一块 3145728 字节的 hex |
+```
+
+**这不是「猜它加密了」，是量出来的。** 正常人不会手写 3 MB 的十六进制字符。
+
+### 意义：盲区从「不知道」变成「知道在哪」
+
+看见的通道数没变。但读报告的人从此知道：这包里有一块 3 MB 的东西我打不开，
+**那后面可能还有通道，只是我看不见**。
+
+这两种说法的差别，就是「没看见」和「看见了但读不出」的差别——后者能告诉人
+该去找谁。
+
+### 11 个归因，现在接了 6 个
+
+`runtime-computed-name`、`harvested-only`、`harvested-namespaced`、
+`dynamic-registration`、`cross-file-depth-exceeded`、`encrypted-payload`。
+
+440 用例、四道闸。
+
+
 ## 0.108.0 — 纯字面量拼接，现在折得出来
 
 `ipcMain.on('dyn-' + 'save', ...)` 这种，两边都是写死的字符串，静态**完全看得见**，

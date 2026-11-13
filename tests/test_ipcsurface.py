@@ -3793,5 +3793,36 @@ class TokenFoldTests(unittest.TestCase):
         self.assertEqual(regs[0].get('first_expr'), '')
 
 
+class EncryptedPayloadTests(unittest.TestCase):
+    """成块的编码载荷要报出来：不是「没有通道」，是「这段看不见」。"""
+
+    def test_big_hex_run_is_reported(self):
+        import ipcsurface as ipc
+        blob = b"const x = '" + b"a1" * 3000 + b"';"
+        hits = ipc.detect_encrypted_payload({'a.js': blob})
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]['kind'], 'hex')
+        self.assertGreaterEqual(hits[0]['size'], 4096)
+
+    def test_short_hex_is_ignored(self):
+        import ipcsurface as ipc
+        blob = b"const x = 'a1b2c3';"
+        self.assertEqual(ipc.detect_encrypted_payload({'a.js': blob}), [])
+
+    def test_tiny_file_is_skipped(self):
+        import ipcsurface as ipc
+        self.assertEqual(ipc.detect_encrypted_payload({'a.js': b'x'}), [])
+
+    def test_reason_bucket_exists(self):
+        import ipcsurface as ipc
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, _n, _b = ipc.analyse_asar(asar)
+        reasons = facts.get('unresolved_reasons') or {}
+        self.assertIn('encrypted-payload', reasons)
+        self.assertIn('what', reasons['encrypted-payload'])
+
+
 if __name__ == '__main__':
     unittest.main()
