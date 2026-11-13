@@ -3937,5 +3937,90 @@ function h(e, i) {
         self.assertEqual(self.hits(src), [], '常量路径不许算成脏')
 
 
+class InterprocTaintTests(unittest.TestCase):
+    """L3：脏实参传进本文件另一个函数，跟进去看它能不能到危险参数。
+
+    单参数那条以前是哑的：`assignments` 为了排除 event 把第一个参数剔了，
+    结果 `params` 只有一项时 `live` 直接空掉，整片不工作。修完之后才动。
+    """
+
+    SRC = """
+const fs = require('fs');
+function doSave(p, extra) { fs.writeFileSync(p, 'x'); }
+function h(e, i, c) {
+  doSave(i);
+  doSave('fixed');
+}
+"""
+
+    def build(self):
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(self.SRC)
+        defs = jsparse.function_defs(toks)
+        return toks, defs, jssem
+
+    def test_dirty_arg_crosses_into_callee(self):
+        toks, defs, jssem = self.build()
+        d0 = [x for x in defs if x['name'] == 'h'][0]
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'],
+                                  d0.get('params') or [])
+        dirty = jssem.tainted_names(table)
+        hits = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'], dirty, defs)
+        self.assertTrue(hits, '脏实参跨函数必须跟得下去')
+        names = [(h[0], h[1]) for h in hits]
+        self.assertIn(('doSave', 'writeFileSync'), names)
+
+    def test_single_param_function_still_works(self):
+        """只有一个形参时 `p` 必须算脏——event 排除规则不能把这种也剔掉。"""
+        toks, defs, jssem = self.build()
+        d1 = [x for x in defs if x['name'] == 'doSave'][0]
+        hits = jssem.flows_into_danger(toks, d1['body_start'], d1['body_end'], ['p'])
+        self.assertTrue(hits, '单参数函数里 p 必须是脏的')
+
+    def test_clean_arg_does_not_cross(self):
+        src = """
+const fs = require('fs');
+function doSave(p) { fs.writeFileSync(p, 'x'); }
+function h(e, i) {
+  doSave('fixed');
+}
+"""
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [x for x in defs if x['name'] == 'h'][0]
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'],
+                                  d0.get('params') or [])
+        dirty = jssem.tainted_names(table)
+        hits = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'], dirty, defs)
+        self.assertEqual(hits, [], '干净实参不许跨函数报')
+
+    def test_depth_limit_stops(self):
+        src = """
+const fs = require('fs');
+function c3(p) { fs.writeFileSync(p, 'x'); }
+function c2(p) { c3(p); }
+function c1(p) { c2(p); }
+function h(e, i) { c1(i); }
+"""
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [x for x in defs if x['name'] == 'h'][0]
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'],
+                                  d0.get('params') or [])
+        dirty = jssem.tainted_names(table)
+        one = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'], dirty,
+                                    defs, depth=1)
+        three = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'], dirty,
+                                      defs, depth=3)
+        # h → c1 → c2 → c3：writeFileSync 在第四层，所以要 depth=3 才够
+        self.assertEqual(one, [], 'depth=1 不该穿两层')
+        self.assertTrue(three, 'depth=3 应该跟到 c3 里的 writeFileSync')
+
+
 if __name__ == '__main__':
     unittest.main()

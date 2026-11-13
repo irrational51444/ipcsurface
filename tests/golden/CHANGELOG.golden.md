@@ -447,3 +447,8 @@
 
 - 变了的字段：fingerprint
 - 理由：channel_path_taint 新增（L2）；assignments 不再把 event 参数算脏、await 返回值不继承参数；channel_tainted 结果变少
+
+## 2026-11-13 22:39
+
+- 变了的字段：fingerprint
+- 理由：0.120.0 assignments 单参数不再被 event 规则剔空（L3 依赖它）；channel_tainted 结果可能变

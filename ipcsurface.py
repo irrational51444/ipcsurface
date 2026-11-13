@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.119.0'
+__version__ = '0.120.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -2246,10 +2246,17 @@ def channel_taint_map(files, max_files=12):
             try:
                 params = handler_params(tokens, span[0], span[1])
                 flows = jssem.flows_into_danger(tokens, span[0], span[1], params)
+                # L3：同一个包里，干净值经过一次本文件函数调用之后还脏不脏。
+                table = jssem.assignments(tokens, span[0], span[1], params)
+                dirty = jssem.tainted_names(table)
+                deep = jssem.interproc_taint(tokens, span[0], span[1], dirty, defs)
             except Exception:
                 continue
             if flows:
                 out.setdefault(reg['channel'], set()).update(flows)
+            if deep:
+                for _fn, _api, _arg, _line in deep:
+                    out.setdefault(reg['channel'], set()).add((_api, _arg, _line))
     return {name: sorted(set(v)) for name, v in out.items()}
 
 

@@ -61,7 +61,7 @@ def assignments(tokens, start, end, params):
     把它算脏会连锁传播出去：`event.sender` → 窗口 → 对话框返回值 → 路径，
     整条链在技术上成立，语义上全错。obsidian 的 `open-file` 就是这么被误报的。
     """
-    live = list(params)[1:] if len(params) > 1 else []
+    live = list(params)[1:] if len(params) > 1 else list(params)
     table = {name: [None] for name in live}   # None 表示「外部来的」
     i = start
     while i < end:
@@ -985,6 +985,80 @@ def path_taint(tokens, start, end, tainted):
                     dirty.append('..')
         if dirty:
             hits.append((tok.text, dirty, tok.line))
+    return hits
+
+
+def _split_args(tokens, open_at):
+    """把 `(` 和 `)` 之间的实参按顶层逗号切开，返回 [[token...], ...]。"""
+    close = _close_paren(tokens, open_at)
+    args, current, depth = [], [], 0
+    for tok in tokens[open_at + 1:close]:
+        if tok.text in ('(', '[', '{'):
+            depth += 1
+        elif tok.text in (')', ']', '}'):
+            depth -= 1
+        if tok.text == ',' and depth == 0:
+            args.append(current)
+            current = []
+            continue
+        current.append(tok)
+    if current:
+        args.append(current)
+    return args, close
+
+
+def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None):
+    """L3：脏实参传进本文件里另一个函数，跟进去看它能不能到危险参数。
+
+    只跟两种被调者：本文件里有 `function name()` 声明的、或 `const name = ...`
+    这类能认出名字的。认不出名字的调用（`obj.m()`、`factory()` 返回值）一律跳过
+    ——跟不到就停，不猜。
+
+    形参和实参按**位置**对齐。实参不是裸名字（比如 `a.b`、`f(x)`）的位置，
+    对应形参不标脏：那需要更细的表达式分析，这层不做。
+
+    返回 [(被调函数名, 危险 API, 脏形参, 行号)]。
+    """
+    if depth <= 0:
+        return []
+    seen = set() if _seen is None else _seen
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], d)
+    hits = []
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit):
+        tok = tokens[i]
+        if tok.kind != 'ident' or tokens[i + 1].text != '(':
+            continue
+        target = by_name.get(tok.text)
+        if target is None:
+            continue
+        key = (target['body_start'], target['body_end'])
+        if key in seen:
+            continue
+        args, close = _split_args(tokens, i + 1)
+        fparams = list(target.get('params') or [])
+        dirty_params = []
+        for pos, arg in enumerate(args):
+            if pos >= len(fparams):
+                break
+            if len(arg) == 1 and arg[0].kind == 'ident' and arg[0].text in tainted:
+                dirty_params.append(fparams[pos])
+        if not dirty_params:
+            continue
+        seen.add(key)
+        inner = flows_into_danger(tokens, target['body_start'], target['body_end'],
+                                  dirty_params)
+        for api, arg, line in inner:
+            hits.append((tok.text, api, arg, line))
+        if depth > 1:
+            hits.extend(
+                (name, api, arg, ln2)
+                for name, api, arg, ln2 in interproc_taint(
+                    tokens, target['body_start'], target['body_end'],
+                    set(dirty_params), defs, depth - 1, seen)
+            )
     return hits
 
 
