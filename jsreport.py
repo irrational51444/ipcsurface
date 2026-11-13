@@ -1145,6 +1145,28 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                    '没做语义猜测——猜错了比不分档更坏。')
         out.append('')
 
+    graph = facts.get('module_graph') or {}
+    if graph:
+        out.append('## 打包文件里的模块表')
+        out.append('')
+        out.append('压缩产物把几十上百个源文件压进同一份 JS。不建这张表，跨模块的东西'
+                   '就都是黑的：`n(8813).CONST` 里的 8813 是谁，没人知道。')
+        out.append('')
+        out.append('| 文件 | 模块 | 依赖边 | 被引用的 | 引用别人的 | 写法 |')
+        out.append('| --- | --- | --- | --- | --- | --- |')
+        for rel in sorted(graph, key=lambda k: -graph[k]['modules']):
+            item = graph[rel]
+            shapes = '、'.join(f'{k}×{v}' for k, v in sorted(item['shapes'].items()))
+            out.append('| `%s` | %d | %d | %d | %d | %s |'
+                       % (rel, item['modules'], item['edges'], item['targets'],
+                          item['sources'], shapes))
+        out.append('')
+        out.append('> 模块只认「数字 id 加函数体」这一种形状。`case 0:t=function(){...}`'
+                   ' 这种 `switch` 标签长得一样，靠上下文排除——不排除会凭空多出模块。'
+                   ' 依赖边只连「调本模块第三个形参、实参是纯数字、且那个 id 真的存在」，'
+                   '连不上的丢掉，不猜。')
+        out.append('')
+
     out.append('## 没看清的地方')
     out.append('')
     out.append('这张表只能证明哪些看清了，不能证明没有什么。')

@@ -512,3 +512,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：path_taint 的 verdict 现在会顺着块作用域解根，root_unknown 可能变成 anchored，判定分布在同一个 schema 号下变了，schema 从 asar/31 升到 asar/32。下游若缓存了旧的 verdict 结果需要重跑，字符串取值本身没增删。
+
+## 2026-11-14 02:25
+
+- 变了的字段：fingerprint, schema
+- 理由：新增 facts 顶层键 module_graph（每个打包文件的模块数、依赖边、写法分布），schema 从 asar/32 升到 asar/33。下游按 asar/32 解包看不到这个键，需要先校验 schema 再读；其余字段没有变化。

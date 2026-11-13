@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/32')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/33')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4167,6 +4167,46 @@ class RealShapeCorpusTests(unittest.TestCase):
         rows = self.facts()['frame']
         kinds = [r[1] for r in rows[0][3]]
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
+
+
+class ModuleGraphTests(unittest.TestCase):
+    """打包文件里的模块表：谁是谁，谁 require 了谁。"""
+
+    def parse(self, src):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        return toks, jssem.find_modules(toks)
+
+    def test_arrow_module_with_params(self):
+        _toks, mods = self.parse('var t={7:(e,n,r)=>{}}')
+        self.assertEqual([m[0] for m in mods], ['7'])
+        self.assertEqual(mods[0][1], ['e', 'n', 'r'])
+
+    def test_single_parameter_arrow(self):
+        _toks, mods = self.parse('var t={7:e=>{}}')
+        self.assertEqual(mods[0][1], ['e'])
+
+    def test_function_form(self):
+        _toks, mods = self.parse('var t={7:function(e,n){}}')
+        self.assertEqual(mods[0][1], ['e', 'n'])
+
+    def test_switch_label_is_not_a_module(self):
+        _toks, mods = self.parse('switch(x){case 0:t=function(e){}}')
+        self.assertEqual(mods, [], '`case 0:t=function` 长得像模块，但它不是')
+
+    def test_edges_follow_the_third_parameter(self):
+        import jssem
+
+        toks, mods = self.parse('var t={1:(e,n,r)=>{r(2)},2:(e,n,r)=>{}}')
+        self.assertEqual(jssem.module_edges(toks, mods), [('1', '2')])
+
+    def test_edge_to_missing_module_is_dropped(self):
+        import jssem
+
+        toks, mods = self.parse('var t={1:(e,n,r)=>{r(99)}}')
+        self.assertEqual(jssem.module_edges(toks, mods), [], '连不到真模块的边要丢掉')
 
 
 class ScopeResolveTests(unittest.TestCase):

@@ -184,6 +184,125 @@ def state_writes_interproc(tokens, start, end, tainted, defs, depth=2):
     return out
 
 
+MODULE_SHAPES = ('arrow', 'named-arrow', 'function', 'assigned-function')
+
+
+def find_modules(tokens):
+    """webpack 模块表：`134:(e,t,n)=>{...}` / `12:e=>{...}` / `7:function(){...}`。
+
+    压缩产物里模块就是「一个数字 id 加一个函数体」，所以配平花括号就能拿到边界。
+    四种写法都认：
+
+      - `134:(e,t,n)=>{`   箭头函数带参数表
+      - `12:e=>{`          箭头函数单参
+      - `7:function(e,t,n){`
+      - `7:e=function(e){` 先赋给形参再写
+
+    返回 [(id, params, body_open, body_close, shape)]，body_open 是 `{` 的下标。
+    认不出函数体的 id 直接跳过——宁缺，不乱给一个边界。
+    """
+    out = []
+    n = len(tokens)
+    i = 0
+    while i < n - 4:
+        tok = tokens[i]
+        if not tok.text.isdigit() or tokens[i + 1].text != ':':
+            i += 1
+            continue
+        # `switch` 的 `case 0:t=function(){...}` 和模块表长得一样。
+        # 模块 id 前面只可能是 `{` 或 `,`；`case` 是个标识符，正好把它挡掉。
+        if i == 0 or tokens[i - 1].text not in ('{', ','):
+            i += 1
+            continue
+        j = i + 2
+        shape = None
+        params = []
+        if tokens[j].kind == 'ident' and tokens[j + 1].text == '=' \
+                and tokens[j + 2].text == 'function':
+            shape = 'assigned-function'
+            j += 2
+        if tokens[j].text == 'function':
+            shape = shape or 'function'
+            j += 1
+            if tokens[j].text == '(':
+                close = _close_paren(tokens, j)
+                params = [t.text for t in tokens[j + 1:close] if t.kind == 'ident']
+                j = close + 1
+        elif tokens[j].text == '(':
+            close = _close_paren(tokens, j)
+            params = [t.text for t in tokens[j + 1:close] if t.kind == 'ident']
+            j = close + 1
+            if tokens[j].text != '=>':
+                i += 1
+                continue
+            shape = shape or 'arrow'
+            j += 1
+        elif tokens[j].kind == 'ident':
+            params = [tokens[j].text]
+            j += 1
+            if tokens[j].text != '=>':
+                i += 1
+                continue
+            shape = shape or 'named-arrow'
+            j += 1
+        else:
+            i += 1
+            continue
+        if j >= n or tokens[j].text != '{':
+            i += 1
+            continue
+        depth = 0
+        end = None
+        for p in range(j, n):
+            if tokens[p].text == '{':
+                depth += 1
+            elif tokens[p].text == '}':
+                depth -= 1
+                if depth == 0:
+                    end = p
+                    break
+        if end is None:
+            i += 1
+            continue
+        out.append((tok.text, params, j, end, shape))
+        i = end
+    return out
+
+
+def module_edges(tokens, modules):
+    """模块之间的依赖边：模块里的 `n(8813)` 表示它 require 了 8813。
+
+    只认「调用名就是本模块的第三个形参」这一种形状（webpack 的惯例），
+    并且只连到确实存在的模块 id 上。连不上的就丢掉，不猜。
+    """
+    by_id = {mid for mid, _p, _o, _c, _s in modules}
+    params_of = {mid: params for mid, params, _o, _c, _s in modules}
+    edges = []
+    for mid, params, body_open, body_close, _shape in modules:
+        if len(params) < 3:
+            continue
+        req = params[2]
+        for k in range(body_open + 1, body_close - 3):
+            if tokens[k].kind != 'ident' or tokens[k].text != req:
+                continue
+            if tokens[k + 1].text != '(' or not tokens[k + 2].text.isdigit():
+                continue
+            if tokens[k + 3].text != ')':
+                continue
+            target = tokens[k + 2].text
+            if target in by_id:
+                edges.append((mid, target))
+    return sorted(set(edges))
+
+
+def module_of(modules, index):
+    """某个 token 属于哪个模块；不在任何模块里返回 None。"""
+    for mid, _params, body_open, body_close, _shape in modules:
+        if body_open <= index <= body_close:
+            return mid
+    return None
+
+
 def _enclosing_call(tokens, idx, start):
     """这个位置落在哪个调用的括号里：`rmSync(F.join(v, C.icon))` 里的 `C.icon`
     落在 `F.join` 的实参里。

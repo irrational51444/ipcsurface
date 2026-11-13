@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.132.0'
+__version__ = '0.133.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/32'
+SCHEMA_VERSION = 'ipcsurface/asar/33'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2347,6 +2347,51 @@ VERDICT_LABEL = {
 }
 
 
+def module_graph_map(files, max_files=8):
+    """每个打包文件里的模块表：模块数、依赖边、各种写法各几个。
+
+    压缩产物把几十上百个源文件压进同一份 JS：`{134:(e,t,n)=>{...},...}`。
+    不建这张表，跨模块的东西就都是黑的——`n(8813).CONST` 里的 8813 是谁，
+    没有人知道。
+
+    只处理够大的 JS 文件：小文件里没有模块表，白跑一遍 tokenize。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys()
+             if rel.endswith('.js') and files.get(rel)
+             and len(files[rel]) >= 50_000]
+    if not names:
+        return None
+    names.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in names[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+            modules = jssem.find_modules(tokens)
+            edges = jssem.module_edges(tokens, modules) if modules else []
+        except Exception:
+            continue
+        if not modules:
+            continue
+        shapes = {}
+        for _mid, _p, _o, _c, shape in modules:
+            shapes[shape] = shapes.get(shape, 0) + 1
+        out[rel] = {
+            'modules': len(modules),
+            'edges': len(edges),
+            'targets': len({to for _src, to in edges}),
+            'sources': len({src for src, _to in edges}),
+            'shapes': shapes,
+            'ids': sorted(mid for mid, *_ in modules)[:40],
+        }
+    return out or None
+
+
 def code_snippet(text, offset, span=48, limit=None, floor=None):
     """给一个字符偏移，切出可读的一小段源码。
 
@@ -4508,6 +4553,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_tainted'] = channel_taint_map(files)
         facts['channel_path_taint'] = channel_path_taint_map(files)
         facts['channel_state_writes'] = channel_state_writes_map(files)
+        facts['module_graph'] = module_graph_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。
         # 经过一次函数处理（比如 F.join(v, i)）就不算——那要内建语义，是另一层。
