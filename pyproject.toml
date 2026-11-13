@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ipcsurface"
-version = "0.116.0"
+version = "0.117.0"
 description = "把 REA 的 Electron 证据包压成一页能力面清单"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -432,3 +432,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.116.0 audit-obsidian.md 补成完整版（25 条全覆盖）+ CHANGELOG；报告字段不变
+
+## 2026-11-13 17:13
+
+- 变了的字段：fingerprint
+- 理由：0.117.0 新增交付型审计报告模板 docs/audit-report-template.md；报告字段不变
