@@ -452,3 +452,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.120.0 assignments 单参数不再被 event 规则剔空（L3 依赖它）；channel_tainted 结果可能变
+
+## 2026-11-13 23:09
+
+- 变了的字段：fingerprint
+- 理由：0.121.0 报告文档更新与版本号；报告字段不变
