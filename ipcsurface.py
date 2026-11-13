@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.126.0'
+__version__ = '0.127.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/27'
+SCHEMA_VERSION = 'ipcsurface/asar/28'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2424,7 +2424,7 @@ def channel_state_writes_map(files, max_files=12):
                         'write_at': off,
                         'write_snippet': code_snippet(src, off, limit=body_end,
                                                       floor=body_start),
-                        'reads': [{'at': r[0], 'kind': r[1],
+                        'reads': [{'at': r[0], 'kind': r[1], 'call': r[2],
                                    'before': r[0] < off,
                                    'snippet': code_snippet(src, r[0], limit=body_end,
                                                            floor=body_start)}

@@ -53,6 +53,39 @@ def _end_of_statement(tokens, i, limit):
     return limit
 
 
+_NOT_A_CALL = frozenset((
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'delete',
+    'do', 'else', 'with', 'function', 'void', 'await', 'yield', 'in', 'of',
+))
+
+
+def _enclosing_call(tokens, idx, start):
+    """这个位置落在哪个调用的括号里：`rmSync(F.join(v, C.icon))` 里的 `C.icon`
+    落在 `F.join` 的实参里。
+
+    往回找第一个没闭合的 `(`，再看它前面是不是函数名。找不到就是 None——
+    返回值不猜，只说「不在调用里」。成员调用的名字拼成 `ns.func`。
+    """
+    depth = 0
+    for j in range(idx - 1, start - 1, -1):
+        text = tokens[j].text
+        if text == ')':
+            depth += 1
+        elif text == '(':
+            if depth == 0:
+                k = j - 1
+                if k < 0 or tokens[k].kind != 'ident':
+                    return None
+                if tokens[k].text in _NOT_A_CALL:
+                    return None
+                name = tokens[k].text
+                if k >= 2 and tokens[k - 1].text == '.' and tokens[k - 2].kind == 'ident':
+                    name = tokens[k - 2].text + '.' + name
+                return name
+            depth -= 1
+    return None
+
+
 def state_writes(tokens, start, end, tainted):
     """外部值落进对象字段的地方：`C.icon = i`，以及同体内读这个字段的位置。
 
@@ -100,7 +133,8 @@ def state_writes(tokens, start, end, tainted):
         # `delete C.icon` 不是读，是清空。混在一起会让人以为有四处用到了它。
         # token 序列是 delete(ident) C(ident) . icon(ident)，所以往回数三格。
         kind = 'delete' if i >= 3 and tokens[i - 3].text == 'delete' else 'read'
-        reads.setdefault(tok.text, []).append((tok.start, kind))
+        reads.setdefault(tok.text, []).append(
+            (tok.start, kind, _enclosing_call(tokens, i, start)))
     out = [(field, src, off, tuple(sorted(set(reads.get(field, [])))))
            for field, src, off in writes.values()]
     out.sort(key=lambda r: (r[2], r[0]))

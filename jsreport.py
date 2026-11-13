@@ -1088,7 +1088,9 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                 for item in reads:
                     where = '写入**之前**，用的是上一次请求留下的值' if item.get('before') \
                         else '写入之后'
-                    out.append(f'    - 读（{where}）：{snippet(item["snippet"])}')
+                    call = item.get('call')
+                    inside = f'，在 `{call}(...)` 的实参里' if call else ''
+                    out.append(f'    - 读（{where}{inside}）：{snippet(item["snippet"])}')
                 for item in deletes:
                     out.append(f'    - 删：{snippet(item["snippet"])}')
                 if not reads and not deletes:

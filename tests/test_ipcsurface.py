@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/27')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/28')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4172,12 +4172,22 @@ class StateWriteTests(unittest.TestCase):
         rows, src = self.analyse('if (C.icon) { rm(C.icon); } C.icon = i;')
         reads = [r for r in self.non_empty(rows[0][3], '同体内的读点') if r[1] == 'read']
         self.assertEqual(len(reads), 2, reads)
-        for off, _kind in reads:
+        for off, _kind, _call in reads:
             self.assertEqual(src[off:off + 4], 'icon')
+
+    def test_read_inside_a_call_reports_the_caller(self):
+        rows, _ = self.analyse('C.icon = i; rmSync(F.join(v, C.icon));')
+        calls = [call for _off, kind, call in rows[0][3] if kind == 'read']
+        self.assertEqual(calls, ['F.join'], '读点落在 F.join 的实参里，要报出来')
+
+    def test_read_outside_a_call_has_no_caller(self):
+        rows, _ = self.analyse('C.icon = i; if (C.icon) { done(); }')
+        calls = [call for _off, kind, call in rows[0][3] if kind == 'read']
+        self.assertEqual(calls, [None], '不在调用实参里的读，不编一个调用名')
 
     def test_delete_is_not_counted_as_a_read(self):
         rows, _ = self.analyse('C.icon = i; delete C.icon;')
-        kinds = [kind for _off, kind in rows[0][3]]
+        kinds = [kind for _off, kind, _call in rows[0][3]]
         self.assertEqual(kinds, ['delete'], 'delete 是清空，不是读')
 
     def test_write_only_has_no_read_points(self):

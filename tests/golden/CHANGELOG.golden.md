@@ -482,3 +482,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：channel_state_writes 的每条读点多了 kind（read/delete）和 before（是否在写入点之前）两个字段，旧的读点只有 at 和 snippet，schema 从 asar/26 升到 asar/27。下游按 asar/26 取读点时会把 delete 也当成读，需先校验 schema 再按 kind 过滤。
+
+## 2026-11-14 01:37
+
+- 变了的字段：fingerprint, schema
+- 理由：channel_state_writes 的每条读点多了 call 字段（落在哪个调用的实参里，不在调用里为 null），schema 从 asar/27 升到 asar/28。下游若按 asar/27 取读点拿不到调用名，需先校验 schema。
