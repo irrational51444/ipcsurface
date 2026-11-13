@@ -497,3 +497,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：channel_state_writes 的每条多了 via 字段（写入发生在哪个被调函数里，直接写为 null），用来标出写和读被拆到两个函数的形状，schema 从 asar/29 升到 asar/30。下游按 asar/29 取不到 via，需先校验 schema。
+
+## 2026-11-14 02:05
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.130.0，报告字段没有任何变化；golden 快照里的 version 字段跟着变，下游按版本号做断言的适配一次即可。

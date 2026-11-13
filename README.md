@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.129.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.130.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -242,7 +242,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **481 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **486 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：python scripts/perf_check.py，固定种子造包测吞吐，低于下限 CI 红（README 的性能数字也从这个脚本复现）
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
@@ -315,7 +315,7 @@ python scripts/ast_coverage.py 在任意包上重测（输出未知节点率、�
 - 全称断言的空集合防护按语义判：内建集合操作（`len`、`sum`、`count`、`index`、`sorted`、`set`、`all`/`any`、推导式、空容器）算集合自身属性；用户自定义函数、依赖外部状态的调用才算「函数返回值」，一律保守归真空。
 - 发布前跑一次 `python scripts/check_release_tag.py v<版本>`。它的 `2` 是「查不到」，不是「CI 红」。
 - `check_release_tag.py` 第一次跑就发现 `v0.62.0` 发布时 CI 是红的；该版本不追溯修改，仅记录（CHANGELOG 0.65.5）。
-- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **5 / 7**（真空断言口径）——这个数涨了就是信号。另外 2 处没走注释豁免，用的是 `non_empty()` 前置断言。
+- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **5 / 8**（真空断言口径）——这个数涨了就是信号。另外 3 处没走注释豁免，用的是 `non_empty()` 前置断言。
 
 ## 设计原则（写给以后改它的人）
 

@@ -4105,6 +4105,70 @@ function h(e, i, c) {
         self.assertIn('q', dirty)
 
 
+class RealShapeCorpusTests(unittest.TestCase):
+    """从 obsidian.asar 里原样抄下来的形状。
+
+    手写样例的问题是它们会长成我脑子里想的样子；真实压缩产物不一样：
+    逗号运算符串起来的语句、`C.icon && ...` 先读后写、`delete` 夹在中间。
+    用例跑在真形状上，改坏一点才会红。
+    """
+
+    CORPUS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'corpus', 'real-obsidian-shapes.js')
+
+    @staticmethod
+    def non_empty(items, why):
+        """对空集合说「全都满足」是平凡真，先确认非空。"""
+        assert items, f'{why}：集合是空的，接下来断言的就是空集'
+        return items
+
+    def facts(self):
+        import jsparse
+        import jssem
+
+        with open(self.CORPUS, encoding='utf-8') as fh:
+            text = fh.read()
+        toks = jsparse.tokenize(text)
+        objects = ipc.parse_object_literals(text)
+        out = {}
+        for reg in jsparse.ipc_registrations(toks, objects):
+            if not reg['channel'] or not reg.get('span'):
+                continue
+            params = ipc.handler_params(toks, reg['span'][0], reg['span'][1])
+            table = jssem.assignments(toks, reg['span'][0], reg['span'][1], params)
+            dirty = set(params) | set(jssem.tainted_names(table))
+            out[reg['channel']] = jssem.state_writes(
+                toks, reg['span'][0], reg['span'][1], dirty)
+        return out
+
+    def test_three_channels_are_found(self):
+        got = sorted(self.facts())
+        self.assertEqual(got, ['adblock-frequency', 'frame', 'set-icon'])
+
+    def test_set_icon_writes_the_field_from_the_parameter(self):
+        rows = self.non_empty(self.facts()['set-icon'],
+                              'set-icon 把参数 i 写进 C.icon，这一处不能丢')
+        field, src_name = rows[0][0], rows[0][1]
+        self.assertEqual((field, src_name), ('icon', 'i'))
+
+    def test_set_icon_reads_before_it_writes(self):
+        rows = self.facts()['set-icon']
+        reads = self.non_empty([r for r in rows[0][3] if r[1] == 'read'],
+                               'rmSync 拿 C.icon 去删文件，那是个读点')
+        self.assertTrue(all(r[0] < rows[0][2] for r in reads),
+                        '压缩产物的顺序是「先读上一轮的、再写这一轮的」')
+
+    def test_set_icon_read_sits_inside_join(self):
+        rows = self.facts()['set-icon']
+        calls = {r[2] for r in rows[0][3] if r[1] == 'read'}
+        self.assertIn('F.join', calls, 'C.icon 被拼进路径，读点落在 F.join 的实参里')
+
+    def test_delete_is_reported_apart_from_reads(self):
+        rows = self.facts()['frame']
+        kinds = [r[1] for r in rows[0][3]]
+        self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
+
+
 class InterprocStateWriteTests(unittest.TestCase):
     """The handler hands the value to a local helper, and the helper writes the field."""
 
