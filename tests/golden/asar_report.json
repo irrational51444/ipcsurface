@@ -1,5 +1,5 @@
 {
-  "schema": "ipcsurface/asar/25",
+  "schema": "ipcsurface/asar/26",
   "mode": "asar",
   "subject": "<fixture>",
   "files": 1,
@@ -273,8 +273,8 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.124.0",
-    "schema": "ipcsurface/asar/25",
+    "version": "0.125.0",
+    "schema": "ipcsurface/asar/26",
     "params": {},
     "channels": [
       "a:b"

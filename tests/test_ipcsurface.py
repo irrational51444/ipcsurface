@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/25')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/26')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4103,6 +4103,38 @@ function h(e, i, c) {
     def test_plain_assignment_unaffected(self):
         dirty = self.taint('let q = i;')
         self.assertIn('q', dirty)
+
+
+class EscapeVerdictTests(unittest.TestCase):
+    """Can join/resolve really climb out of its root? Only static facts, no guessing."""
+
+    def verdict(self, src, func='join'):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        for i, tok in enumerate(toks):
+            if tok.kind == 'ident' and tok.text == func and toks[i + 1].text == '(':
+                return jssem.join_escape_verdict(toks, i + 1, func)
+        raise AssertionError('call not found in source')
+
+    def test_literal_root_with_clean_arg_is_anchored(self):
+        self.assertEqual(self.verdict('F.join("/base", i)'), 'anchored')
+
+    def test_dotdot_in_string_escapes(self):
+        self.assertEqual(self.verdict('F.join("/base", "../x")'), 'escapes')
+
+    def test_variable_root_is_unknown(self):
+        self.assertEqual(self.verdict('F.join(v, i)'), 'root_unknown')
+
+    def test_resolve_with_absolute_escapes(self):
+        self.assertEqual(self.verdict('F.resolve(v, "/etc/passwd")', 'resolve'), 'escapes')
+
+    def test_join_with_absolute_stays_under_root(self):
+        self.assertEqual(self.verdict('F.join("/base", "/etc/passwd")'), 'anchored')
+
+    def test_windows_drive_escapes_on_resolve(self):
+        self.assertEqual(self.verdict('F.resolve(v, "C:\\\\tmp")', 'resolve'), 'escapes')
 
 
 class StateWriteTests(unittest.TestCase):

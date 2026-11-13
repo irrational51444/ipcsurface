@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.124.0'
+__version__ = '0.125.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/25'
+SCHEMA_VERSION = 'ipcsurface/asar/26'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2329,7 +2329,8 @@ def channel_path_taint_map(files, max_files=12):
                 continue
             if hits:
                 out.setdefault(reg['channel'], []).extend(hits)
-    return {name: sorted({(fn, tuple(args), line) for fn, args, line in v})
+    return {name: sorted({(fn, tuple(args), line, verdict)
+                          for fn, args, line, verdict in v})
             for name, v in out.items()}
 
 
@@ -4483,8 +4484,11 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # L2：脏值经过一次 path.join/resolve/normalize。零跳那层看不见这种情况。
         path_tainted = {}
         for _ch, _items in (facts.get('channel_path_taint') or {}).items():
-            for _fn, _args, _line in (_items or []):
-                path_tainted.setdefault(_ch, []).append('%s(%s)' % (_fn, ','.join(_args)))
+            for _row in (_items or []):
+                _fn, _args = _row[0], _row[1]
+                _verdict = _row[3] if len(_row) > 3 else 'root_unknown'
+                path_tainted.setdefault(_ch, []).append(
+                    '%s(%s):%s' % (_fn, ','.join(_args), _verdict))
 
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:

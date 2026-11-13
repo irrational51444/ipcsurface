@@ -472,3 +472,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：新增 facts 字段 channel_state_writes（外部值写进状态字段的写入点与读点），schema 从 asar/24 升到 asar/25，version 同步到 0.124.0。下游若按 asar/24 解包需先校验 schema 再取字段，未登记的消费方会直接看到新顶层键。
+
+## 2026-11-14 01:12
+
+- 变了的字段：fingerprint, schema
+- 理由：channel_path_taint 的每条记录多了第 4 项 escape verdict（escapes/anchored/root_unknown，判断 join 或 resolve 能不能真跳出根目录），三元组变四元组，schema 从 asar/25 升到 asar/26。下游若按 asar/25 解这三项会只拿到前两个元素，需先校验 schema 再取 verdict。

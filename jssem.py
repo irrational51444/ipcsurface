@@ -1086,8 +1086,53 @@ def path_taint(tokens, start, end, tainted):
                 if '..' not in dirty:
                     dirty.append('..')
         if dirty:
-            hits.append((tok.text, dirty, tok.line))
+            hits.append((tok.text, dirty, tok.line,
+                         join_escape_verdict(tokens, i + 1, tok.text)))
     return hits
+
+
+def join_escape_verdict(tokens, open_at, func='join'):
+    """`join` / `resolve` 的调用括号下标 → 能不能真跳出根目录。
+
+    只判三件静态事实，不推演运行时值：
+
+      1. 第一个实参是不是**字面量常量**——锚点得是真常量才算锚，
+         变量和调用的返回值都算「根未知」；
+      2. 有没有 `..`——字符串字面量里的，或者拼接中单独出现的两个点；
+      3. 有没有绝对路径——`/` 或 `\\` 开头，或者带盘符。
+
+    `resolve` 和 `join` 不是一回事：`resolve('/a', '/etc')` 会跳到 `/etc`，
+    `join('/a', '/etc')` 只是拼成 `/a/etc`。所以绝对路径只对 `resolve` 算逃逸。
+
+    返回 'escapes' | 'anchored' | 'root_unknown'。
+    判不出来的一律 'root_unknown'，不往有利方向猜。
+    """
+    args, _close = _split_args(tokens, open_at)
+    if not args:
+        return 'root_unknown'
+    first = args[0]
+    literal_root = len(first) == 1 and first[0].kind == 'string'
+    has_dotdot = False
+    has_absolute = False
+    for arg in args:
+        for j, tok in enumerate(arg):
+            if tok.kind == 'string':
+                body = tok.text.strip('"\'`')
+                if '..' in body:
+                    has_dotdot = True
+                if body.startswith('/') or body.startswith('\\'):
+                    has_absolute = True
+                elif len(body) > 1 and body[1] == ':' and body[0].isalpha():
+                    has_absolute = True
+            elif tok.text == '.' and j + 1 < len(arg) and arg[j + 1].text == '.':
+                has_dotdot = True
+    if has_dotdot:
+        return 'escapes'
+    if func == 'resolve' and has_absolute:
+        return 'escapes'
+    if not literal_root:
+        return 'root_unknown'
+    return 'anchored'
 
 
 def _split_args(tokens, open_at):
