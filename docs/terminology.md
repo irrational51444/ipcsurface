@@ -7,7 +7,7 @@
 
 | 本项目的词 | 行业里通常叫 | 说清什么 |
 | --- | --- | --- |
-| `direct` | **intra-procedural**（过程内） | API 调用就在处理函数体里，不跨函数边界 |
+| `direct` | **intra-procedural**（过程内） | API 调用在一跳以内（`hops ≤ 1`）。**不是「字面就在函数体里」**——处理函数调一次 `ce()`、`ce()` 里再调 `unlinkSync`，这条仍算 `direct`。审 obsidian 时就被这一点绊过，见 `docs/audit-obsidian.md` |
 | `chain` | **inter-procedural**（过程间） | 跨过一次以上函数边界，但在同一个文件内跟得到 |
 | `name_confirmed` | 双来源确证、未记录路径 | 名字级和语法树两路都报，但爬升路径没记下来 |
 | `ambiguous` | **name resolution ambiguity**（名字解析歧义） | 压缩产物里同名函数太多，跟的那一份可能不是对的 |
