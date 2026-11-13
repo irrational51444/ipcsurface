@@ -387,3 +387,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.107.0 版本号：fingerprint 里的 version 变，字段不变
+
+## 2026-11-13 15:28
+
+- 变了的字段：fingerprint
+- 理由：0.108.0 常量折叠：jsparse 加 fold_literal_concat，纯字面量拼接的注册名能折出来；报告字段不变

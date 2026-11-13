@@ -571,6 +571,34 @@ def unattributed_registrations(tokens, objects=None, samples=40, const_strings=N
             out.append((tok.line + 1, ''.join(expr)))
     return out
 
+def fold_literal_concat(tokens_slice):
+    """把 `'a' + 'b'` 这种**纯字面量**拼接折成一个字符串，折不出就返 None。
+
+    边界写死：只认 字符串 + 字符串 交替出现的形状。中间夹了变量、函数调用、
+    模板占位符，一律不折——折错一次比不折坏得多，名字错了整份清单都跟着错。
+    """
+    if not tokens_slice:
+        return None
+    parts = []
+    want_string = True
+    for tok in tokens_slice:
+        if want_string:
+            if tok.kind not in ('string', 'template'):
+                return None
+            value = _string_of(tok)
+            if value is None:
+                return None
+            parts.append(value)
+            want_string = False
+        else:
+            if tok.text != '+':
+                return None
+            want_string = True
+    if want_string:      # 结尾多了一个 +
+        return None
+    return ''.join(parts) if parts else None
+
+
 def ipc_registrations(tokens, objects=None, const_strings=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
 
@@ -620,6 +648,12 @@ def ipc_registrations(tokens, objects=None, const_strings=None):
                     if isinstance(only, str) and 0 < len(only) <= 200:
                         channel = only
                     break
+        if channel is None:
+            # 纯字面量拼接：`ipcMain.on('dyn-' + 'save', ...)`。
+            # 这是静态能看见的、也确实算得出来的东西，没理由放过。
+            folded = fold_literal_concat(first)
+            if folded:
+                channel = folded
         target, calls, guards = None, [], []
         # start_i/end_i 是 _window 的来源，必须两个分支都赋值——
         # 之前只在 else 分支赋，`ipcMain.on('x', handler)`（第二个参数是单个标识符）

@@ -3757,5 +3757,36 @@ class SummaryModeTests(unittest.TestCase):
                          '摘要 %s / 全量 %d' % (m.group(1), full_n))
 
 
+class LiteralFoldTests(unittest.TestCase):
+    """纯字面量拼接要折出来；夹了变量就不折。
+
+    折错一次比不折坏得多——名字错了整份清单都跟着错。所以边界写死：
+    只认「字符串 + 字符串」交替的形状。
+    """
+
+    def parse(self, body):
+        import jsparse
+        src = "const {ipcMain} = require('electron');\n" + body
+        return jsparse.ipc_registrations(jsparse.tokenize(src), {}, set())
+
+    def test_two_literals_fold(self):
+        regs = self.parse("ipcMain.on('dyn-' + 'save', (e) => {});")
+        self.assertEqual(regs[0]['channel'], 'dyn-save')
+
+    def test_three_literals_fold(self):
+        regs = self.parse("ipcMain.on('a' + 'b' + 'c', (e) => {});")
+        self.assertEqual(regs[0]['channel'], 'abc')
+
+    def test_variable_does_not_fold(self):
+        regs = self.parse("ipcMain.on(prefix + '-x', (e) => {});")
+        self.assertIsNone(regs[0]['channel'], '夹了变量就不许猜')
+        self.assertIn('prefix', regs[0].get('first_expr') or '')
+
+    def test_plain_literal_unaffected(self):
+        regs = self.parse("ipcMain.on('static-one', (e) => {});")
+        self.assertEqual(regs[0]['channel'], 'static-one')
+        self.assertEqual(regs[0].get('first_expr'), '')
+
+
 if __name__ == '__main__':
     unittest.main()
