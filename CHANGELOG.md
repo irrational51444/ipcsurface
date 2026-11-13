@@ -23,6 +23,17 @@ ipcMain.on(prefix + '-x', ...)      → 不折，进 dynamic-registration
 
 这是把静态盲区变小的一条真路：不是「看不见」，是「看见了但没连起来」。
 
+### 踩的两个坑
+
+**一、LiteralFoldTests 重名**：	ests/test_ipcsurface.py 里已经有这个类（测文本级的
+old_literals），我新加的 4 个用例用了同一个名字，后定义把先定义的覆盖掉了——
+4 个用例凭空消失，而总数还是绿的。**自查有一条「没有同名测试类互相覆盖」，当场抓出来。**
+改名成 TokenFoldTests，并在 docstring 里写清两层折叠的分工。
+
+**二、原有的 old_literals 早就在做了**：它在 scan_asar 的还原流程里跑，管的是
+**通道发现**；channel_sinks_map 用的是**原始文本**，所以 sink 分析这一层一直是漏的。
+新加的 old_literal_concat 补的是这一层，不是重复实现——但下次动手前该先搜一遍。
+
 436 用例、四道闸。
 
 

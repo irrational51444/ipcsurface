@@ -39,7 +39,11 @@ class RealRunTests(unittest.TestCase):
         self.assertEqual(len(probe['sites']), 4, '四条都该带位置')
 
     def test_static_sees_fewer_than_runtime(self):
-        """静态只认得字面量那条；另外三条要运行时才知道。"""
+        """静态认得字面量和字面量拼接两条；另外两条要运行时才知道。
+
+        `probe:concat` 是 `'probe:' + 'concat'`，两边都是字面量，静态应该折出来
+        ——这条以前是漏的，加了 token 级折叠之后补上了。
+        """
         import jsparse
         src = os.path.join(ROOT, 'build', 'electron-probe', 'app', 'main.js')
         if not os.path.exists(src):
@@ -47,7 +51,7 @@ class RealRunTests(unittest.TestCase):
         with io.open(src, encoding='utf-8') as fh:
             tokens = jsparse.tokenize(fh.read())
         named = [r['channel'] for r in jsparse.ipc_registrations(tokens, {}) if r['channel']]
-        self.assertEqual(named, ['probe:literal'])
+        self.assertEqual(named, ['probe:literal', 'probe:concat'])
 
 
 class ProbeConvertTests(unittest.TestCase):

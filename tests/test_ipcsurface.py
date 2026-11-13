@@ -3757,8 +3757,13 @@ class SummaryModeTests(unittest.TestCase):
                          '摘要 %s / 全量 %d' % (m.group(1), full_n))
 
 
-class LiteralFoldTests(unittest.TestCase):
+class TokenFoldTests(unittest.TestCase):
     """纯字面量拼接要折出来；夹了变量就不折。
+
+    和 `LiteralFoldTests` 的分工：那个测的是 `fold_literals`——文本级的
+    预处理，在 `scan_asar` 的还原流程里跑；这个测的是 `fold_literal_concat`，
+    在 token 层兜底，用于 `ipc_registrations` 解不出名字时。两层都要有：
+    还原流程只看通道发现，sink 分析用的是原始文本。
 
     折错一次比不折坏得多——名字错了整份清单都跟着错。所以边界写死：
     只认「字符串 + 字符串」交替的形状。
