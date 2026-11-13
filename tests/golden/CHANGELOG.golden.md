@@ -517,3 +517,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：新增 facts 顶层键 module_graph（每个打包文件的模块数、依赖边、写法分布），schema 从 asar/32 升到 asar/33。下游按 asar/32 解包看不到这个键，需要先校验 schema 再读；其余字段没有变化。
+
+## 2026-11-14 02:46
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.134.0，报告字段没有任何变化；golden 快照里的 version 字段跟着变，下游如果拿版本号做断言需要适配一次。

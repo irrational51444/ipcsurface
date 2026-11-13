@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.133.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.134.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -29,7 +29,52 @@ Three gates, same set locally and in CI:
 
 ---
 
-## What 0.85.0 added, all actually run
+## What the report can answer
+
+The report is layered. Each layer answers one question and states what it cannot answer.
+**The layers do not add up** — one name can be recovered and also seen at runtime.
+
+### 1. How many doors does this building have? -> channel list
+
+Obsidian: **47 channels**. Recovered 47, literal 0, enumerated 0, harvested candidates 221.
+
+### 2. What is behind each door? -> dangerous APIs
+
+**116 dangerous APIs**, each with a provenance tier. Only **25 are hard findings**;
+the rest you neither trust nor need to verify.
+
+### 3. Can an outside hand reach behind the door? -> three taint layers
+
+- **L1 zero-hop**: the argument *is* the IPC parameter. **5 channels** on Obsidian.
+- **L2 one hop**: through `path.join` / `resolve`. **3 channels**, each with a verdict —
+  anchored / escapes / root-is-a-parameter / root-is-a-local / root unknown.
+- **L3 cross-function**: into another function in the same file. **0 channels**.
+
+### 4. Is the value stored and reused next round? -> state fields
+
+`C.icon = i` — the parameter is written into a module-level field, and a few statements
+later `rmSync` uses it to delete a file. **9 channels** on Obsidian. Both ends are
+reported: the write site, every read site in the same body, whether each read is a read
+or a `delete`, whether it happens before or after the write, and which call it sits in.
+
+**This layer stops there.** A state field lives across requests; knowing what is inside
+it on the next read needs heap modelling — not done, and not pretended.
+
+### 5. How is the code stitched together? -> block scope + module graph
+
+- **Block scope**: minified bundles reuse `v` hundreds of times, so regex-based rooting
+  always lands on the wrong assignment. Following `{}` parentage gives visibility.
+  Obsidian's `F.join(v, C.icon)` resolves `v` to `app.getPath("userData")` — two L2 rows
+  moved from "root unknown" to anchored.
+- **Module graph**: `app.js` **195 modules / 304 dependency edges**; `quicklook.js`
+  166 / 269; `main.js` has no module table (single-file bundle).
+
+**The module graph is fit for purpose, not omniscient**: it answers "who requires whom",
+not dynamic `require` (`n(var)`, `n("a"+b)` are dropped), and it does not yet carry values
+across modules.
+
+### Beyond the five questions
+
 
 ### Capability surface beyond IPC channels
 
