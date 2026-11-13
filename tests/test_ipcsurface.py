@@ -3863,8 +3863,9 @@ function h(e, i, c) {
 
     def test_direct_param_is_tainted(self):
         hits = self.hits(self.SRC)
-        hits_by_api = {h[0]: h[1] for h in hits}
-        self.assertEqual(hits_by_api.get('renameSync'), 'i')
+        args = {h[1] for h in hits if h[0] == 'renameSync'}
+        self.assertIn('i', args, 'i 必须标出来')
+        self.assertIn('c', args, 'c 也要标出来——目标路径零校验，那才是要修的')
 
     def test_event_param_is_not_tainted(self):
         """第一个参数是事件对象，攻击者控不了，不许算脏。
@@ -4020,6 +4021,88 @@ function h(e, i) { c1(i); }
         # h → c1 → c2 → c3：writeFileSync 在第四层，所以要 depth=3 才够
         self.assertEqual(one, [], 'depth=1 不该穿两层')
         self.assertTrue(three, 'depth=3 应该跟到 c3 里的 writeFileSync')
+
+
+class EveryArgTaintTests(unittest.TestCase):
+    """每个脏实参都要标出来，不能找到一个就走。
+
+    `renameSync(i, c)` 里两个都来自外部，而真正要修的是 `c`（目标零校验）。
+    以前只记 `i`，因为 `_end_of_statement` 在逗号处就停了——那是判语句结尾用的，
+    拿来切实参列表是错的。
+    """
+
+    SRC = """
+const fs = require('fs');
+function h(e, i, c) {
+  fs.renameSync(i, c);
+}
+"""
+
+    def hits(self):
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(self.SRC)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        params = d0.get('params') or []
+        return jssem.flows_into_danger(toks, d0['body_start'], d0['body_end'], params)
+
+    def test_both_args_reported(self):
+        hits = self.hits()
+        args = {h[1] for h in hits if h[0] == 'renameSync'}
+        self.assertEqual(args, {'i', 'c'}, '两个脏实参都要标，实际 %s' % args)
+
+    def test_no_duplicate_arg(self):
+        hits = [h for h in self.hits() if h[0] == 'renameSync']
+        self.assertEqual(len(hits), len({h[1] for h in hits}), '同一个实参不许重复记')
+
+    def test_single_dirty_arg_still_works(self):
+        src = """
+const fs = require('fs');
+function h(e, i, c) {
+  fs.renameSync('/fixed', c);
+}
+"""
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        hits = jssem.flows_into_danger(toks, d0['body_start'], d0['body_end'],
+                                       d0.get('params') or [])
+        args = {h[1] for h in hits if h[0] == 'renameSync'}
+        self.assertEqual(args, {'c'}, '只有 c 脏时只标 c')
+
+
+class JoinAnchoredTests(unittest.TestCase):
+    """`F.join(v, i)` 的第一个实参是常量根时，结果被锚住，不继承脏。
+
+    不然 `copy-asar` 的目标路径会被标成「外部可控」，而它其实被 join 限住了。
+    """
+
+    def taint(self, body):
+        src = """const fs = require('fs');
+function h(e, i, c) {
+""" + body + """
+}
+"""
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'],
+                                  d0.get('params') or [])
+        return set(jssem.tainted_names(table))
+
+    def test_join_with_const_root_is_anchored(self):
+        dirty = self.taint('let b = F.join(v, i);')
+        self.assertNotIn('b', dirty, 'join 的第一个实参是常量根，结果不该脏')
+
+    def test_join_with_tainted_root_is_dirty(self):
+        dirty = self.taint('let b = F.join(i, c);')
+        self.assertIn('b', dirty, '根本身是脏的，结果当然脏')
+
+    def test_plain_assignment_unaffected(self):
+        dirty = self.taint('let q = i;')
+        self.assertIn('q', dirty)
 
 
 if __name__ == '__main__':

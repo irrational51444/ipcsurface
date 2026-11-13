@@ -462,3 +462,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.122.0 CHANGELOG 与版本号；报告字段不变（靶场没有 webPreferences）
+
+## 2026-11-14 00:43
+
+- 变了的字段：fingerprint
+- 理由：参数级污点：每个脏实参都记（renameSync 的 i 和 c 都标）；join 只按根传播

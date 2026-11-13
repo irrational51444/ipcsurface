@@ -2,6 +2,57 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.123.0 — 参数级标注：`renameSync(i, c)` 的 `c` 终于标出来了
+
+上一版工具说的是「这条通道能碰到 `renameSync`」，只标了 `i`。
+
+**而真正要修的是 `c`——目标路径零校验。** 少记一个实参，审计报告就少说一半。
+
+### 根因（两个，叠在一起）
+
+**一、找个脏实参就 `break`**
+
+```python
+for other in tokens[open_at + 1:stop]:
+    if other.kind == 'ident' and other.text in tainted:
+        hits.append((name, other.text, tok.line + 1))
+        break          # ← 找到第一个就走
+```
+
+**二、实参根本没扫全**
+
+`stop = _end_of_statement(...)` 在那个逗号处就停了——那个函数是判**语句**结尾用的，
+拿来切**实参列表**是错的。`renameSync(i, c)` 只扫到 `i`。
+
+改用 `_close_paren` 扫到右括号。
+
+### 修完
+
+```
+vault-move   [('renameSync', 'c'), ('renameSync', 'i')]   ← 两个都在
+set-icon     [('writeFileSync', 'c'), ('writeFileSync', 'i')]
+copy-asar    [('copyFileSync', 'i')]                      ← 目标 b 被 join 锚住，不标
+```
+
+### 顺手修掉一个过度标注
+
+全实参标出来之后，`copy-asar` 的目标 `b` 也被标了——它是 `F.join(v, basename(i))`
+的结果。第一个实参是常量根 `v`，结果被锚在 `v` 底下，不该继承脏。
+
+加了 `_join_root`：**join/resolve 的返回值只按根传播**。`F.join(v, i)` → 干净
+（v 是常量）；`F.join(i, c)` → 脏（根本身来自外部）。
+
+### 踩的坑
+
+写测试的时候把三引号字符串写坏了——`\n` 在 PowerShell 里被吃成真换行，整个
+`test_ipcsurface.py` 语法错，460 个用例一个都跑不了。修的时候还反复「准备修」
+没真敲下去，耽误了时间。
+
+教训：**多行字符串用三引号，别用 `\n` 拼**；改完立刻跑，别攒着。
+
+460 用例、四道闸。
+
+
 ## 0.122.0 — 你指出的两条修好了，顺着又挖出两条更严重的
 
 ### 你指出的

@@ -53,6 +53,43 @@ def _end_of_statement(tokens, i, limit):
     return limit
 
 
+def _join_root(rhs):
+    """`X.join(a, b, ...)` 返回第一个实参 a 的 tokens——路径拼接里 a 是根。
+
+    返回值脏不脏，取决于根脏不脏：`F.join(v, i)` 里 v 是常量，结果被锚在 v
+    底下（除非带 `..`，那要另一层判）；`F.join(i, c)` 里根本身来自外部，结果
+    当然也脏。以前无条件锚定，把后一种也当成干净的了。
+
+    只认 `.join(` / `.resolve(` 两种形状，别的内建函数一概不碰。
+    根不是简单表达式（带函数调用、三元、逻辑运算）就返回 None，不锚。
+    """
+    if not rhs or len(rhs) < 4:
+        return None
+    if not (rhs[1].text == '.' and rhs[2].text in ('join', 'resolve')
+            and rhs[3].text == '('):
+        return None
+    # 第一个实参：从 4 开始，到顶层的逗号或右括号
+    first = []
+    depth = 0
+    for tok in rhs[4:]:
+        if tok.text in ('(', '[', '{'):
+            depth += 1
+        elif tok.text in (')', ']', '}'):
+            if depth == 0:
+                break
+            depth -= 1
+        if tok.text == ',' and depth == 0:
+            break
+        first.append(tok)
+    if not first:
+        return None
+    # 根是个简单表达式：字面量、标识符、成员链。带函数调用的不算。
+    for tok in first:
+        if tok.text in ('(', '?', '||', '&&'):
+            return None
+    return first
+
+
 def assignments(tokens, start, end, params):
     """函数体里的赋值表：{名字: [右侧 token 列表, ...]}。参数也算一次赋值（值=外部）。
 
@@ -120,6 +157,12 @@ def assignments(tokens, start, end, params):
         # （`String(x)` 这类确实会把脏值带过来）。
         if rhs and rhs[0].text == 'await':
             table.setdefault(name, []).append([])
+        elif _join_root(rhs) is not None:
+            # `let b = F.join(v, i)`：实参里有脏值，但**第一个实参是常量根**，
+            # 结果被锚在 v 底下（除非后面有 `..` 逃逸，那要另一层判）。
+            # 这类结果不继承脏——否则 `copy-asar` 的目标路径会被标成「外部可控」，
+            # 而它其实被 join 限住了。
+            table.setdefault(name, []).append(_join_root(rhs))
         else:
             table.setdefault(name, []).append(rhs)
         i = max(stop, i + 1)
@@ -1109,10 +1152,16 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
         if name in AMBIGUOUS and i >= 2 and tokens[i - 1].text == '.':
             if tokens[i - 2].text not in aliases:
                 continue
-        stop = _end_of_statement(tokens, open_at + 1, end)
+        # 实参要扫到右括号为止。用 `_end_of_statement` 是错的——它在逗号处
+        # 就停了（那是判语句结尾用的），于是 `renameSync(i, c)` 只扫到 `i`。
+        # 而真正要修的是 `c`（目标路径零校验）。
+        # 每个脏实参都要记，不能找到一个就走：两个都来自外部就两个都写出来。
+        stop = _close_paren(tokens, open_at)
+        seen_here = set()
         for other in tokens[open_at + 1:stop]:
-            if other.kind == 'ident' and other.text in tainted:
+            if (other.kind == 'ident' and other.text in tainted
+                    and other.text not in seen_here):
+                seen_here.add(other.text)
                 hits.append((name, other.text, tok.line + 1))
-                break
     return hits
 
