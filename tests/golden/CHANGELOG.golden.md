@@ -492,3 +492,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：channel_tainted 的每条从 3 元组变 4 元组，多了 arg shape（direct/wrapped/跨函数），用来区分实参是原样交出去还是先被一层表达式处理过，schema 从 asar/28 升到 asar/29。下游按 asar/28 解包只拿到前三项，需先校验 schema 再取形态。
+
+## 2026-11-14 02:02
+
+- 变了的字段：fingerprint, schema
+- 理由：channel_state_writes 的每条多了 via 字段（写入发生在哪个被调函数里，直接写为 null），用来标出写和读被拆到两个函数的形状，schema 从 asar/29 升到 asar/30。下游按 asar/29 取不到 via，需先校验 schema。

@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.128.0'
+__version__ = '0.129.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/29'
+SCHEMA_VERSION = 'ipcsurface/asar/30'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2414,14 +2414,22 @@ def channel_state_writes_map(files, max_files=12):
                 dirty |= jssem.loop_taints(tokens, span[0], span[1], dirty)
                 dirty |= jssem.catch_taints(tokens, span[0], span[1], dirty)
                 hits = jssem.state_writes(tokens, span[0], span[1], dirty)
+                # 跨函数写：`helper(C, i)` 而 helper 里把形参写进字段。
+                deep = jssem.state_writes_interproc(
+                    tokens, span[0], span[1], dirty, defs)
             except Exception:
                 continue
-            if hits:
-                for field, src_name, off, reads in hits:
+            rows = [(field, src_name, off, reads, None)
+                    for field, src_name, off, reads in hits]
+            rows += [(field, src_name, off, reads, fn_name)
+                     for fn_name, field, src_name, off, reads in deep]
+            if rows:
+                for field, src_name, off, reads, via in rows:
                     out.setdefault(reg['channel'], []).append({
                         'field': field,
                         'src': src_name,
                         'file': rel,
+                        'via': via,
                         'write_at': off,
                         'write_snippet': code_snippet(src, off, limit=body_end,
                                                       floor=body_start),

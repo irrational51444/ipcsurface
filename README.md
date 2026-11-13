@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.128.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.129.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及**这份报告能信到什么程度、你凭什么自己核对**。
 
@@ -184,7 +184,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 
 **二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、**哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/29`；对不上就停下，别按字段在不在猜。
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/30`；对不上就停下，别按字段在不在猜。
 
 ---
 
@@ -242,7 +242,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **478 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **481 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：python scripts/perf_check.py，固定种子造包测吞吐，低于下限 CI 红（README 的性能数字也从这个脚本复现）
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`（CI 也守这条，掉下去就红）
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算

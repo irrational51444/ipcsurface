@@ -1082,6 +1082,9 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             for row in state_writes[name]:
                 snippet = lambda s: (s or '').replace('`', "'")
                 out.append(f'  - `{name}`：字段 `{row["field"]}` ← `{row["src"]}`')
+                if row.get('via'):
+                    out.append(f'    - 写发生在 `{row["via"]}()` 里，不是这个处理函数自己'
+                               '——参数被传出去之后才落的盘')
                 out.append(f'    - 写：{snippet(row["write_snippet"])}')
                 reads = [r for r in (row.get('reads') or []) if r.get('kind') != 'delete']
                 deletes = [r for r in (row.get('reads') or []) if r.get('kind') == 'delete']

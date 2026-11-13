@@ -59,6 +59,49 @@ _NOT_A_CALL = frozenset((
 ))
 
 
+def state_writes_interproc(tokens, start, end, tainted, defs, depth=2):
+    """跨函数写状态：`helper(C, i)`，而 helper 里把某个形参写进了字段。
+
+    只跟**同文件里能直接找到定义**的函数。形参和实参按位置对齐，个数对不上
+    就不跟——形状不对的时候猜，比不报更坏。
+
+    返回 [(被调函数名, 字段名, 来源形参, 写入偏移, (读点...))]。
+    位置是在被调函数体里的偏移，同文件，切片段用同一份源码。
+    """
+    if depth <= 0:
+        return []
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], d)
+    out = []
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit):
+        tok = tokens[i]
+        if tok.kind != 'ident' or tok.text not in by_name:
+            continue
+        if i >= 1 and tokens[i - 1].text == '.':
+            continue          # 成员调用 `obj.helper(...)` 不知道 obj 是谁
+        if tokens[i + 1].text != '(':
+            continue
+        target = by_name[tok.text]
+        params = target.get('params') or []
+        if not params:
+            continue
+        arg_lists, _close = _split_args(tokens, i + 1)
+        if len(arg_lists) != len(params):
+            continue
+        sub = set()
+        for pname, arg in zip(params, arg_lists):
+            if any(t.kind == 'ident' and t.text in tainted for t in arg):
+                sub.add(pname)
+        if not sub:
+            continue
+        for field, src_name, off, reads in state_writes(
+                tokens, target['body_start'], target['body_end'], sub):
+            out.append((tok.text, field, src_name, off, reads))
+    return out
+
+
 def _enclosing_call(tokens, idx, start):
     """这个位置落在哪个调用的括号里：`rmSync(F.join(v, C.icon))` 里的 `C.icon`
     落在 `F.join` 的实参里。

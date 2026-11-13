@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/29')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/30')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4103,6 +4103,37 @@ function h(e, i, c) {
     def test_plain_assignment_unaffected(self):
         dirty = self.taint('let q = i;')
         self.assertIn('q', dirty)
+
+
+class InterprocStateWriteTests(unittest.TestCase):
+    """The handler hands the value to a local helper, and the helper writes the field."""
+
+    def analyse(self, src, params=('i',)):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [x for x in defs if x['name'] == 'h'][0]
+        return jssem.state_writes_interproc(
+            toks, d0['body_start'], d0['body_end'], set(params), defs)
+
+    def test_write_inside_callee_is_reported(self):
+        hits = self.analyse('function h(e, i) { save(C, i); }\n'
+                            'function save(cfg, v) { cfg.icon = v; }\n')
+        self.assertTrue(hits, '在 helper 里写状态，不能因为不在同一个函数就丢掉')
+        fn, field, src_name = hits[0][0], hits[0][1], hits[0][2]
+        self.assertEqual((fn, field, src_name), ('save', 'icon', 'v'))
+
+    def test_clean_argument_does_not_propagate(self):
+        hits = self.analyse('function h(e, i) { save(C, "lit"); }\n'
+                            'function save(cfg, v) { cfg.icon = v; }\n')
+        self.assertEqual(hits, [], '实参是字面量，形参就不脏')
+
+    def test_arity_mismatch_is_not_guessed(self):
+        hits = self.analyse('function h(e, i) { save(C); }\n'
+                            'function save(cfg, v) { cfg.icon = v; }\n')
+        self.assertEqual(hits, [], '形参个数对不上就不按位置硬套')
 
 
 class ArgShapeTests(unittest.TestCase):
