@@ -407,3 +407,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.111.0 版本号：fingerprint 里的 version 变
+
+## 2026-11-13 16:01
+
+- 变了的字段：fingerprint
+- 理由：0.112.0 纯文档与版本号：known-wrong 记了 depth 实测，报告字段不变
