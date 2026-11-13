@@ -442,3 +442,8 @@
 
 - 变了的字段：fingerprint
 - 理由：channel_sink_evidence 新增 arg_tainted（零跳污点）；channel_tainted 计算顺序提前；md 加「实参」列变 10 列
+
+## 2026-11-13 22:06
+
+- 变了的字段：fingerprint
+- 理由：channel_path_taint 新增（L2）；assignments 不再把 event 参数算脏、await 返回值不继承参数；channel_tainted 结果变少

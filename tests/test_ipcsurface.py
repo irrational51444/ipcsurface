@@ -3866,6 +3866,68 @@ function h(e, i, c) {
         hits_by_api = {h[0]: h[1] for h in hits}
         self.assertEqual(hits_by_api.get('renameSync'), 'i')
 
+    def test_event_param_is_not_tainted(self):
+        """第一个参数是事件对象，攻击者控不了，不许算脏。
+
+        obsidian 的 `open-file` 就是因为 `event.sender` → 窗口 → 对话框返回值
+        → 路径 这条链，把「用户选的路径」误报成「外部可控路径」。
+        """
+        src = """
+function h(e, i) {
+  let w = e.sender;
+  let p = w.somePath;
+  fs.writeFileSync(p, 'x');
+}
+"""
+        self.assertEqual(self.hits(src), [], 'event 起的链不算外部输入')
+
+    def test_await_result_does_not_inherit_args(self):
+        """`let k = await dialog.show(d, { ext: i })`：参数脏，返回值不脏。"""
+        src = """
+function h(e, i, c) {
+  let r = await dialog.show(c, { ext: i });
+  fs.writeFileSync(r.filePath, 'x');
+}
+"""
+        self.assertEqual(self.hits(src), [], 'await 的返回值不许继承参数污点')
+
+    def test_path_join_with_tainted_arg_is_reported(self):
+        """`F.join(v, i)` 里 i 脏——零跳看不见，L2 这层要报。"""
+        import jsparse
+        import jssem
+        src = """
+function h(e, i, c) {
+  let q = F.join(v, i);
+  fs.writeFileSync(q, c);
+}
+"""
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        params = d0.get('params') or []
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'], params)
+        dirty = jssem.tainted_names(table)
+        hits = jssem.path_taint(toks, d0['body_start'], d0['body_end'], dirty)
+        self.assertTrue(hits, 'join 吃了脏值必须报出来')
+        self.assertEqual(hits[0][0], 'join')
+        self.assertIn('i', hits[0][1])
+
+    def test_path_join_with_clean_arg_is_silent(self):
+        import jsparse
+        import jssem
+        src = """
+function h(e, i) {
+  let q = F.join(v, 'fixed.txt');
+  fs.writeFileSync(q, 'x');
+}
+"""
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        table = jssem.assignments(toks, d0['body_start'], d0['body_end'], d0.get('params') or [])
+        dirty = jssem.tainted_names(table)
+        hits = jssem.path_taint(toks, d0['body_start'], d0['body_end'], dirty)
+        self.assertEqual(hits, [], '干净的字面量不许报')
+
+
     def test_constant_argument_is_not_tainted(self):
         src = """
 function h(e, i) {

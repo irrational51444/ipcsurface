@@ -54,8 +54,15 @@ def _end_of_statement(tokens, i, limit):
 
 
 def assignments(tokens, start, end, params):
-    """函数体里的赋值表：{名字: [右侧 token 列表, ...]}。参数也算一次赋值（值=外部）。"""
-    table = {name: [None] for name in params}   # None 表示「外部来的」
+    """函数体里的赋值表：{名字: [右侧 token 列表, ...]}。参数也算一次赋值（值=外部）。
+
+    **第一个参数不算外部输入。** IPC 处理函数的第一个参数是事件对象
+    （`(event, payload)`），它是 Electron 塞进来的元数据，攻击者控不了。
+    把它算脏会连锁传播出去：`event.sender` → 窗口 → 对话框返回值 → 路径，
+    整条链在技术上成立，语义上全错。obsidian 的 `open-file` 就是这么被误报的。
+    """
+    live = list(params)[1:] if len(params) > 1 else []
+    table = {name: [None] for name in live}   # None 表示「外部来的」
     i = start
     while i < end:
         tok = tokens[i]
@@ -96,7 +103,17 @@ def assignments(tokens, start, end, params):
             i = j + 1
             continue
         stop = _end_of_statement(tokens, j + 1, end)
-        table.setdefault(name, []).append(tokens[j + 1:stop])
+        rhs = tokens[j + 1:stop]
+        # `let k = await dialog.showOpenDialog(c, { extensions: i })`：
+        # 参数里的 `i` 是脏的，但**返回值不是**。函数调用的返回值和参数是两回事，
+        # 混在一起会让整条链假阳性。obsidian 的 `open-file` 就是这么把
+        # 「系统对话框选中的路径」报成「外部可控路径」的。
+        # 只对 await 这种明确「拿返回值」的形态收手；普通调用仍然传播
+        # （`String(x)` 这类确实会把脏值带过来）。
+        if rhs and rhs[0].text == 'await':
+            table.setdefault(name, []).append([])
+        else:
+            table.setdefault(name, []).append(rhs)
         i = max(stop, i + 1)
     return table
 
@@ -928,6 +945,47 @@ def callback_taints(tokens, start, end, tainted):
         elif tokens[k].kind == 'ident':
             extra.add(tokens[k].text)
     return extra
+
+
+PATH_FUNCS = {'join', 'resolve', 'normalize'}
+
+
+def path_taint(tokens, start, end, tainted):
+    """L2 一跳：脏值喂进了 `path.join` / `resolve` / `normalize`。
+
+    为什么这层重要：`F.join(v, i)` 里 `i` 带 `..` 会跳出 `v`。零跳看不出来，
+    因为危险调用收到的实参是 `F.join(...)` 的结果，不是 `i` 本身。
+
+    **只报「喂进去了」，不判结果一定跳出去。** 能不能真跳，取决于第一个实参
+    是不是常量根、以及后面有没有 `resolve` + 前缀检查——那要看内建语义，
+    这一层不做。宁可报「可能」，也不给一个「确定能穿越」的假结论。
+
+    返回 [(函数名, [脏实参], 行号)]。
+    """
+    hits = []
+    limit = min(end, len(tokens) - 2)
+    for i in range(start, limit):
+        tok = tokens[i]
+        if tok.kind != 'ident' or tok.text not in PATH_FUNCS:
+            continue
+        # 只认成员调用 path.join(...)，裸 join(...) 不知道是谁的
+        if i < 2 or tokens[i - 1].text != '.':
+            continue
+        if tokens[i + 1].text != '(':
+            continue
+        close = _close_paren(tokens, i + 1)
+        args = tokens[i + 2:close]
+        dirty = []
+        for t in args:
+            if t.kind == 'ident' and t.text in tainted and t.text not in dirty:
+                dirty.append(t.text)
+            # 字面量里直接写 `..` 的也算——那是「确定能跳」
+            elif t.kind == 'string' and '..' in t.text:
+                if '..' not in dirty:
+                    dirty.append('..')
+        if dirty:
+            hits.append((tok.text, dirty, tok.line))
+    return hits
 
 
 def flows_into_danger(tokens, start, end, params, aliases=None):

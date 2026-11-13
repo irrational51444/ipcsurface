@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.118.0'
+__version__ = '0.119.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -2253,6 +2253,62 @@ def channel_taint_map(files, max_files=12):
     return {name: sorted(set(v)) for name, v in out.items()}
 
 
+def channel_path_taint_map(files, max_files=12):
+    """L2 一跳：脏值被喂进 `path.join` / `resolve` / `normalize`。
+
+    零跳那层看不见 `F.join(v, i)`——危险调用收到的是 join 的结果，不是 `i`。
+    这一层专门盯「脏值经过一次路径函数」。
+
+    **只报「喂进去了」，不报「一定跳出去」。** 能不能真跳还取决于第一个实参
+    是不是常量根、后面有没有 `resolve` + 前缀检查——那是内建语义，这一层不做。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    if not names:
+        return None
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return None
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in with_ipc[:max_files]:
+        src = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(src)
+            objects = parse_object_literals(src)
+            defs = jsparse.function_defs(tokens)
+            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+        except Exception:
+            continue
+        for reg in regs:
+            span = reg.get('span')
+            if not span and reg.get('target'):
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
+            if not span:
+                continue
+            try:
+                params = handler_params(tokens, span[0], span[1])
+                table = jssem.assignments(tokens, span[0], span[1], params)
+                dirty = jssem.tainted_names(table)
+                dirty |= jssem.callback_taints(tokens, span[0], span[1], dirty)
+                dirty |= jssem.loop_taints(tokens, span[0], span[1], dirty)
+                dirty |= jssem.catch_taints(tokens, span[0], span[1], dirty)
+                hits = jssem.path_taint(tokens, span[0], span[1], dirty)
+            except Exception:
+                continue
+            if hits:
+                out.setdefault(reg['channel'], []).extend(hits)
+    return {name: sorted({(fn, tuple(args), line) for fn, args, line in v})
+            for name, v in out.items()}
+
+
 def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
 
@@ -4268,6 +4324,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
 
         # 先算脏实参表：evidence 要用它，顺序反了就永远取到空。
         facts['channel_tainted'] = channel_taint_map(files)
+        facts['channel_path_taint'] = channel_path_taint_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。
         # 经过一次函数处理（比如 F.join(v, i)）就不算——那要内建语义，是另一层。
@@ -4275,6 +4332,11 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         for _ch, _items in (facts.get('channel_tainted') or {}).items():
             for _api, _arg, _line in (_items or []):
                 tainted_args.setdefault((_ch, _api), []).append(_arg)
+        # L2：脏值经过一次 path.join/resolve/normalize。零跳那层看不见这种情况。
+        path_tainted = {}
+        for _ch, _items in (facts.get('channel_path_taint') or {}).items():
+            for _fn, _args, _line in (_items or []):
+                path_tainted.setdefault(_ch, []).append('%s(%s)' % (_fn, ','.join(_args)))
 
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:
@@ -4314,6 +4376,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                         'depth': depth,
                         'seen_by': seen_by,
                         'arg_tainted': tainted_args.get((ch, api)) or [],
+                        'path_taint': path_tainted.get(ch) or [],
                     }
             facts['channel_sink_evidence'] = evidence if evidence else None
         else:

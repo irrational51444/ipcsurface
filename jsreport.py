@@ -658,7 +658,13 @@ def sink_table(facts, hit):
             # 实参脏不脏：这是「能不能被利用」的第一层。只有实参直接来自 IPC 参数
             # 才写出来；经过一次函数处理的（F.join(v, i)）这层看不到，写 '—'。
             dirty = item.get('arg_tainted') or []
-            argcell = ('**%s**' % ','.join(dirty)) if dirty else '—'
+            through = item.get('path_taint') or []
+            parts = []
+            if dirty:
+                parts.append('**%s**' % ','.join(dirty))
+            if through:
+                parts.append('经' + '/'.join(through))
+            argcell = ' '.join(parts) if parts else '—'
             rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s | %s |'
                         % (name, api, danger_kind_of(api), tier, seen, argcell,
                            depth, at, '—' if hops is None else hops, via))
