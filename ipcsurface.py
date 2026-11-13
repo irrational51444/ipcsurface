@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.104.0'
+__version__ = '0.105.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -49,7 +49,8 @@ from jsreport import (  # noqa: E402
     HIGH_RISK_HINTS, INDEPENDENCE_TABLE, REFUTES, SINK_TIER_ORDER, SOURCE_STRENGTH, STATIC_SOURCES,
     _build_independence, audit_asar, baseline_delta, channel_profiles, channel_sources,
     confidence_ladder, confidence_levels, corroboration_strength, fingerprint_of, independent,
-    input_sha256, refutes_if, render_asar, render_baseline, sample_sites, sink_tier,
+    input_sha256, refutes_if, render_asar, render_baseline, render_summary,
+    sample_sites, sink_tier,
 )
 
 jsreport.VERSION = __version__   # 报告层的版本号由这儿注入
@@ -4384,6 +4385,8 @@ def main(argv=None):
     parser.add_argument('-o', '--out', help='写到文件，不给就打到标准输出')
     parser.add_argument('--recover', metavar='REPORT',
                         help='检查某个报告旁边的崩溃残留（.bak/.failed），只报告不自动还原')
+    parser.add_argument('--summary', action='store_true',
+                        help='只出一页纸摘要（计数 + 几个样本），全量在 -o full.md 里')
     parser.add_argument('--format', choices=('md', 'json', 'sarif'), default='md',
                         help='md 给人看，json 给程序读，sarif 直接喂 CI 平台')
     parser.add_argument('--fail-on', choices=('high', 'medium'), help='出现该级别问题时以退出码 2 结束')
@@ -4558,6 +4561,9 @@ def main(argv=None):
                 if args.baseline else None,
                 merkle=facts.get('archive_merkle'))
             text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True)
+        elif args.summary:
+            # 一页纸：所有计数都从同一份 facts 取，和全量 md 用的是同一批数据。
+            text = render_summary(facts, __version__, count, total)
         else:
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,

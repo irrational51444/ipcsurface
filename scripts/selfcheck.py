@@ -250,6 +250,18 @@ def check_output_parity(ok):
     ok &= check('md 的 sink 表格条目数 == JSON 的 evidence 条目数',
                 json_rows == md_rows,
                 f'md {md_rows} / json {json_rows}')
+    # 摘要不许自己另算一遍：它的总数必须和全量对得上。
+    # I4 要求的就是这个——同一批事实，三个出口，数字只能有一个。
+    import re as _re
+    summary = jsreport.render_summary(facts, t.__version__, count, total)
+    m = _re.search(r'能碰到什么（共 (\d+) 条）', summary)
+    sum_rows = int(m.group(1)) if m else -1
+    ok &= check('摘要的 sink 总数 == 全量的条目数',
+                sum_rows == json_rows, f'摘要 {sum_rows} / 全量 {json_rows}')
+    n = _re.search(r'通道 \*\*(\d+) 条\*\*', summary)
+    ok &= check('摘要的通道数 == facts 里的通道数',
+                bool(n) and int(n.group(1)) == len(facts['channels']),
+                f'摘要 {n.group(1) if n else "?"}')
     return ok
 
 

@@ -709,6 +709,86 @@ def count_sink_rows(md_text, section='## 按语法树再走一遍'):
     return total
 
 
+def render_summary(facts, version, file_count, total_bytes):
+    """一页纸。
+
+    **不自己算数**：所有计数都从同一份 facts 里取，和全量 md 用的是同一批数据。
+    重算一遍等于给自己另开一个真相，那种漂移今天已经被打脸两次了。
+    """
+    from collections import Counter
+    out = []
+    out.append('# ipcsurface · 一页纸')
+    out.append('')
+    out.append('这是摘要。每条结论和它的证据在 `-o full.md` 里，'
+               '机器读用 `--format json`。')
+    out.append('')
+    out.append('## 这包是什么')
+    out.append('')
+    out.append('- 文件 %d 个，解出来 %d 字节' % (file_count, total_bytes))
+    out.append('- 通道 **%d 条**' % len(facts.get('channels') or []))
+    out.append('')
+
+    # 可信度分层：和 md 六层表同一份数据
+    conf = facts.get('confidence') or []
+    if conf:
+        out.append('## 这些名字有多可信')
+        out.append('')
+        out.append('| 层 | 数量 | 能证明什么 |')
+        out.append('| --- | --- | --- |')
+        for item in conf:
+            if item.get('count') is None:
+                continue
+            out.append('| %s | %s %s | %s |'
+                       % (item.get('label') or item.get('id'),
+                          item.get('count'), item.get('unit') or '',
+                          item.get('can_prove') or ''))
+        out.append('')
+
+    # sink 结论：按档位和证据完整度分
+    ev = facts.get('channel_sink_evidence') or {}
+    if ev:
+        tiers = Counter()
+        depths = Counter()
+        for apis in ev.values():
+            for item in apis.values():
+                tiers[item.get('tier') or '?'] += 1
+                depths[item.get('depth') or '?'] += 1
+        out.append('## 能碰到什么（共 %d 条）' % sum(tiers.values()))
+        out.append('')
+        out.append('按档位：')
+        out.append('')
+        for tier in ('direct', 'name_confirmed', 'chain', 'ambiguous', 'ast_only'):
+            if tiers.get(tier):
+                out.append('- `%s` %d 条' % (tier, tiers[tier]))
+        out.append('')
+        out.append('按证据完整度：')
+        out.append('')
+        for depth in ('full', 'locate_only', 'name_only'):
+            if depths.get(depth):
+                out.append('- `%s` %d 条' % (depth, depths[depth]))
+        out.append('')
+
+    # 没看清的
+    reasons = facts.get('unresolved_reasons') or {}
+    if reasons:
+        total = sum(v.get('count') or 0 for v in reasons.values())
+        out.append('## 没看清的（共 %d 处）' % total)
+        out.append('')
+        for key in sorted(reasons, key=lambda k: -(reasons[k].get('count') or 0)):
+            item = reasons[key]
+            if not item.get('count'):
+                continue
+            out.append('- `%s` %s 处：%s'
+                       % (key, item['count'], item.get('what') or ''))
+        out.append('')
+
+    out.append('---')
+    out.append('')
+    out.append('要逐条看证据，跑 `python ipcsurface.py <包> -o full.md`。')
+    out.append('')
+    return '\n'.join(out)
+
+
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
                 probe=None, poke=None, baseline=None):
     out = ['# Electron 能力面清单（粗扫）', '']

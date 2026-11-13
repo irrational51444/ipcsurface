@@ -3707,5 +3707,55 @@ ipcMain.on('static-one', (e) => { require('fs').rmSync('/x'); });
         self.assertTrue(reasons['dynamic-registration'].get('what'))
 
 
+class SummaryModeTests(unittest.TestCase):
+    """--summary：一页纸，计数必须和全量对得上。"""
+
+    def run_summary(self):
+        import subprocess
+        import tempfile
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        out = tempfile.mktemp(suffix='.md')
+        try:
+            subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                            asar, '--summary', '-o', out],
+                           capture_output=True, timeout=180)
+            with open(out, encoding='utf-8') as fh:
+                return fh.read()
+        finally:
+            try:
+                os.unlink(out)
+            except OSError:
+                pass
+
+    def test_summary_is_short(self):
+        text = self.run_summary()
+        self.assertIn('一页纸', text)
+        self.assertIsLessEqual = None  # 用 assertLessEqual
+        self.assertLessEqual(len(text.split('\n')), 60,
+                             '一页纸不该超过 60 行，实际 %d' % len(text.split('\n')))
+
+    def test_summary_points_to_full_report(self):
+        text = self.run_summary()
+        self.assertIn('-o full.md', text, '摘要必须告诉人全量在哪')
+
+    def test_summary_counts_match_full(self):
+        """摘要的 sink 总数必须和 facts 里的 evidence 条目数一致。"""
+        import ipcsurface as ipc
+        import jsreport
+        asar = os.path.join(ROOT, 'examples', 'build', 'static-asar.asar')
+        if not os.path.exists(asar):
+            self.skipTest('靶场没构建')
+        facts, count, total = ipc.analyse_asar(asar)
+        ev = facts.get('channel_sink_evidence') or {}
+        full_n = sum(len(v) for v in ev.values())
+        summary = jsreport.render_summary(facts, ipc.__version__, count, total)
+        m = re.search(r'能碰到什么（共 (\d+) 条）', summary)
+        self.assertIsNotNone(m, '摘要里应该有总数')
+        self.assertEqual(int(m.group(1)), full_n,
+                         '摘要 %s / 全量 %d' % (m.group(1), full_n))
+
+
 if __name__ == '__main__':
     unittest.main()

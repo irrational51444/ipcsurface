@@ -367,3 +367,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.104.0 版本号与 CHANGELOG
+
+## 2026-11-13 14:53
+
+- 变了的字段：fingerprint
+- 理由：0.105.0 版本号：render_summary 新增，不影响报告快照字段，只变 fingerprint 里的 version
