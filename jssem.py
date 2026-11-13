@@ -61,6 +61,28 @@ def assignments(tokens, start, end, params):
         tok = tokens[i]
         name = None
         j = None
+        # 解构：`const { filepath: d } = i` / `const { a } = i`。
+        # 这块以前完全没接——`print-to-pdf` 里就是这么写的
+        # （`let { filepath: d } = i` 然后 `writeFile(d, b)`），于是那条最严重的
+        # 发现，污点引擎报的是 None。键和本地名都要认：`a: b` 取 b，`a` 取 a。
+        if tok.text in DECL and i + 1 < end and tokens[i + 1].text == '{':
+            close = _close_paren(tokens, i + 1)
+            if close + 1 < end and tokens[close + 1].text == '=':
+                stop = _end_of_statement(tokens, close + 2, end)
+                rhs = tokens[close + 2:stop]
+                k = i + 2
+                while k < close:
+                    if tokens[k].kind == 'ident':
+                        after = tokens[k + 1].text if k + 1 < close else None
+                        if after == ':' and k + 2 < close and tokens[k + 2].kind == 'ident':
+                            table.setdefault(tokens[k + 2].text, []).append(rhs)
+                            k += 3
+                            continue
+                        if after != ':':
+                            table.setdefault(tokens[k].text, []).append(rhs)
+                    k += 1
+                i = max(stop, close + 2)
+                continue
         if tok.text in DECL and i + 1 < end and tokens[i + 1].kind == 'ident':
             name, j = tokens[i + 1].text, i + 2
         elif tok.kind == 'ident' and i + 1 < end and tokens[i + 1].text in ASSIGN_OPS:

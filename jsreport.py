@@ -655,11 +655,15 @@ def sink_table(facts, hit):
             via = item.get('via') or '—'
             depth = item.get('depth') or '—'
             seen = '+'.join(item.get('seen_by') or []) or '—'
-            rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s |'
-                        % (name, api, danger_kind_of(api), tier, seen, depth, at,
-                           '—' if hops is None else hops, via))
-    out = ['| 通道 | API | 类别 | 档位 | 见证 | 证据 | 位置 | 跳数 | 经过 |',
-           '| --- | --- | --- | --- | --- | --- | --- | --- | --- |']
+            # 实参脏不脏：这是「能不能被利用」的第一层。只有实参直接来自 IPC 参数
+            # 才写出来；经过一次函数处理的（F.join(v, i)）这层看不到，写 '—'。
+            dirty = item.get('arg_tainted') or []
+            argcell = ('**%s**' % ','.join(dirty)) if dirty else '—'
+            rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s | %s |'
+                        % (name, api, danger_kind_of(api), tier, seen, argcell,
+                           depth, at, '—' if hops is None else hops, via))
+    out = ['| 通道 | API | 类别 | 档位 | 见证 | 实参 | 证据 | 位置 | 跳数 | 经过 |',
+           '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     out.extend(rows)
     return out
 
@@ -673,6 +677,11 @@ def sink_table_legend():
         '- `ambiguous`：经过同名多义的函数（压缩产物里 f/y/m 满地重名），'
         '**可能是对的，也可能跟错了身子**——「经过」列会标「同名多义」',
         '- `ast_only`：只有语法树看见，名字级没有。这一档最不可信',
+        '',
+        '「实参」这一列：**加粗**表示危险调用的实参**直接来自 IPC 参数**'
+        '（零跳，中间没经过任何函数调用）——这是「能被利用」的第一层证据。'
+        '写 `—` 表示这层看不到，不代表安全：经过 `F.join(v, i)` 这类函数处理的，'
+        '要看内建语义才知道,这一层不做。',
         '',
         '「见证」是哪几路口径看见了它：`name+ast` 是名字级和语法树都报了'
         '（两路独立，最硬）；`ast` 只有语法树；`name` 只有名字级。'
@@ -709,7 +718,7 @@ def count_sink_rows(md_text, section='## 按语法树再走一遍'):
         # 只数 7 列的主表（通道/API/类别/档位/位置/跳数/经过）。
         # 同一节后面还有个 5 列的「借来的 API」小表，那不是主结论，别混进来。
         if inside and re.match(r'^\| `[^`]+` \| `[^`]+` \|', line):
-            if len(line.split('|')) == 11:
+            if len(line.split('|')) == 12:
                 total += 1
     return total
 

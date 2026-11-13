@@ -437,3 +437,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.117.0 新增交付型审计报告模板 docs/audit-report-template.md；报告字段不变
+
+## 2026-11-13 21:50
+
+- 变了的字段：fingerprint
+- 理由：channel_sink_evidence 新增 arg_tainted（零跳污点）；channel_tainted 计算顺序提前；md 加「实参」列变 10 列

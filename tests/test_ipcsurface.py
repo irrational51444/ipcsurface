@@ -3619,7 +3619,7 @@ class SinkEvidenceTests(unittest.TestCase):
             self.skipTest('靶场没构建')
         facts, count, total = ipc.analyse_asar(asar)
         md = ipc.render_asar(asar, facts, count, total)
-        self.assertIn('| 通道 | API | 类别 | 档位 | 见证 | 证据 | 位置 | 跳数 | 经过 |', md)
+        self.assertIn('| 通道 | API | 类别 | 档位 | 见证 | 实参 | 证据 | 位置 | 跳数 | 经过 |', md)
         self.assertGreater(jsreport.count_sink_rows(md), 0, 'md 的 sink 表格是空的')
 
     def test_md_rows_match_json_evidence(self):
@@ -3822,6 +3822,57 @@ class EncryptedPayloadTests(unittest.TestCase):
         reasons = facts.get('unresolved_reasons') or {}
         self.assertIn('encrypted-payload', reasons)
         self.assertIn('what', reasons['encrypted-payload'])
+
+
+class ZeroHopTaintTests(unittest.TestCase):
+    """零跳污点：危险调用的实参直接来自 IPC 参数。
+
+    边界写死：只认「实参就是参数本身，或它解构出来的名字」。中间经过任何
+    函数调用都不算——那要内建语义，是另一层。
+
+    这里直接测引擎（`assignments` + `flows_into_danger`），不走 `scan_asar`——
+    单文件那条路径不算通道级污点，是两个入口。
+    """
+
+    SRC = """
+function h(e, i, c) {
+  let { filepath: d } = i;
+  fs.writeFileSync(d, 'x');
+  fs.renameSync(i, c);
+}
+"""
+
+    def hits(self, src):
+        import jsparse
+        import jssem
+        toks = jsparse.tokenize(src)
+        defs = [x for x in jsparse.function_defs(toks) if x['name'] == 'h']
+        self.assertTrue(defs, '样例里应该有函数 h')
+        d0 = defs[0]
+        params = d0.get('params') or []
+        return jssem.flows_into_danger(toks, d0['body_start'], d0['body_end'], params)
+
+    def test_destructured_alias_is_tainted(self):
+        """`let { filepath: d } = i` 之后 writeFile(d)——解构别名要认。
+
+        这条对应 obsidian 的 `print-to-pdf`：最严重的发现，修复前引擎报的是 None。
+        """
+        hits = self.hits(self.SRC)
+        names = [h[0] for h in hits]
+        self.assertIn('writeFileSync', names, '解构出来的实参必须算脏')
+
+    def test_direct_param_is_tainted(self):
+        hits = self.hits(self.SRC)
+        hits_by_api = {h[0]: h[1] for h in hits}
+        self.assertEqual(hits_by_api.get('renameSync'), 'i')
+
+    def test_constant_argument_is_not_tainted(self):
+        src = """
+function h(e, i) {
+  fs.writeFileSync('/tmp/fixed.txt', 'x');
+}
+"""
+        self.assertEqual(self.hits(src), [], '常量路径不许算成脏')
 
 
 if __name__ == '__main__':

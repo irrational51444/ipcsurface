@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.117.0'
+__version__ = '0.118.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -4266,6 +4266,16 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         }
         facts['unresolved_reasons'] = reasons
 
+        # 先算脏实参表：evidence 要用它，顺序反了就永远取到空。
+        facts['channel_tainted'] = channel_taint_map(files)
+        # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
+        # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。
+        # 经过一次函数处理（比如 F.join(v, i)）就不算——那要内建语义，是另一层。
+        tainted_args = {}
+        for _ch, _items in (facts.get('channel_tainted') or {}).items():
+            for _api, _arg, _line in (_items or []):
+                tainted_args.setdefault((_ch, _api), []).append(_arg)
+
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:
             tiers = {ch: {api: sink_tier(facts, ch, api) for api in apis}
@@ -4303,12 +4313,12 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                         'at': step.get('at') or fallback_at,
                         'depth': depth,
                         'seen_by': seen_by,
+                        'arg_tainted': tainted_args.get((ch, api)) or [],
                     }
             facts['channel_sink_evidence'] = evidence if evidence else None
         else:
             facts['channel_sink_tiers'] = None
             facts['channel_sink_evidence'] = None
-        facts['channel_tainted'] = channel_taint_map(files)
         unattr = count_unattributed(files)
         facts['channel_unattributed'] = None if unattr is None else unattr['count']
         facts['channel_unattributed_samples'] = None if unattr is None else unattr['samples']
