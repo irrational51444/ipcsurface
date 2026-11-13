@@ -44,6 +44,23 @@ def audit_asar(facts):
         low = name.lower()
         if any(hint in low for hint in HIGH_RISK_HINTS):
             findings.append(('medium', f'通道名带隐藏意味：{name}', where))
+    # 窗口配置。这两条是 Electron 里最严重的配置错误，必须进 SARIF——
+    # 之前只在 build_asar_report 里生成，那是给 md 用的；SARIF 走这条函数，
+    # 所以 CI 上压根看不到它们。值可能是布尔，也可能是 'true'/'false'
+    # （静态扫出来的、`!0`/`!1` 翻过来的）。
+    prefs = {}
+    for _k, _v in (facts.get('prefs') or {}).items():
+        raw = _v[0] if isinstance(_v, (tuple, list)) and _v else None
+        if isinstance(raw, str) and raw.lower() in ('true', 'false'):
+            prefs[_k] = (raw.lower() == 'true')
+        else:
+            prefs[_k] = raw
+    where = 'webPreferences'
+    if prefs.get('nodeIntegration') is True:
+        findings.append(('high', 'nodeIntegration 开着，页面能直接拿 Node', where))
+    if prefs.get('contextIsolation') is False:
+        findings.append(('high', 'contextIsolation 关着，preload 和页面共用一个世界',
+                         where))
     return findings
 
 

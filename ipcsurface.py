@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.121.0'
+__version__ = '0.122.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -72,9 +72,12 @@ PATTERNS = [
     ('dynamic_invoke', re.compile(r"ipcRenderer(?:\.(?:invoke|send)|\[\s*['\"](?:invoke|send)['\"]\s*\])"
                                   r"\(\s*([^'\"\s][^,)]*\)?)")),
     ('preload', re.compile(r"preload\s*:\s*([^,\n}]+)")),
-    ('contextIsolation', re.compile(r"contextIsolation\s*:\s*(\w+)")),
-    ('nodeIntegration', re.compile(r"nodeIntegration\s*:\s*(\w+)")),
-    ('sandbox', re.compile(r"sandbox\s*:\s*(\w+)")),
+    # 值可能是 `!0` / `!1`——压缩产物里 true/false 就这么写。
+    # 只认 `\w+` 的话，obsidian 的
+    # `webPreferences:{contextIsolation:!1,nodeIntegration:!0}` 一个都抓不到。
+    ('contextIsolation', re.compile(r"contextIsolation\s*:\s*(!?\w+)")),
+    ('nodeIntegration', re.compile(r"nodeIntegration\s*:\s*(!?\w+)")),
+    ('sandbox', re.compile(r"sandbox\s*:\s*(!?\w+)")),
 ]
 
 # IPC 之外的能力面。路线图 P1-5：顶尖的能力面清单不该只有 ipcMain/ipcRenderer。
@@ -1504,6 +1507,20 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
                         dynamic.append((f'{kind.split("_")[1]}: {value}', where))
                 elif kind == 'preload':
                     preloads.append((value, where))
+                elif kind in ('contextIsolation', 'nodeIntegration', 'sandbox'):
+                    # 这三个字段只该出现在 `webPreferences: {...}` 里。
+                    # obsidian 的 app.js 里有个 HTML 布尔属性字典写着 `sandbox:u`
+                    # （意思是「sandbox 这个属性按布尔处理」），纯正则一视同仁，
+                    # 把它当成了窗口配置——于是多报一条「没写 sandbox，走默认值」。
+                    # 守卫：匹配位置往回 300 字符内必须有 `webPreferences`。
+                    back = text[max(0, match.start() - 300):match.start()]
+                    if 'webPreferences' not in back:
+                        continue
+                    if value == '!0':
+                        value = 'true'
+                    elif value == '!1':
+                        value = 'false'
+                    prefs[kind] = (value, where)
                 else:
                     prefs[kind] = (value, where)
 
@@ -3494,8 +3511,33 @@ def collect_evidence(result):
 
 def audit_evidence(facts):
     findings = []
-    for win in facts['windows']:
-        values = {k: v.get('value') for k, v in win['prefs'].items() if v.get('status') == 'literal'}
+    # 窗口信息有两个来源：探针报回来的 `windows`，和静态扫出来的 `prefs`。
+    # 只有前者有 `windows`，纯静态跑的时候它是 None——于是那两条最严重的
+    # 配置告警（nodeIntegration 开着、contextIsolation 关着）压根不会生成，
+    # md 里靠 prefs 直接渲染还能看见，SARIF 里就整个没了。
+    # 这里把 prefs 补成一个合成窗口，保证两条路径都能报出来。
+    windows_for_findings = facts.get('windows')
+    if not windows_for_findings and facts.get('prefs'):
+        synth = {}
+        for _k, _v in facts['prefs'].items():
+            if isinstance(_v, (tuple, list)) and len(_v) >= 2:
+                synth[_k] = {'value': _v[0], 'status': 'literal'}
+        if synth:
+            windows_for_findings = [{'where': '（静态扫描 webPreferences）',
+                                     'preload': None, 'prefs': synth}]
+    for win in (windows_for_findings or []):
+        # 值可能是布尔，也可能是字符串 'true'/'false'（静态扫出来的、还有 `!0`/`!1`
+        # 翻过来的那种）。这里统一成布尔再比——只写 `is True` 的话，
+        # 字符串 'true' 永远不等于 True，那两条高危就一条都报不出来。
+        values = {}
+        for _k, _v in win['prefs'].items():
+            if _v.get('status') != 'literal':
+                continue
+            raw = _v.get('value')
+            if isinstance(raw, str) and raw.lower() in ('true', 'false'):
+                values[_k] = (raw.lower() == 'true')
+            else:
+                values[_k] = raw
         if values.get('nodeIntegration') is True:
             findings.append(('high', 'nodeIntegration 开着，页面能直接拿 Node', win['where']))
         if values.get('contextIsolation') is False:

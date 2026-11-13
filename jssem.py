@@ -93,6 +93,14 @@ def assignments(tokens, start, end, params):
         if tok.text in DECL and i + 1 < end and tokens[i + 1].kind == 'ident':
             name, j = tokens[i + 1].text, i + 2
         elif tok.kind == 'ident' and i + 1 < end and tokens[i + 1].text in ASSIGN_OPS:
+            # 成员赋值 `C.icon = i` 不记成局部变量 `icon = i`。
+            # 那是**对象字段**，是跨语句共享的历史状态，不是本轮参数。
+            # obsidian 的 `set-icon` 就是这么被误报成「rmSync 的实参外部可控」的：
+            # `C.icon` 是上一次存下来的图标名，外面给不进来。
+            # 字段级脏标记要对象敏感分析，这一层不做——宁可不报，不许张冠李戴。
+            if i > 0 and tokens[i - 1].text == '.':
+                i += 1
+                continue
             name, j = tok.text, i + 1
         if name is None:
             i += 1

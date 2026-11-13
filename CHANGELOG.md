@@ -2,6 +2,70 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.122.0 — 你指出的两条修好了，顺着又挖出两条更严重的
+
+### 你指出的
+
+**一、`sandbox:u` 是误报**
+
+`app.js` 里 HTML 布尔属性字典的 `sandbox:u` 被纯正则当成了窗口配置。
+修法：三个 `webPreferences` 字段加守卫——匹配位置往回 300 字符内必须有
+`webPreferences`，没有就跳过。
+
+**二、`set-icon` 的 `rmSync` 归因过度**
+
+`C.icon = i` 被记成了 `icon <- [i]`，**丢掉了 `C.` 前缀**，于是外部参数一路
+传到 `icon`。修法：成员赋值（前面是 `.`）不再记成局部变量——那是对象字段，
+跨语句共享的历史状态，不是本轮参数。
+
+### 顺着挖出来的两条更严重的
+
+**三、`!0` / `!1` 从来没被认出来**
+
+```js
+webPreferences:{contextIsolation:!1,nodeIntegration:!0,...}
+```
+
+`!1` 是 false、`!0` 是 true，压缩产物就这么写。正则 `(\w+)` 匹配不到 `!`。
+
+**所以 obsidian 的 `nodeIntegration: true` 和 `contextIsolation: false` 这两条
+高危配置，工具从第一天起就一直没报出来。** 现在：
+
+```
+prefs: {'contextIsolation': ('false', 'main.js:53'),
+        'nodeIntegration': ('true', 'main.js:53')}
+```
+
+**四、这两条高危没进 SARIF**
+
+改完前三条之后我去看 SARIF，发现里面只有混淆指纹。查了三轮才找到根因：
+
+- 第一次：改 `build_asar_report` —— **改错函数**，那条路只给 md 用
+- 第二次：修布尔比较 —— `values.get('nodeIntegration') is True` 拿字符串
+  `'true'` 去比，永远为假。**改对了但不是根因**
+- 第三次：发现 CLI 走的是 `jsreport.audit_asar`，**它压根没有窗口配置检查**
+
+现在 SARIF 里：
+
+```
+error | ipcsurface/electron/node-integration
+error | ipcsurface/electron/context-isolation
+```
+
+### 自查做了四组
+
+| 用例 | 期望 | 结果 |
+| --- | --- | --- |
+| 真配置 + `!0`/`!1` | 抓到三个字段 | OK |
+| 真配置 + 普通布尔 | 抓到两个 | OK |
+| HTML 属性字典 `sandbox:u` | 不抓 | OK |
+| 远处无关的 `webPreferences` | 不抓 | OK |
+| `C.icon = i` | `icon` 不脏 | OK |
+| `let icon = i` | `icon` 脏 | OK |
+
+454 用例、四道闸。
+
+
 ## 0.121.0 — 闭环合上了：报告里每条发现都带「参数可控性」
 
 L1/L2 做完了，但报告里还是人读源码得出的那几行。这一版把工具判出来的东西
