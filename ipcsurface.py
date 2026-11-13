@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.125.0'
+__version__ = '0.126.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/26'
+SCHEMA_VERSION = 'ipcsurface/asar/27'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2334,16 +2334,23 @@ def channel_path_taint_map(files, max_files=12):
             for name, v in out.items()}
 
 
-def code_snippet(text, offset, span=48):
+def code_snippet(text, offset, span=48, limit=None, floor=None):
     """给一个字符偏移，切出可读的一小段源码。
 
     压缩产物整包一行，行号全是同一个数，所以报告里报位置只能给片段。
     前后各留一点，让人能看见这句在做什么。
+
+    `limit` / `floor` 是这一段不能越过、不能低于的字符位置——不传就会切到
+    隔壁处理函数的代码，读起来像「这个通道的字段被另一个通道用了」。
     """
     if not text:
         return ''
     lo = max(0, offset - span // 3)
     hi = min(len(text), offset + span)
+    if floor is not None:
+        lo = max(lo, floor)
+    if limit is not None:
+        hi = min(hi, limit)
     return text[lo:hi].replace('\n', ' ').replace('\r', ' ').strip()
 
 
@@ -2394,6 +2401,8 @@ def channel_state_writes_map(files, max_files=12):
                         break
             if not span:
                 continue
+            body_end = tokens[span[1]].start if span[1] < len(tokens) else len(src)
+            body_start = tokens[span[0]].start if span[0] < len(tokens) else 0
             try:
                 params = handler_params(tokens, span[0], span[1])
                 table = jssem.assignments(tokens, span[0], span[1], params)
@@ -2413,8 +2422,12 @@ def channel_state_writes_map(files, max_files=12):
                         'src': src_name,
                         'file': rel,
                         'write_at': off,
-                        'write_snippet': code_snippet(src, off),
-                        'reads': [{'at': r, 'snippet': code_snippet(src, r)}
+                        'write_snippet': code_snippet(src, off, limit=body_end,
+                                                      floor=body_start),
+                        'reads': [{'at': r[0], 'kind': r[1],
+                                   'before': r[0] < off,
+                                   'snippet': code_snippet(src, r[0], limit=body_end,
+                                                           floor=body_start)}
                                   for r in reads],
                     })
     deduped = {}

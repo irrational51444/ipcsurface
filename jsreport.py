@@ -1083,10 +1083,15 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                 snippet = lambda s: (s or '').replace('`', "'")
                 out.append(f'  - `{name}`：字段 `{row["field"]}` ← `{row["src"]}`')
                 out.append(f'    - 写：{snippet(row["write_snippet"])}')
-                if row.get('reads'):
-                    for item in row['reads']:
-                        out.append(f'    - 读：{snippet(item["snippet"])}')
-                else:
+                reads = [r for r in (row.get('reads') or []) if r.get('kind') != 'delete']
+                deletes = [r for r in (row.get('reads') or []) if r.get('kind') == 'delete']
+                for item in reads:
+                    where = '写入**之前**，用的是上一次请求留下的值' if item.get('before') \
+                        else '写入之后'
+                    out.append(f'    - 读（{where}）：{snippet(item["snippet"])}')
+                for item in deletes:
+                    out.append(f'    - 删：{snippet(item["snippet"])}')
+                if not reads and not deletes:
                     out.append('    - 读：这个函数体里没再读它')
         out.append('')
         out.append('> **这一层到此为止。** 状态字段的生命周期跨请求，要知道下一次读它时'

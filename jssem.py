@@ -97,7 +97,10 @@ def state_writes(tokens, start, end, tainted):
             continue
         if i in writes:
             continue
-        reads.setdefault(tok.text, []).append(tok.start)
+        # `delete C.icon` 不是读，是清空。混在一起会让人以为有四处用到了它。
+        # token 序列是 delete(ident) C(ident) . icon(ident)，所以往回数三格。
+        kind = 'delete' if i >= 3 and tokens[i - 3].text == 'delete' else 'read'
+        reads.setdefault(tok.text, []).append((tok.start, kind))
     out = [(field, src, off, tuple(sorted(set(reads.get(field, [])))))
            for field, src, off in writes.values()]
     out.sort(key=lambda r: (r[2], r[0]))

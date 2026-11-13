@@ -477,3 +477,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：channel_path_taint 的每条记录多了第 4 项 escape verdict（escapes/anchored/root_unknown，判断 join 或 resolve 能不能真跳出根目录），三元组变四元组，schema 从 asar/25 升到 asar/26。下游若按 asar/25 解这三项会只拿到前两个元素，需先校验 schema 再取 verdict。
+
+## 2026-11-14 01:18
+
+- 变了的字段：fingerprint, schema
+- 理由：channel_state_writes 的每条读点多了 kind（read/delete）和 before（是否在写入点之前）两个字段，旧的读点只有 at 和 snippet，schema 从 asar/26 升到 asar/27。下游按 asar/26 取读点时会把 delete 也当成读，需先校验 schema 再按 kind 过滤。
