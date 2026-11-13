@@ -382,3 +382,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.106.0 版本号：md 提示段措辞改了，unresolved_reasons 不变
+
+## 2026-11-13 15:21
+
+- 变了的字段：fingerprint
+- 理由：0.107.0 版本号：fingerprint 里的 version 变，字段不变

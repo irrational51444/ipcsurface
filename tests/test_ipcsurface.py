@@ -3619,7 +3619,7 @@ class SinkEvidenceTests(unittest.TestCase):
             self.skipTest('靶场没构建')
         facts, count, total = ipc.analyse_asar(asar)
         md = ipc.render_asar(asar, facts, count, total)
-        self.assertIn('| 通道 | API | 类别 | 档位 | 证据 | 位置 | 跳数 | 经过 |', md)
+        self.assertIn('| 通道 | API | 类别 | 档位 | 见证 | 证据 | 位置 | 跳数 | 经过 |', md)
         self.assertGreater(jsreport.count_sink_rows(md), 0, 'md 的 sink 表格是空的')
 
     def test_md_rows_match_json_evidence(self):

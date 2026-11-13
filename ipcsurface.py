@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.106.0'
+__version__ = '0.107.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -4254,6 +4254,14 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                     # 软档本来就不可信，但「不可信到什么程度」要能看出来。
                     depth = ('full' if has_path else
                              'locate_only' if has_at else 'name_only')
+                    # 哪几路口径看见了这条 API。两路都看见才算双口径——
+                    # 一路看见只能算「一条线索」，这个区别以前只藏在 tier 名字里，
+                    # 人得自己推。现在并排写出来。
+                    seen_by = []
+                    if api in ((facts.get('channel_sinks') or {}).get(ch) or []):
+                        seen_by.append('name')
+                    if api in ((facts.get('channel_sinks_ast') or {}).get(ch) or []):
+                        seen_by.append('ast')
                     evidence.setdefault(ch, {})[api] = {
                         'tier': tier,
                         'hops': step.get('hops'),
@@ -4262,6 +4270,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                         # 不然人得自己去全包里找——那就不叫「减少复核成本」了。
                         'at': step.get('at') or fallback_at,
                         'depth': depth,
+                        'seen_by': seen_by,
                     }
             facts['channel_sink_evidence'] = evidence if evidence else None
         else:
