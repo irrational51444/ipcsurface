@@ -53,6 +53,57 @@ def _end_of_statement(tokens, i, limit):
     return limit
 
 
+def state_writes(tokens, start, end, tainted):
+    """外部值落进对象字段的地方：`C.icon = i`，以及同体内读这个字段的位置。
+
+    这条链**跟不到下一轮**——`C` 是模块级状态，静态分析没有执行历史，
+    不知道下一次 `rmSync(C.icon)` 时 C.icon 里是什么。跨请求的对象生命周期
+    要堆建模 + 过程间分析，那是做不到的那层，不假装能做。
+
+    所以两头都给出来：
+      写入点：`C.icon = i` —— 外部值从哪个参数进来；
+      读取点：`C.icon` 在本体里被读过的每一处 —— 人工一眼能连上「谁在用它」。
+
+    两个都是纯静态枚举，不推演、不判断可控性。
+
+    压缩产物的行号没有信息量（整包一行），所以位置一律给**字符偏移**。
+
+    返回 [(字段名, 来源变量, 写入偏移, (读取偏移, ...))]。
+    """
+    hits = []
+    limit = min(end, len(tokens) - 2)
+    writes = {}
+    for i in range(start, limit):
+        tok = tokens[i]
+        if tok.kind != 'ident':
+            continue
+        if i < 2 or tokens[i - 1].text != '.':
+            continue
+        if tokens[i + 1].text != '=':
+            continue
+        stop = _end_of_statement(tokens, i + 2, end)
+        rhs = tokens[i + 2:stop]
+        src = [t.text for t in rhs if t.kind == 'ident' and t.text in tainted]
+        if src:
+            writes[i] = (tok.text, src[0], tok.start)
+    if not writes:
+        return []
+    reads = {}
+    for i in range(start, limit):
+        tok = tokens[i]
+        if tok.kind != 'ident':
+            continue
+        if i < 2 or tokens[i - 1].text != '.':
+            continue
+        if i in writes:
+            continue
+        reads.setdefault(tok.text, []).append(tok.start)
+    out = [(field, src, off, tuple(sorted(set(reads.get(field, [])))))
+           for field, src, off in writes.values()]
+    out.sort(key=lambda r: (r[2], r[0]))
+    return out
+
+
 def _join_root(rhs):
     """`X.join(a, b, ...)` 返回第一个实参 a 的 tokens——路径拼接里 a 是根。
 

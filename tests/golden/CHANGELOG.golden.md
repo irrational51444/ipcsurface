@@ -467,3 +467,8 @@
 
 - 变了的字段：fingerprint
 - 理由：参数级污点：每个脏实参都记（renameSync 的 i 和 c 都标）；join 只按根传播
+
+## 2026-11-14 01:00
+
+- 变了的字段：fingerprint, schema
+- 理由：新增 facts 字段 channel_state_writes（外部值写进状态字段的写入点与读点），schema 从 asar/24 升到 asar/25，version 同步到 0.124.0。下游若按 asar/24 解包需先校验 schema 再取字段，未登记的消费方会直接看到新顶层键。

@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.123.0'
+__version__ = '0.124.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/24'
+SCHEMA_VERSION = 'ipcsurface/asar/25'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2333,6 +2333,104 @@ def channel_path_taint_map(files, max_files=12):
             for name, v in out.items()}
 
 
+def code_snippet(text, offset, span=48):
+    """给一个字符偏移，切出可读的一小段源码。
+
+    压缩产物整包一行，行号全是同一个数，所以报告里报位置只能给片段。
+    前后各留一点，让人能看见这句在做什么。
+    """
+    if not text:
+        return ''
+    lo = max(0, offset - span // 3)
+    hi = min(len(text), offset + span)
+    return text[lo:hi].replace('\n', ' ').replace('\r', ' ').strip()
+
+
+def channel_state_writes_map(files, max_files=12):
+    """L1.5：外部值落进模块级状态字段（`C.icon = i`）。
+
+    这一层补的是「两跳之间断开」的那种漏判。
+
+    零跳看不见它：危险调用收到的是 `C.icon`，不是 `i`。
+    一跳也看不见它：中间没有 `path.join`。
+    三跳（跨函数）也看不见它：`i` 根本没被传进别的函数。
+
+    实际情况是：参数 `i` 被写进对象字段 `C.icon`，五条语句之后
+    `rmSync(C.icon)` 拿它去删文件——中间隔着一个模块级变量。
+
+    静态分析没有执行历史，**不能证明**下一次读 `C.icon` 时里面还是 `i`，
+    所以这里只报「外部值进了状态字段」，不报「那处读就是可控的」。
+    证据档位固定为 `state`：事实成立，链路待人工确认。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    if not names:
+        return None
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return None
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in with_ipc[:max_files]:
+        src = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(src)
+            objects = parse_object_literals(src)
+            defs = jsparse.function_defs(tokens)
+            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+        except Exception:
+            continue
+        for reg in regs:
+            span = reg.get('span')
+            if not span and reg.get('target'):
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
+            if not span:
+                continue
+            try:
+                params = handler_params(tokens, span[0], span[1])
+                table = jssem.assignments(tokens, span[0], span[1], params)
+                # 参数自己也算脏源。以前只取 tainted_names(table)，那是赋值语句左边
+                # 的集合，形参压根不在里面——`C.icon = i` 的 i 是形参，于是整层空转。
+                dirty = set(params) | set(jssem.tainted_names(table))
+                dirty |= jssem.callback_taints(tokens, span[0], span[1], dirty)
+                dirty |= jssem.loop_taints(tokens, span[0], span[1], dirty)
+                dirty |= jssem.catch_taints(tokens, span[0], span[1], dirty)
+                hits = jssem.state_writes(tokens, span[0], span[1], dirty)
+            except Exception:
+                continue
+            if hits:
+                for field, src_name, off, reads in hits:
+                    out.setdefault(reg['channel'], []).append({
+                        'field': field,
+                        'src': src_name,
+                        'file': rel,
+                        'write_at': off,
+                        'write_snippet': code_snippet(src, off),
+                        'reads': [{'at': r, 'snippet': code_snippet(src, r)}
+                                  for r in reads],
+                    })
+    deduped = {}
+    for name, rows in out.items():
+        seen = set()
+        keep = []
+        for row in rows:
+            key = (row['field'], row['write_at'])
+            if key in seen:
+                continue
+            seen.add(key)
+            keep.append(row)
+        keep.sort(key=lambda r: r['write_at'])
+        deduped[name] = keep
+    return deduped
+
+
 def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     """每条通道能碰到哪些危险 API：同文件可达 + 跨文件一到两跳。
 
@@ -4374,6 +4472,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # 先算脏实参表：evidence 要用它，顺序反了就永远取到空。
         facts['channel_tainted'] = channel_taint_map(files)
         facts['channel_path_taint'] = channel_path_taint_map(files)
+        facts['channel_state_writes'] = channel_state_writes_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。
         # 经过一次函数处理（比如 F.join(v, i)）就不算——那要内建语义，是另一层。

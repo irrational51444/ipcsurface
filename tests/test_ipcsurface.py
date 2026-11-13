@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/24')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/25')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4103,6 +4103,57 @@ function h(e, i, c) {
     def test_plain_assignment_unaffected(self):
         dirty = self.taint('let q = i;')
         self.assertIn('q', dirty)
+
+
+class StateWriteTests(unittest.TestCase):
+    """External value written into a state field, plus who reads it in the same body."""
+
+    def analyse(self, body, params=('e', 'i', 'c')):
+        import jsparse
+        import jssem
+
+        src = 'function h(e, i, c) {' + body + '}'
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        rows = jssem.state_writes(toks, d0['body_start'], d0['body_end'], set(params))
+        return rows, src
+
+    def test_member_assignment_is_a_write(self):
+        rows, _ = self.analyse('C.icon = i;')
+        self.assertEqual(len(rows), 1)
+        field, src_name, off, reads = rows[0]
+        self.assertEqual(field, 'icon')
+        self.assertEqual(src_name, 'i')
+
+    def test_offset_points_at_the_field_name(self):
+        rows, src = self.analyse('C.icon = i;')
+        off = rows[0][2]
+        self.assertEqual(src[off:off + 4], 'icon')
+
+    @staticmethod
+    def non_empty(items, why):
+        """对空集合说「全都满足」是平凡真，先确认非空。"""
+        assert items, f'{why}：集合是空的，接下来断言的就是空集'
+        return items
+
+    def test_read_points_in_same_body_are_reported(self):
+        rows, src = self.analyse('if (C.icon) { rm(C.icon); } C.icon = i;')
+        reads = self.non_empty(rows[0][3], '同体内的读点')
+        self.assertEqual(len(reads), 2, reads)
+        for off in reads:
+            self.assertEqual(src[off:off + 4], 'icon')
+
+    def test_write_only_has_no_read_points(self):
+        rows, _ = self.analyse('C.appMenu = c;')
+        self.assertEqual(rows[0][3], ())
+
+    def test_plain_local_variable_is_not_a_state_write(self):
+        rows, _ = self.analyse('let q = i;')
+        self.assertEqual(rows, [])
+
+    def test_constant_rhs_is_not_a_write(self):
+        rows, _ = self.analyse('C.icon = "abc";')
+        self.assertEqual(rows, [])
 
 
 if __name__ == '__main__':

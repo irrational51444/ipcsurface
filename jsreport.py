@@ -1070,6 +1070,30 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                    '跨函数传参只跟到形参对应的实参，不做完整的别名分析。')
         out.append('')
 
+    state_writes = facts.get('channel_state_writes') or {}
+    if state_writes:
+        total = sum(len(v) for v in state_writes.values())
+        out.append('## 外部值写进了状态字段')
+        out.append('')
+        out.append(f'{len(state_writes)} 条通道里，请求带进来的值被写进了模块级字段，'
+                   f'共 {total} 处。两头都给：写的地方、同一个处理函数里读它的地方。')
+        out.append('')
+        for name in sorted(state_writes):
+            for row in state_writes[name]:
+                snippet = lambda s: (s or '').replace('`', "'")
+                out.append(f'  - `{name}`：字段 `{row["field"]}` ← `{row["src"]}`')
+                out.append(f'    - 写：{snippet(row["write_snippet"])}')
+                if row.get('reads'):
+                    for item in row['reads']:
+                        out.append(f'    - 读：{snippet(item["snippet"])}')
+                else:
+                    out.append('    - 读：这个函数体里没再读它')
+        out.append('')
+        out.append('> **这一层到此为止。** 状态字段的生命周期跨请求，要知道下一次读它时'
+                   '里面是什么，得做堆建模和过程间分析——那是我做不到的，不假装能做。'
+                   '这里只给两个位置，它们之间连不连得上，得人去看。')
+        out.append('')
+
 
     harvested = facts.get('harvested') or {}
     if harvested:
