@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/28')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/29')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4103,6 +4103,32 @@ function h(e, i, c) {
     def test_plain_assignment_unaffected(self):
         dirty = self.taint('let q = i;')
         self.assertIn('q', dirty)
+
+
+class ArgShapeTests(unittest.TestCase):
+    """How directly the dirty value is handed over: bare, or wrapped in an expression."""
+
+    def analyse(self, body):
+        import jsparse
+        import jssem
+
+        src = 'function h(e, i, c) {' + body + '}'
+        toks = jsparse.tokenize(src)
+        d0 = [x for x in jsparse.function_defs(toks) if x['name'] == 'h'][0]
+        return jssem.flows_into_danger(toks, d0['body_start'], d0['body_end'], ['e', 'i', 'c'])
+
+    def test_bare_argument_is_direct(self):
+        hits = self.analyse('m.writeFileSync(i, "x");')
+        self.assertEqual([h[3] for h in hits], ['direct'], hits)
+
+    def test_wrapped_argument_is_marked(self):
+        hits = self.analyse('m.writeFileSync(String(i), "x");')
+        self.assertEqual([h[3] for h in hits], ['wrapped'], hits)
+
+    def test_shape_survives_two_arguments(self):
+        hits = self.analyse('m.renameSync(i, String(c));')
+        shapes = sorted(h[3] for h in hits)
+        self.assertEqual(shapes, ['direct', 'wrapped'], hits)
 
 
 class EscapeVerdictTests(unittest.TestCase):

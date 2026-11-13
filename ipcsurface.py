@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.127.0'
+__version__ = '0.128.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/28'
+SCHEMA_VERSION = 'ipcsurface/asar/29'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2273,7 +2273,8 @@ def channel_taint_map(files, max_files=12):
                 out.setdefault(reg['channel'], set()).update(flows)
             if deep:
                 for _fn, _api, _arg, _line in deep:
-                    out.setdefault(reg['channel'], set()).add((_api, _arg, _line))
+                    out.setdefault(reg['channel'], set()).add(
+                        (_api, _arg, _line, '跨函数'))
     return {name: sorted(set(v)) for name, v in out.items()}
 
 
@@ -4492,8 +4493,14 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # 经过一次函数处理（比如 F.join(v, i)）就不算——那要内建语义，是另一层。
         tainted_args = {}
         for _ch, _items in (facts.get('channel_tainted') or {}).items():
-            for _api, _arg, _line in (_items or []):
-                tainted_args.setdefault((_ch, _api), []).append(_arg)
+            for _row in (_items or []):
+                _api, _arg = _row[0], _row[1]
+                _shape = _row[3] if len(_row) > 3 else 'direct'
+                # 「有多直接」要看得见：原样交出去的写 `c(直接)`，
+                # 被包在一层表达式里的写 `i(经转换)`。
+                _label = _arg if _shape == 'direct' else '%s(%s)' % (
+                    _arg, '经转换' if _shape == 'wrapped' else _shape)
+                tainted_args.setdefault((_ch, _api), []).append(_label)
         # L2：脏值经过一次 path.join/resolve/normalize。零跳那层看不见这种情况。
         path_tainted = {}
         for _ch, _items in (facts.get('channel_path_taint') or {}).items():

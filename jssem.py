@@ -1234,7 +1234,7 @@ def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None):
         seen.add(key)
         inner = flows_into_danger(tokens, target['body_start'], target['body_end'],
                                   dirty_params)
-        for api, arg, line in inner:
+        for api, arg, line, _shape in inner:
             hits.append((tok.text, api, arg, line))
         if depth > 1:
             hits.extend(
@@ -1290,11 +1290,21 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
         # 而真正要修的是 `c`（目标路径零校验）。
         # 每个脏实参都要记，不能找到一个就走：两个都来自外部就两个都写出来。
         stop = _close_paren(tokens, open_at)
+        arg_lists, _ignored = _split_args(tokens, open_at)
         seen_here = set()
         for other in tokens[open_at + 1:stop]:
             if (other.kind == 'ident' and other.text in tainted
                     and other.text not in seen_here):
                 seen_here.add(other.text)
-                hits.append((name, other.text, tok.line + 1))
+                # 「有多直接」：这个实参整个就是那个变量，还是它被包在一层
+                # 表达式里（`String(i)`、`i.trim()`、`v + i`）。前者是原样
+                # 交出去的，后者中间还有别的东西在动它。
+                shape = 'direct'
+                for arg in arg_lists:
+                    if any(t is other for t in arg):
+                        if len(arg) != 1:
+                            shape = 'wrapped'
+                        break
+                hits.append((name, other.text, tok.line + 1, shape))
     return hits
 
