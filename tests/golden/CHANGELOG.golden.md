@@ -402,3 +402,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.110.0 module_aliases 支持解构式 require，跨文件直接调用能跟下去；target 靶场里有解构 require 的话 channel_sinks 会变多
+
+## 2026-11-13 15:55
+
+- 变了的字段：fingerprint
+- 理由：0.111.0 版本号：fingerprint 里的 version 变

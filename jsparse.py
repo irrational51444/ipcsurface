@@ -411,6 +411,30 @@ def function_defs(tokens):
                     found.append({'name': tok.text, 'line': tok.line,
                                   'params': _param_names(tokens, i + 1, close),
                                   'body_start': close + 1, 'body_end': end})
+    # `const f = function (…) { … }` / `exports.f = function (…) { … }`。
+    # 这类**函数表达式**以前完全没认：箭头函数认，`function` 表达式不认，
+    # 是漏的。真实打包产物里这种写法非常多，漏了就等于那一跳断在那儿。
+    for i, tok in enumerate(tokens):
+        if tok.text != 'function' or i + 1 >= len(tokens):
+            continue
+        if tokens[i + 1].text != '(':
+            continue        # 有名字的是声明，上面那条分支管了
+        prev = i - 1
+        if prev < 1 or tokens[prev].text != '=':
+            continue
+        prev -= 1
+        if tokens[prev].kind != 'ident':
+            continue
+        # 排除参数默认值：`function f(a = function () {})` 里 `a` 不是函数名
+        if prev >= 1 and tokens[prev - 1].text in ('(', ','):
+            continue
+        close = match_brace(tokens, i + 1)
+        if close + 1 < len(tokens) and tokens[close + 1].text == '{':
+            end = match_brace(tokens, close + 1)
+            found.append({'name': tokens[prev].text, 'line': tok.line,
+                          'params': _param_names(tokens, i + 1, close),
+                          'body_start': close + 1, 'body_end': end})
+
     # 箭头函数：const f = (…) => …（只认块体或单表达式）
     for i, tok in enumerate(tokens):
         if tok.kind != 'ident' or i + 1 >= len(tokens):
