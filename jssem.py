@@ -1132,7 +1132,7 @@ def callback_taints(tokens, start, end, tainted):
 PATH_FUNCS = {'join', 'resolve', 'normalize'}
 
 
-def path_taint(tokens, start, end, tainted):
+def path_taint(tokens, start, end, tainted, params=None, locals_=None):
     """L2 一跳：脏值喂进了 `path.join` / `resolve` / `normalize`。
 
     为什么这层重要：`F.join(v, i)` 里 `i` 带 `..` 会跳出 `v`。零跳看不出来，
@@ -1167,25 +1167,31 @@ def path_taint(tokens, start, end, tainted):
                     dirty.append('..')
         if dirty:
             hits.append((tok.text, dirty, tok.line,
-                         join_escape_verdict(tokens, i + 1, tok.text)))
+                         join_escape_verdict(tokens, i + 1, tok.text,
+                                             params=params, locals_=locals_)))
     return hits
 
 
-def join_escape_verdict(tokens, open_at, func='join'):
+def join_escape_verdict(tokens, open_at, func='join', params=None, locals_=None):
     """`join` / `resolve` 的调用括号下标 → 能不能真跳出根目录。
 
     只判三件静态事实，不推演运行时值：
 
-      1. 第一个实参是不是**字面量常量**——锚点得是真常量才算锚，
-         变量和调用的返回值都算「根未知」；
+      1. 第一个实参是不是**字面量常量**——锚点得是真常量才算锚；
       2. 有没有 `..`——字符串字面量里的，或者拼接中单独出现的两个点；
       3. 有没有绝对路径——`/` 或 `\\` 开头，或者带盘符。
 
     `resolve` 和 `join` 不是一回事：`resolve('/a', '/etc')` 会跳到 `/etc`，
     `join('/a', '/etc')` 只是拼成 `/a/etc`。所以绝对路径只对 `resolve` 算逃逸。
 
-    返回 'escapes' | 'anchored' | 'root_unknown'。
-    判不出来的一律 'root_unknown'，不往有利方向猜。
+    根不是字面量时，再分一层「为什么不知道」：
+
+      - `root_param`：根是这条处理函数的形参——值从外面进来，静态没有内容；
+      - `root_local`：根在同体内被赋过值，但赋的不是字面量；
+      - `root_unknown`：根不在这条通道看得见的作用域里，多半是模块级或外层闭包。
+        压缩产物的根大量落在这里，解开要重建模块图，这一层不做。
+
+    判不出来的一律 `root_unknown`，不往有利方向猜。
     """
     args, _close = _split_args(tokens, open_at)
     if not args:
@@ -1211,6 +1217,11 @@ def join_escape_verdict(tokens, open_at, func='join'):
     if func == 'resolve' and has_absolute:
         return 'escapes'
     if not literal_root:
+        root_name = first[0].text if len(first) == 1 and first[0].kind == 'ident' else None
+        if root_name and params and root_name in params:
+            return 'root_param'
+        if root_name and locals_ and root_name in locals_:
+            return 'root_local'
         return 'root_unknown'
     return 'anchored'
 

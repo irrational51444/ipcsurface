@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.130.0'
+__version__ = '0.131.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/30'
+SCHEMA_VERSION = 'ipcsurface/asar/31'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2325,7 +2325,9 @@ def channel_path_taint_map(files, max_files=12):
                 dirty |= jssem.callback_taints(tokens, span[0], span[1], dirty)
                 dirty |= jssem.loop_taints(tokens, span[0], span[1], dirty)
                 dirty |= jssem.catch_taints(tokens, span[0], span[1], dirty)
-                hits = jssem.path_taint(tokens, span[0], span[1], dirty)
+                hits = jssem.path_taint(tokens, span[0], span[1], dirty,
+                                        params=params,
+                                        locals_=set(table.keys()))
             except Exception:
                 continue
             if hits:
@@ -2333,6 +2335,15 @@ def channel_path_taint_map(files, max_files=12):
     return {name: sorted({(fn, tuple(args), line, verdict)
                           for fn, args, line, verdict in v})
             for name, v in out.items()}
+
+
+VERDICT_LABEL = {
+    'anchored': '锚定',
+    'escapes': '可跳出',
+    'root_param': '根是形参',
+    'root_local': '根是局部变量',
+    'root_unknown': '根看不见',
+}
 
 
 def code_snippet(text, offset, span=48, limit=None, floor=None):
@@ -4516,7 +4527,8 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 _fn, _args = _row[0], _row[1]
                 _verdict = _row[3] if len(_row) > 3 else 'root_unknown'
                 path_tainted.setdefault(_ch, []).append(
-                    '%s(%s):%s' % (_fn, ','.join(_args), _verdict))
+                    '%s(%s):%s' % (_fn, ','.join(_args),
+                                   VERDICT_LABEL.get(_verdict, _verdict)))
 
         _tier_src = ast_sinks if ast_sinks is not None else sinks
         if _tier_src is not None:

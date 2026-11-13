@@ -502,3 +502,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.130.0，报告字段没有任何变化；golden 快照里的 version 字段跟着变，下游按版本号做断言的适配一次即可。
+
+## 2026-11-14 02:12
+
+- 变了的字段：fingerprint, schema
+- 理由：channel_path_taint 的 escape verdict 多了 root_param 和 root_local 两种取值，用来区分「根是形参」「根是局部变量」和「根在作用域外」，旧的 root_unknown 含义变窄，schema 从 asar/30 升到 asar/31。下游若按字符串全等匹配 root_unknown，需要先校验 schema 再补两种新取值。

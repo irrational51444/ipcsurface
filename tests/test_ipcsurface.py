@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/30')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/31')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4247,6 +4247,24 @@ class EscapeVerdictTests(unittest.TestCase):
 
     def test_variable_root_is_unknown(self):
         self.assertEqual(self.verdict('F.join(v, i)'), 'root_unknown')
+
+    def test_param_root_says_so(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('F.join(v, i)')
+        open_at = [i for i, t in enumerate(toks) if t.text == '('][0]
+        got = jssem.join_escape_verdict(toks, open_at, 'join', params=['v', 'i'])
+        self.assertEqual(got, 'root_param', '根是形参时要说清「值从外面进来」')
+
+    def test_local_root_says_so(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('F.join(v, i)')
+        open_at = [i for i, t in enumerate(toks) if t.text == '('][0]
+        got = jssem.join_escape_verdict(toks, open_at, 'join', locals_={'v'})
+        self.assertEqual(got, 'root_local', '根是同体里赋过值的变量，也要分出来')
 
     def test_resolve_with_absolute_escapes(self):
         self.assertEqual(self.verdict('F.resolve(v, "/etc/passwd")', 'resolve'), 'escapes')
