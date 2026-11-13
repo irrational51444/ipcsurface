@@ -2,6 +2,54 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.114.0 — 术语翻成行业话，SARIF 规则 id 固定下来
+
+### 一、`docs/terminology.md`
+
+本项目的档位名是自己起的。这篇把它们翻成行业里通行的说法：
+
+| 本项目的词 | 行业里通常叫 |
+| --- | --- |
+| `direct` | intra-procedural（过程内） |
+| `chain` | inter-procedural（过程间） |
+| `ambiguous` | name resolution ambiguity（名字解析歧义） |
+| `ast_only` | AST-only / syntax-directed |
+
+还写清了两件容易混的事：**可达性 ≠ 污点分析**（用污点算可达性会把「自己拼路径再写
+文件」全判成 0，实测过），**召回率从没真测过**（人工只核工具报出的名字，那是循环论证）。
+
+### 二、SARIF 的规则 id 固定了
+
+以前是从中文标题 slug 出来，中文转 ASCII 后常常是空的，只能退回 hash：
+
+```
+ipcsurface/finding-91e4f3660c
+```
+
+这种 id 别人没法写抑制规则——换一版 hash 就变了。现在按标题前缀给固定 id：
+
+```
+ipcsurface/electron/node-integration
+ipcsurface/electron/context-isolation
+ipcsurface/ipc/no-sender-check
+ipcsurface/ipc/hidden-name
+ipcsurface/ipc/preload-mismatch
+ipcsurface/native/injection-capable
+ipcsurface/obfuscation/strong-fingerprint
+```
+
+标题文案以后改了，id 也不变。另外加了 `helpUri`，指向对比文档。
+
+### 为什么这两条算「专业」
+
+不是显得专业。是因为**自造术语最大的风险是别人看不懂就当你没说**；**hash 形式的
+规则 id 最大的问题是别人没法在 CI 里引用它**。
+
+把话翻译成行业语言，别人才有办法判断你说得对不对——包括判断你说错了。
+
+443 用例、四道闸。
+
+
 ## 0.113.0 — 和 Electronegativity 跑了一遍，把两边摆在一起
 
 `docs/comparison.md` 新增。同一份 obsidian.asar，两个工具各跑一遍。

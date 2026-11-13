@@ -417,3 +417,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.113.0 新增 docs/comparison.md 与 CHANGELOG 里版本号变；报告字段不变
+
+## 2026-11-13 16:21
+
+- 变了的字段：fingerprint
+- 理由：0.114.0 SARIF 规则 id 改成固定值 + 新增 terminology 文档；报告快照字段不变，fingerprint 里的 version 变

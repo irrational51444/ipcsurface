@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.113.0'
+__version__ = '0.114.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -4367,6 +4367,44 @@ EXIT_CODES = {
 }
 
 
+# SARIF 的规则 id 必须是稳定的、ASCII 的：CI 平台拿它做抑制、分类、跟历史比。
+# 以前是从中文标题 slug 出来，中文转 ASCII 后常常是空的，只能退回 hash——
+# `ipcsurface/finding-3f2a1b9c0d` 这种 id，别人没法在配置里写抑制规则。
+# 现在按标题前缀给固定 id，标题文案改了 id 也不变。
+SARIF_RULES = (
+    ('nodeIntegration 开着', 'ipcsurface/electron/node-integration',
+     'Renderer can reach Node.js APIs directly.', 'error'),
+    ('contextIsolation 关着', 'ipcsurface/electron/context-isolation',
+     'Preload and page share one JavaScript world.', 'error'),
+    ('没写 sandbox', 'ipcsurface/electron/sandbox-default',
+     'Sandbox not set; Electron default applies.', 'note'),
+    ('一条 sender 校验都没有', 'ipcsurface/ipc/no-sender-check',
+     'No IPC sender validation; any page can call these channels.', 'error'),
+    ('通道名带隐藏意味', 'ipcsurface/ipc/hidden-name',
+     'Channel name suggests hidden or privileged behaviour.', 'warning'),
+    ('主进程注册了，preload 没走这条', 'ipcsurface/ipc/preload-mismatch',
+     'Registered in main but not exposed through preload.', 'warning'),
+    ('既会改别人的内存', 'ipcsurface/native/injection-capable',
+     'Can write other processes\' memory and create threads in them.', 'error'),
+    ('强混淆指纹', 'ipcsurface/obfuscation/strong-fingerprint',
+     'Strong obfuscation fingerprint.', 'warning'),
+    ('弱混淆指纹', 'ipcsurface/obfuscation/weak-fingerprint',
+     'Weak obfuscation fingerprint.', 'note'),
+    ('这个包动过手脚', 'ipcsurface/obfuscation/flagged',
+     'Likely packed or obfuscated; treat the channel list as partial.', 'warning'),
+)
+
+SARIF_HELP_URI = 'https://github.com/irrational51444/ipcsurface/blob/main/docs/comparison.md'
+
+
+def sarif_rule_for(text):
+    """按标题前缀找稳定 id。找不到返回 None，调用方退回 hash。"""
+    for prefix, rule_id, desc, level in SARIF_RULES:
+        if text.startswith(prefix):
+            return rule_id, desc, level
+    return None
+
+
 def render_sarif(target, findings, version):
     """SARIF 2.1.0。CI 平台直接能读，不用为每个平台写一遍解析。
 
@@ -4378,14 +4416,22 @@ def render_sarif(target, findings, version):
     for level, text, where in findings:
         # 规则 id 要是 ASCII：中文标题转成 slug 会空，空了就用文字摘要兜底，
         # 同一条规则每次都得到同一个 id，CI 才能拿它做抑制和分类。
-        slug = re.sub(r'[^A-Za-z0-9]+', '-', text.split('：')[0])[:40].strip('-')
-        if not slug:
-            slug = 'finding-' + hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]
-        rule_id = 'ipcsurface/' + slug.lower()
+        known = sarif_rule_for(text)
+        if known is not None:
+            rule_id, desc, _known_level = known
+            slug = rule_id.rsplit('/', 1)[-1]
+        else:
+            # 没登记的标题：退回 hash，但至少 id 是稳定的（同样的文案得同样的 id）。
+            slug = re.sub(r'[^A-Za-z0-9]+', '-', text.split('：')[0])[:40].strip('-')
+            if not slug:
+                slug = 'finding-' + hashlib.sha1(text.encode('utf-8')).hexdigest()[:10]
+            rule_id = 'ipcsurface/' + slug.lower()
+            desc = text
         rules.setdefault(rule_id, {
             'id': rule_id,
             'name': slug[:40],
-            'shortDescription': {'text': text},
+            'shortDescription': {'text': desc},
+            'helpUri': SARIF_HELP_URI,
             'defaultConfiguration': {'level': level_map.get(level, 'note')},
         })
         path, _, line = where.rpartition(':')
