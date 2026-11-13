@@ -412,3 +412,8 @@
 
 - 变了的字段：fingerprint
 - 理由：0.112.0 纯文档与版本号：known-wrong 记了 depth 实测，报告字段不变
+
+## 2026-11-13 16:09
+
+- 变了的字段：fingerprint
+- 理由：0.113.0 新增 docs/comparison.md 与 CHANGELOG 里版本号变；报告字段不变

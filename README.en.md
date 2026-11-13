@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.112.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.113.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
