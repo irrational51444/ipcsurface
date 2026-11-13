@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.105.0'
+__version__ = '0.106.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/24'
@@ -4192,6 +4192,16 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         # harvested 是 {名字: 信息} 的字典，不是列表——踩过一次，
         # 写成列表推导式直接 KeyError: slice。
         harvested_only = [name for name in harvested if name not in seen_names]
+        # 打捞器只判「长得像名字」，不判「像 IPC 通道」。Obsidian 那 394 条
+        # 候选**全部**带冒号（`app:toggle-left-sidebar`），而它 47 条真通道
+        # **一条都不带**——那是它自己的 command id，不是 IPC。
+        # 判据用包内证据，不拍脑袋：真通道全不带冒号时，带冒号的候选单独归一类。
+        colon_in_real = sum(1 for c in (facts.get('channels') or []) if ':' in c)
+        if (facts.get('channels') or []) and colon_in_real == 0:
+            namespaced_only = [n for n in harvested_only if ':' in n]
+            harvested_only = [n for n in harvested_only if ':' not in n]
+        else:
+            namespaced_only = []
         reasons = {
             'runtime-computed-name': {
                 'count': len(facts.get('dynamic') or []),
@@ -4209,6 +4219,12 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
                 'samples': depth_samples[:5],
                 'what': '调用链撞到跳数上限（%d 跳）就停了，'
                         '后面还有没有危险 API，静态这条看不见' % depth_limit,
+            },
+            'harvested-namespaced': {
+                'count': len(namespaced_only),
+                'samples': namespaced_only[:5],
+                'what': '带命名空间冒号的候选：这包的真通道全不带冒号，'
+                        '这些更像命令 id 或命名空间，当成候选线索看，别当通道',
             },
             'harvested-only': {
                 'count': len(harvested_only),

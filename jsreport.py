@@ -1092,11 +1092,10 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             out.append('| `%s` | %d | %s | %s |'
                        % (key, item.get('count', 0), item.get('what') or '', samples or '—'))
         out.append('')
-        out.append('> 现在只有两个原因有数据源，另外九个（`dynamic-registration`、'
-                   '`cross-file-depth-exceeded`、`member-call-unresolved`、'
-                   '`lexer-unrecognized-char`、`unterminated-template-string`、'
-                   '`non-ascii-number`、`encrypted-payload`、`launcher-blocked-attach`、'
-                   '`non-main-process`）名单定了但还没接数据，报 0 不代表没发生。')
+        out.append('> 还有几个原因（`member-call-unresolved`、`lexer-unrecognized-char`、'
+                   '`unterminated-template-string`、`non-ascii-number`、'
+                   '`encrypted-payload`、`launcher-blocked-attach`、`non-main-process`）'
+                   '名单定了但还没接数据，报 0 不代表没发生。')
         out.append('')
     if facts['native_files']:
         out.append(f"- 这包带着 {len(facts['native_files'])} 个 native 模块，越界、泄漏只可能在它们里面：")

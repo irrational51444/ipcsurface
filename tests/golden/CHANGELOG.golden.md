@@ -372,3 +372,13 @@
 
 - 变了的字段：fingerprint
 - 理由：0.105.0 版本号：render_summary 新增，不影响报告快照字段，只变 fingerprint 里的 version
+
+## 2026-11-13 15:08
+
+- 变了的字段：unresolved_reasons
+- 理由：unresolved_reasons 新增 harvested-namespaced：obsidian 394 条带冒号候选从 harvested-only 拆出来（它 47 条真通道全不带冒号，那是 command id）；dsh 真通道全带冒号，所以判据不成立、不拆
+
+## 2026-11-13 15:09
+
+- 变了的字段：fingerprint
+- 理由：0.106.0 版本号：md 提示段措辞改了，unresolved_reasons 不变

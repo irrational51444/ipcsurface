@@ -273,7 +273,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.105.0",
+    "version": "0.106.0",
     "schema": "ipcsurface/asar/24",
     "params": {},
     "channels": [
@@ -307,6 +307,11 @@
       "count": 0,
       "samples": [],
       "what": "调用链撞到跳数上限（4 跳）就停了，后面还有没有危险 API，静态这条看不见"
+    },
+    "harvested-namespaced": {
+      "count": 0,
+      "samples": [],
+      "what": "带命名空间冒号的候选：这包的真通道全不带冒号，这些更像命令 id 或命名空间，当成候选线索看，别当通道"
     },
     "harvested-only": {
       "count": 0,
