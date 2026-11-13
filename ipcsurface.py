@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.131.0'
+__version__ = '0.132.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/31'
+SCHEMA_VERSION = 'ipcsurface/asar/32'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2327,7 +2327,8 @@ def channel_path_taint_map(files, max_files=12):
                 dirty |= jssem.catch_taints(tokens, span[0], span[1], dirty)
                 hits = jssem.path_taint(tokens, span[0], span[1], dirty,
                                         params=params,
-                                        locals_=set(table.keys()))
+                                        locals_=set(table.keys()),
+                                        scope=jssem.scope_index(tokens))
             except Exception:
                 continue
             if hits:

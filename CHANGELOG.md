@@ -2,6 +2,43 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.132.0 — 重建作用域：`v` 到底是什么，解出来了
+
+上一版写「根看不见，要重建模块图才可能」。这一版重建了——但不是模块图，是**块作用域**。
+
+JS 的函数作用域和块作用域在压缩产物里都长成 `{...}`，所以只要记住「每个 token
+属于哪个 `{`」，再由父子关系往上走，就能判断一个声明对某个位置可不可见。
+
+`main.js` 里 set-icon 那个 `F.join(v, C.icon)`：
+
+```
+let v = l.app.getPath("userData")     // 同一个模块函数体里，token 23528
+```
+
+`v` 解出来是 `app.getPath("userData")`。它不是字面量，但在 Electron 里就是固定位置，
+`join` 到它底下跑不出去（除非带 `..`）。
+
+于是 obsidian 上三条 L2 从「根看不见」变成：
+
+```
+copy-asar      join(d)      anchored
+set-icon       join(i)      anchored
+vault-message  resolve(i)   root_param
+```
+
+### 边界写清楚
+
+这是**静态近似**，不是完整词法作用域分析：
+
+- 没建模 `var` 提升——`var v` 在声明之前就能用，这里当作不可见；
+- 没建模 `catch(v)`、`for (let v of ...)` 的隐式块；
+- 解不出、或者同一个块里出现不止一处，就退回 `root_unknown`。
+
+保守方向是有意选的：宁可说「不知道」，也不给一个假的「锚定」。一个假的 anchored
+会让人以为这条路径安全，比不知道更坏。
+
+`schema` 升到 `ipcsurface/asar/32`。用例 488 → 494。
+
 ## 0.131.0 — 「根看不见」也分三种
 
 `F.join(v, i)` 的 `v` 到底是什么？以前一律写 `root_unknown`，等于只说「不知道」。

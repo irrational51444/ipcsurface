@@ -53,6 +53,88 @@ def _end_of_statement(tokens, i, limit):
     return limit
 
 
+def scope_index(tokens):
+    """块的父子关系 + 每个 let/var/const 声明落在哪个块。
+
+    JS 的函数作用域和块作用域在压缩产物里都长成 `{...}`，所以只要记住
+    「这个 token 属于哪个 `{`」，再由 `parent` 一路往上，就能判断一个声明
+    对某个位置可不可见。这不是完整的词法作用域分析（`catch`、`for` 头里的
+    声明、`var` 的提升都没建模），但它能回答一个问题：**这个短名在这儿
+    指的是不是那个赋值**。
+
+    返回 (parent, blocks, binds)：
+      parent[块起始下标] = 该块的父块起始下标，顶层是 0；
+      blocks[i]          = token i 所在块的起始下标；
+      binds              = [(名字, 声明下标, 值起始下标, 所在块)]。
+    """
+    blocks = [0] * len(tokens)
+    parent = {0: None}
+    stack = []
+    binds = []
+    for i, tok in enumerate(tokens):
+        blocks[i] = stack[-1] if stack else 0
+        text = tok.text
+        # 只跟花括号：圆括号和方括号不构成作用域，混进来会把父子链截断。
+        if text == '{':
+            parent[i] = stack[-1] if stack else 0
+            stack.append(i)
+        elif text == '}':
+            if stack:
+                stack.pop()
+        elif text in ('let', 'var', 'const'):
+            j = i + 1
+            if (j + 1 < len(tokens) and tokens[j].kind == 'ident'
+                    and tokens[j + 1].text == '='):
+                binds.append((tokens[j].text, i, j + 2, blocks[i]))
+    return parent, blocks, binds
+
+
+def resolve_root(tokens, index, pos, name):
+    """在 pos 处按块作用域找 name 最近的外层声明。
+
+    返回值 (声明下标, rhs tokens)；找不到返回 None。
+    只看 `let/var/const name = ...`，普通赋值不算——那可能是在改别人的值。
+    """
+    parent, blocks, binds = index
+    visible = set()
+    block = blocks[pos] if pos < len(blocks) else 0
+    while block is not None:
+        visible.add(block)
+        block = parent.get(block)
+    best = None
+    for bname, decl_i, rhs_start, bblock in binds:
+        if bname != name or decl_i >= pos or bblock not in visible:
+            continue
+        if best is None or decl_i > best[0]:
+            best = (decl_i, rhs_start)
+    if best is None:
+        return None
+    rhs = []
+    for r in range(best[1], min(best[1] + 16, len(tokens))):
+        if tokens[r].text in (';', ','):
+            break
+        rhs.append(tokens[r])
+    return best[0], rhs
+
+
+def classify_root(rhs):
+    """根的形状：字面量 / 已知目录 / 其他表达式。
+
+    `app.getPath("userData")` 这类算已知目录——它不是字面量，但它在 Electron
+    里就是固定位置，`join` 到它底下不会跑出用户数据目录（除非带 `..`）。
+    """
+    if not rhs:
+        return ('expr', None)
+    if len(rhs) == 1 and rhs[0].kind == 'string':
+        return ('literal', rhs[0].text.strip('"\'`'))
+    texts = [t.text for t in rhs]
+    if 'getPath' in texts or 'getAppPath' in texts:
+        for t in rhs:
+            if t.kind == 'string':
+                return ('known-dir', t.text.strip('"\'`'))
+    return ('expr', None)
+
+
 _NOT_A_CALL = frozenset((
     'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'delete',
     'do', 'else', 'with', 'function', 'void', 'await', 'yield', 'in', 'of',
@@ -1132,7 +1214,7 @@ def callback_taints(tokens, start, end, tainted):
 PATH_FUNCS = {'join', 'resolve', 'normalize'}
 
 
-def path_taint(tokens, start, end, tainted, params=None, locals_=None):
+def path_taint(tokens, start, end, tainted, params=None, locals_=None, scope=None):
     """L2 一跳：脏值喂进了 `path.join` / `resolve` / `normalize`。
 
     为什么这层重要：`F.join(v, i)` 里 `i` 带 `..` 会跳出 `v`。零跳看不出来，
@@ -1166,30 +1248,44 @@ def path_taint(tokens, start, end, tainted, params=None, locals_=None):
                 if '..' not in dirty:
                     dirty.append('..')
         if dirty:
+            # 顺着块作用域把「根到底是什么」解一层：解出字面量或已知目录，
+            # 判定就能从「不知道」变成「锚定」。
+            root_kind = None
+            if scope is not None:
+                first_args, _c = _split_args(tokens, i + 1)
+                if (first_args and len(first_args[0]) == 1
+                        and first_args[0][0].kind == 'ident'):
+                    found = resolve_root(tokens, scope, i, first_args[0][0].text)
+                    if found:
+                        root_kind = classify_root(found[1])[0]
             hits.append((tok.text, dirty, tok.line,
                          join_escape_verdict(tokens, i + 1, tok.text,
-                                             params=params, locals_=locals_)))
+                                             params=params, locals_=locals_,
+                                             root_kind=root_kind)))
     return hits
 
 
-def join_escape_verdict(tokens, open_at, func='join', params=None, locals_=None):
+def join_escape_verdict(tokens, open_at, func='join', params=None, locals_=None,
+                        root_kind=None):
     """`join` / `resolve` 的调用括号下标 → 能不能真跳出根目录。
 
     只判三件静态事实，不推演运行时值：
 
-      1. 第一个实参是不是**字面量常量**——锚点得是真常量才算锚；
+      1. 第一个实参是不是**字面量常量**或者已知目录——锚点得是真的锚；
       2. 有没有 `..`——字符串字面量里的，或者拼接中单独出现的两个点；
       3. 有没有绝对路径——`/` 或 `\\` 开头，或者带盘符。
 
     `resolve` 和 `join` 不是一回事：`resolve('/a', '/etc')` 会跳到 `/etc`，
     `join('/a', '/etc')` 只是拼成 `/a/etc`。所以绝对路径只对 `resolve` 算逃逸。
 
+    `root_kind` 是调用方顺着块作用域解出来的根形状（`literal` / `known-dir`），
+    没有就是 None。
+
     根不是字面量时，再分一层「为什么不知道」：
 
       - `root_param`：根是这条处理函数的形参——值从外面进来，静态没有内容；
       - `root_local`：根在同体内被赋过值，但赋的不是字面量；
-      - `root_unknown`：根不在这条通道看得见的作用域里，多半是模块级或外层闭包。
-        压缩产物的根大量落在这里，解开要重建模块图，这一层不做。
+      - `root_unknown`：根不在这条通道看得见的作用域里。
 
     判不出来的一律 `root_unknown`，不往有利方向猜。
     """
@@ -1198,6 +1294,7 @@ def join_escape_verdict(tokens, open_at, func='join', params=None, locals_=None)
         return 'root_unknown'
     first = args[0]
     literal_root = len(first) == 1 and first[0].kind == 'string'
+    anchored_root = literal_root or root_kind in ('literal', 'known-dir')
     has_dotdot = False
     has_absolute = False
     for arg in args:
@@ -1216,14 +1313,14 @@ def join_escape_verdict(tokens, open_at, func='join', params=None, locals_=None)
         return 'escapes'
     if func == 'resolve' and has_absolute:
         return 'escapes'
-    if not literal_root:
-        root_name = first[0].text if len(first) == 1 and first[0].kind == 'ident' else None
-        if root_name and params and root_name in params:
-            return 'root_param'
-        if root_name and locals_ and root_name in locals_:
-            return 'root_local'
-        return 'root_unknown'
-    return 'anchored'
+    if anchored_root:
+        return 'anchored'
+    root_name = first[0].text if len(first) == 1 and first[0].kind == 'ident' else None
+    if root_name and params and root_name in params:
+        return 'root_param'
+    if root_name and locals_ and root_name in locals_:
+        return 'root_local'
+    return 'root_unknown'
 
 
 def _split_args(tokens, open_at):

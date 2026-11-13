@@ -507,3 +507,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：channel_path_taint 的 escape verdict 多了 root_param 和 root_local 两种取值，用来区分「根是形参」「根是局部变量」和「根在作用域外」，旧的 root_unknown 含义变窄，schema 从 asar/30 升到 asar/31。下游若按字符串全等匹配 root_unknown，需要先校验 schema 再补两种新取值。
+
+## 2026-11-14 02:19
+
+- 变了的字段：fingerprint, schema
+- 理由：path_taint 的 verdict 现在会顺着块作用域解根，root_unknown 可能变成 anchored，判定分布在同一个 schema 号下变了，schema 从 asar/31 升到 asar/32。下游若缓存了旧的 verdict 结果需要重跑，字符串取值本身没增删。

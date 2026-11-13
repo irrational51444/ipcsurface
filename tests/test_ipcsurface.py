@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/31')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/32')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4167,6 +4167,63 @@ class RealShapeCorpusTests(unittest.TestCase):
         rows = self.facts()['frame']
         kinds = [r[1] for r in rows[0][3]]
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
+
+
+class ScopeResolveTests(unittest.TestCase):
+    """按块作用域判断一个短名在某个位置指的是哪次赋值。
+
+    压缩产物把 `v` 这样的名字复用上百次，靠正则一定追错——所以先建块父子关系，
+    只接受「声明的块是使用点的祖先块」的那些。
+    """
+
+    def resolve(self, src, name='v'):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        index = jssem.scope_index(toks)
+        pos = None
+        for i, tok in enumerate(toks):
+            if tok.kind == 'ident' and tok.text == 'use' and toks[i + 1].text == '(':
+                pos = i
+                break
+        if pos is None:
+            raise AssertionError('probe call not found')
+        found = jssem.resolve_root(toks, index, pos, name)
+        if not found:
+            return None
+        return [t.text for t in found[1]]
+
+    def test_outer_declaration_is_visible_inside_a_block(self):
+        got = self.resolve('let v="outer"; function f(){ use(v); }')
+        self.assertEqual(got, ['"outer"'])
+
+    def test_inner_declaration_shadows_the_outer_one(self):
+        got = self.resolve('let v="outer"; function f(){ let v="inner"; use(v); }')
+        self.assertEqual(got, ['"inner"'], '内层声明必须赢，不然追根就追到别人的变量上')
+
+    def test_declaration_after_use_is_not_visible(self):
+        got = self.resolve('function f(){ use(v); } let v="x";')
+        self.assertEqual(got, None, '后面才声明的，当前位置看不到')
+
+    def test_sibling_block_declaration_is_not_visible(self):
+        got = self.resolve('function a(){ let v="other"; } function b(){ use(v); }')
+        self.assertEqual(got, None, '兄弟块里的声明不能串过来')
+
+    def test_getpath_counts_as_a_known_directory(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('l.app.getPath("userData")')
+        kind, value = jssem.classify_root(toks)
+        self.assertEqual((kind, value), ('known-dir', 'userData'))
+
+    def test_plain_expression_root_is_not_known(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('Math.random()')
+        self.assertEqual(jssem.classify_root(toks)[0], 'expr')
 
 
 class InterprocStateWriteTests(unittest.TestCase):
