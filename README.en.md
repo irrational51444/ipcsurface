@@ -208,7 +208,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 - **466 test cases**
 - **67% branch coverage**, only up, never down: python scripts/coverage_check.py, standard library only
-- **11 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
+- **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **Input parser fuzz**: `python scripts/fuzz_smoke.py` byte-level mutation of asar headers / PE imports; CI also runs 30 s of real atheris fuzz
 - **Benchmark**: `python scripts/benchmark.py` — channel / API precision and recall (numbers in `docs/benchmark.md`)
 - **Calibration**: `python scripts/calibration.py` — per-tier precision on evidence strength and sink provenance, catching tiers that do not live up to their name

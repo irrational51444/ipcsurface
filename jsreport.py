@@ -1149,7 +1149,15 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('| --- | --- | --- | --- |')
         for key in sorted(reasons, key=lambda k: -reasons[k].get('count', 0)):
             item = reasons[key]
-            samples = '、'.join('`%s`' % s for s in (item.get('samples') or [])[:3])
+            # samples 里可能是字符串，也可能是 (位置, 值) 这样的元组。
+            # 直接 `'%s' % s` 碰上元组会被当成参数列表，抛 TypeError——
+            # 整份报告就崩在这一行，而不是少渲染一格。
+            cleaned = []
+            for sample in (item.get('samples') or [])[:3]:
+                if isinstance(sample, (tuple, list)):
+                    sample = '  '.join(str(x) for x in sample)
+                cleaned.append('`%s`' % str(sample).replace('`', "'"))
+            samples = '、'.join(cleaned)
             out.append('| `%s` | %d | %s | %s |'
                        % (key, item.get('count', 0), item.get('what') or '', samples or '—'))
         out.append('')

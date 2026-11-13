@@ -47,6 +47,12 @@ vault-move  .path  <- c   写 @192277
 信息就这么消失了。改成 `set(params) | set(tainted_names(table))`。
 
 `schema` 升到 `ipcsurface/asar/25`（新增顶层键 `channel_state_writes`）。
+### 顺带修掉一个渲染崩溃
+
+`unresolved_reasons` 的 `samples` 里可能是元组，`'`%s`' % s` 碰上元组会把它当成
+参数列表，抛 `TypeError: not all arguments converted`——整份报告崩掉，不是少渲染一格。
+冒烟里 4 项直接就红了（退出码 1）。改成先归一化成字符串再套格式。
+
 用例 460 → 466。
 
 ## 0.123.0 — 参数级标注：`renameSync(i, c)` 的 `c` 终于标出来了
