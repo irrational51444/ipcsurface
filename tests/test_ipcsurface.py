@@ -4169,6 +4169,29 @@ class RealShapeCorpusTests(unittest.TestCase):
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
 
 
+class AliasScanTests(unittest.TestCase):
+    """After a destructuring rename the literal scanner must still see the call."""
+
+    def test_alias_regex_finds_the_local_name(self):
+        text = 'const {app, ipcMain: a} = require("electron");'
+        found = {m.group(1) for m in ipc._ALIAS_RE.finditer(text)}
+        self.assertEqual(found, {'a'})
+
+    def test_alias_regex_ignores_other_modules(self):
+        text = 'const {ipcMain: a} = require("./my-own-ipc");'
+        found = {m.group(1) for m in ipc._ALIAS_RE.finditer(text)}
+        self.assertEqual(found, set(), '不是从 electron 拿的，名字不能当 ipcMain 用')
+
+    def test_channel_is_found_through_alias(self):
+        files = {
+            'main.js': (b'const {ipcMain: a} = require("electron");\n'
+                        b'a.handle("open-file", (e, p) => {});\n'),
+        }
+        facts = ipc.scan_asar(files)
+        names = [name for name, _where in facts['handlers']]
+        self.assertIn('open-file', names, '解构重命名之后的注册点不能丢')
+
+
 class IpcAliasTests(unittest.TestCase):
     """`const {ipcMain: a} = require("electron")` — after that, `ipcMain` never appears."""
 

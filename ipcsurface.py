@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.136.0'
+__version__ = '0.137.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/34'
@@ -1431,6 +1431,22 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
     # 先收一遍全包的常量，跨文件那种才配得上
     global_consts, global_members = build_global_tables(files)
 
+    # 解构重命名之后（`const {ipcMain: a} = require("electron")`）文件里一个
+    # `ipcMain` 都没有，下面的字节门槛会把整片文件挡在外面——ACLOS 251 个含
+    # electron 的文件只放进来 45 个，455 个注册点里 315 个通道名全丢。
+    # 先挑一遍「有 electron 而且真的在注册」的文件，按大小取前 40 个：
+    # 覆盖优先，但给个上限，不然大包会从两分钟变成八分钟。
+    _alias_candidates = []
+    for _rel, _blob in files.items():
+        if not _rel.endswith(TEXT_EXT) or not _blob:
+            continue
+        if b'ipcMain' in _blob or b'ipcRenderer' in _blob:
+            continue
+        if b'electron' in _blob and (b'.handle(' in _blob or b'.invoke(' in _blob):
+            _alias_candidates.append((len(_blob), _rel))
+    _alias_candidates.sort(reverse=True)
+    alias_files = {rel for _size, rel in _alias_candidates[:40]}
+
     for index, (rel, blob) in enumerate(files.items(), start=1):
         # 实时进度：每 100 个文件报一次，或者最后一个文件必报。
         # 采样是为了不拖慢扫描——设计文档要求实时开销 < 5%。
@@ -1446,7 +1462,8 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         # ipcRenderer 也要算热：只有页面侧调用的文件（没 contextBridge、没 ipcMain）
         # 以前整份被跳过，那条 invoke 就白丢了。
         # IPC 之外的能力面也在这层认（shell.openExternal 之类），它们不是 ipc 但同样危险。
-        hot_ipc = (b'ipcMain' in blob or b'ipcRenderer' in blob
+        hot_ipc = (rel in alias_files
+                   or b'ipcMain' in blob or b'ipcRenderer' in blob
                    or b'contextBridge' in blob or b'webPreferences' in blob
                    or b'shell.' in blob or b'executeJavaScript' in blob
                    or b'setPermission' in blob or b'protocol.' in blob
@@ -1468,7 +1485,22 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         # 原文先扫一遍，记下哪些名字是「写在那儿」的。
         # 还原之后才出现的，和它不是一个强度，别混着算。
         literal_names = set()
-        for kind, pattern in PATTERNS:
+        # 解构重命名：`const {ipcMain: a} = require("electron")` 之后是 `a.handle(...)`。
+        # 这个文件的正则要把这些本地名一起认，不然整片注册点都看不见。
+        # 这里用正则而不是 tokenizer 找别名：本层就是字面扫描，不建 token 流。
+        _aliases = set()
+        for _mt in _ALIAS_RE.finditer(text):
+            _aliases.add(_mt.group(1))
+        if _aliases:
+            _alt = '|'.join(re.escape(a) for a in sorted(_aliases))
+            file_patterns = []
+            for _kind, _pat in PATTERNS:
+                _src = _pat.pattern.replace(
+                    'ipcMain', '(?:ipcMain|%s)' % _alt, 1)
+                file_patterns.append((_kind, re.compile(_src, _pat.flags)))
+        else:
+            file_patterns = PATTERNS
+        for kind, pattern in file_patterns:
             if kind in ('handle', 'invoke'):
                 for match in pattern.finditer(text):
                     literal_names.add(match.group(1).strip())
@@ -1480,7 +1512,7 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         # 本文件的函数体只建一次：一个文件里常有几十条通道，
         # 以前每条都重扫一遍整份文本找函数定义，是这轮最贵的一笔。
         local_funcs = {}   # 一份缓存：真要跟的时候才建函数表
-        for kind, pattern in PATTERNS:
+        for kind, pattern in file_patterns:
             for match in pattern.finditer(text):
                 where = f'{rel}:{line_of(text, match.start())}'
                 value = match.group(1).strip()
@@ -2406,6 +2438,11 @@ def module_graph_map(files, max_files=8):
             'ids': sorted(mid for mid, *_ in modules)[:40],
         }
     return out or None
+
+
+_ALIAS_RE = re.compile(
+    r"\{[^{}]{0,400}?\bipcMain\s*:\s*([A-Za-z_$][\w$]*)[^{}]{0,400}?\}"
+    r"\s*=\s*[\w$.]*\(?\s*[\"']electron[\"']")
 
 
 def ipc_registrations_of(tokens, objects, const_strings=None):
