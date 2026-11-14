@@ -133,6 +133,42 @@ pip install 'ipcsurface[precise]'
 python ipcsurface.py app.asar --precise -o report.md
 ```
 
+It reports **a verdict per channel**, not just the dangerous ones. Three states,
+no fourth:
+
+| State | Meaning | Usable as evidence |
+| --- | --- | --- |
+| `with_sink` | a dangerous API was reached | yes, with file and offset |
+| `no_sink` | the handler was walked to the end, nothing dangerous inside | yes |
+| `unresolved` | handler is `handlers.save`, a member access that cannot be resolved | **no, and it is not clean either** |
+
+The third row is the point. These three used to look identical in the output: none
+of them appeared. So the report was always cleaner than the truth — "no dangerous
+API found" was read as "nothing dangerous". On four real packages the channels
+counted by both layers are nearly the same (obsidian 47/47, dsh 41/41,
+bilibili 1/1, ACLOS 286/283); what differs is that each one now carries a sentence
+you can interrogate:
+
+| Package | Default layer | Precise | With evidence | Confirmed clean | Unresolved |
+| --- | --- | --- | --- | --- | --- |
+| obsidian | 47 | 47 | 22 | 25 | 0 |
+| dsh | 41 | 41 | 4 | 37 | 0 |
+| ACLOS | 286 | 283 | 7 | 276 | 0 |
+| bilibili | 1 | 1 | 0 | 1 | 0 |
+
+Channel names carry an evidence tier: `literal` (the call site holds the string),
+`const-table` (`ipcMain.handle(IPC.fileSave, ...)` resolved through a
+`const IPC = {...}` in the same file — all 41 dsh channels), or `heuristic`
+(no table found, the property name is used as the name — **can be wrong**, and the
+report says so).
+
+One deliberate deviation: the precise layer **does not count `existsSync` as a
+dangerous call**. It is in the default layer's danger list, but it only answers
+"does this path exist". Counting it made 10 of ACLOS's 17 channels look dangerous
+on that basis alone; removing it takes ACLOS to 7. The default layer's list is
+untouched, so the two layers disagree by design — see
+[`docs/known-wrong.md`](docs/known-wrong.md).
+
 ### Runtime probe alignment
 
 `probe/run.js` launches a real Electron fixture and reads the channels registered at
