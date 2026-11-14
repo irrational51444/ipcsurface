@@ -2077,19 +2077,33 @@ def _param_in(segment, params):
     return None
 
 
-def _looks_like_check(segment):
+def _looks_like_check(segment, params=()):
     """条件里有没有「像校验」的东西。
 
-    只认四种最朴素的证据：比较运算、`typeof`、存在性判断、字符串方法。
+    认这些证据：比较运算、`typeof`、字符串/路径方法、以及**任何以形参为实参的
+    函数调用**（`isValid(p)`、`RE.test(p)`、`Array.isArray(p)` 都算）。
+
+    最后那条是这一版加的：以前只认一张固定词表，`isValid(p)` 这种自定义校验
+    全被漏掉了——「没检出」里有一大半是这种。判据放宽到「函数拿参数当实参」，
+    因为它们至少**看了这个参数一眼**，比完全没碰强。
+
     光有 `if (x)` 不算——那可能只是分支，不是校验。
     """
     ops = {'===', '!==', '==', '!=', '>', '<', '>=', '<=', 'instanceof', 'in'}
     words = {'typeof', 'startsWith', 'endsWith', 'includes', 'match', 'test',
              'isAbsolute', 'normalize', 'resolve', 'realpathSync', 'existsSync',
-             'indexOf'}
-    for tok in segment:
+             'indexOf', 'isArray', 'assert', 'require', 'parse', 'validate'}
+    for i, tok in enumerate(segment):
         if tok.text in ops or tok.text in words:
             return True
+        # 函数调用，且实参里出现了形参 → 当作「看过了」
+        if (tok.kind == 'ident' and i + 1 < len(segment)
+                and segment[i + 1].text == '(' and params):
+            for j in range(i + 2, len(segment)):
+                if segment[j].text == ')':
+                    break
+                if segment[j].kind == 'ident' and segment[j].text in params:
+                    return True
     return False
 
 
@@ -2122,12 +2136,15 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
                 i += 1
                 continue
             cond = tokens[i + 2:close]
-            if not _looks_like_check(cond):
+            if not _looks_like_check(cond, params):
                 i = close + 1
                 continue
             target = _param_in(cond, params)
             body_at = close + 1
-            if body_at < limit and tokens[body_at].text == 'return':
+            if (body_at < limit
+                    and tokens[body_at].text in ('return', 'throw')):
+                # `return` / `throw` / `return null` / `return false` 都算拒绝：
+                # 校验失败就离开这条路径，sink 在后面。
                 out.append({'at': tok.start, 'kind': 'reject', 'target': target,
                             'cond': ' '.join(t.text for t in cond)[:120]})
                 i = body_at + 1
@@ -2161,7 +2178,7 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
                     break
                 j -= 1
             cond = tokens[j + 1:i]
-            if cond and _looks_like_check(cond):
+            if cond and _looks_like_check(cond, params):
                 colon = _ternary_colon(tokens, i, limit)
                 branch = tokens[i + 1:colon] if colon else []
                 if _has_danger(tokens, i + 1, colon or limit, danger_words):
@@ -2171,6 +2188,37 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
             i += 1
             continue
         i += 1
+
+    # 正则校验：`let d = /re/.exec(p)`、`RE.test(p)`、`p.match(RE)`。
+    # 这类在路径处理里很常见：正则不匹配就拿到 null，后面 `d[0]` 直接抛，
+    # 危险调用根本走不到。它不是 if，但确实是「看过参数一眼」。
+    for i in range(start, limit - 3):
+        tok = tokens[i]
+        if tok.kind != 'ident':
+            continue
+        nxt = tokens[i + 1].text
+        if nxt == '=' and i + 2 < limit and tokens[i + 2].kind == 'regex':
+            out.append({'at': tok.start, 'kind': 'regex-guard',
+                        'target': None,
+                        'cond': ' '.join(t.text for t in tokens[i:i + 4])[:120]})
+            continue
+        if (nxt == '.' and tokens[i + 2].text in ('exec', 'test')
+                and i + 3 < limit and tokens[i + 3].text == '('):
+            close = _close_paren(tokens, i + 3)
+            if close <= i + 4:
+                continue
+            seg = tokens[i + 4:close]
+            target = _param_in(seg, params)
+            if target:
+                out.append({'at': tok.start, 'kind': 'regex-guard',
+                            'target': target,
+                            'cond': ' '.join(t.text for t in tokens[i:i + 6])[:120]})
+            continue
+        if nxt == '.' and tokens[i + 2].text == 'match' and i + 3 < limit \
+                and tokens[i + 3].text == '(' and tok.text in params:
+            out.append({'at': tok.start, 'kind': 'regex-guard',
+                        'target': tok.text,
+                        'cond': ' '.join(t.text for t in tokens[i:i + 5])[:120]})
     return out
 
 

@@ -4604,6 +4604,31 @@ class SanitizerDetectorTests(unittest.TestCase):
         return jssem.find_sanitizers(toks, d0['body_start'], d0['body_end'],
                                      list(d0.get('params') or []))
 
+    def test_regex_guard_form(self):
+        """正则校验：`RE.test(p)` / `p.match(RE)` / `let d = /re/.exec(p)`。
+
+        这不是 if，但正则不匹配会拿到 null，后面的解引用直接抛，
+        危险调用走不到。路径处理里这种写法很常见。
+        """
+        got = self.find('function h(e, p) { if (RE.test(p)) { '
+                        'fs.writeFileSync(p); } }')
+        kinds = [g['kind'] for g in got]
+        self.assertIn('regex-guard', kinds)
+        self.assertEqual(
+            [g['target'] for g in got if g['kind'] == 'regex-guard'], ['p'])
+
+    def test_custom_predicate_counts_as_a_check(self):
+        """`isValid(p)` 这种自定义校验，以前因为不在词表里被整体漏掉。"""
+        got = self.find('function h(e, p) { if (!isValid(p)) return; '
+                        'fs.writeFileSync(p); }')
+        self.assertEqual([g['kind'] for g in got], ['reject'])
+        self.assertEqual(got[0]['target'], 'p')
+
+    def test_throw_also_counts_as_reject(self):
+        got = self.find('function h(e, p) { if (!ok(p)) throw new Error("x"); '
+                        'fs.writeFileSync(p); }')
+        self.assertEqual([g['kind'] for g in got], ['reject'])
+
     def test_reject_form(self):
         got = self.find('function h(e, p) { if (!fs.existsSync(p)) return; '
                         'fs.writeFileSync(p); }')

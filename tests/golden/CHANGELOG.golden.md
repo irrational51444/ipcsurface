@@ -662,3 +662,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：facts 多一个 channel_sanitizers 键（每条有危险调用的通道的三态判定），报告里多一节「校验拦不拦得住」，schema 从 asar/37 升到 asar/38。下游按 asar/37 读不到这一节，需要先校验 schema。
+
+## 2026-11-14 20:47
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.161.0，报告字段结构没变，但 sanitizer 检出变多了（自定义谓词、throw、正则校验），三态判定随之变化，golden 里 version/fingerprint/schema 之外还会反映通道判定变化。
