@@ -11,12 +11,12 @@
   作用域只做到「函数级 + 参数 + var 提升」，块级 let 不单独建作用域（会少认一点，不会多认）。
 """
 import jsparse
+import jskw
 from jsparse import match_brace
 
-KEYWORDS_STMT = {'if', 'for', 'while', 'do', 'switch', 'try', 'return', 'throw',
-                 'break', 'continue', 'var', 'let', 'const', 'function', 'class',
-                 'import', 'export', 'async', 'await', 'new', 'delete', 'typeof',
-                 'in', 'of', 'instanceof', 'void', 'yield', 'case', 'default'}
+KEYWORDS_STMT = jskw.subset(
+    'if', 'for', 'while', 'do', 'switch', 'try', 'return', 'throw',
+    'break', 'continue', 'var', 'let', 'const', 'function', 'class')
 
 
 class Node(object):
@@ -583,9 +583,11 @@ def locals_of(fn):
     return names
 
 
-KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new',
-            'delete', 'void', 'await', 'yield', 'do', 'else', 'try', 'finally',
-            'in', 'of', 'instanceof', 'with', 'throw', 'case', 'default'}
+KEYWORDS = jskw.subset(
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new',
+    'delete', 'void', 'instanceof', 'in', 'of', 'do', 'else', 'case',
+    'function', 'class', 'var', 'let', 'const', 'try', 'finally',
+    'throw', 'with', 'yield', 'await')
 
 
 def calls_of(fn):

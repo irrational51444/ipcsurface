@@ -632,3 +632,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.154.0，报告字段没有变化；这次把关键字排除做成自检断言、并把 ADR 阈值按包结构分层，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 16:45
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.155.0，报告字段没有变化；这次把三层各自的关键字清单合成 jskw.JS_RESERVED 一份并加断言，schema 契约没动，golden 里只有 version 和 fingerprint 变。

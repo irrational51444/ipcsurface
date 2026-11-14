@@ -77,6 +77,29 @@ def check_keyword_names_excluded(ok):
     leaked = names & banned
     ok = ok & check('关键字不当函数名', not leaked, '、'.join(sorted(leaked)))
     ok = ok & check('关键字过滤不误伤', 'realFn' in names, 'realFn 被误删')
+
+    # 三层（词法 / 语法树 / 函数定义）过去各有一份关键字清单，改一层漏两层，
+    # 同一个 bug 复发了三次。现在都从 jskw.JS_RESERVED 取子集：这里断言
+    # 每个集合都是它的子集，任何一层自己另起炉灶就会红。
+    try:
+        import jskw
+        import jsast
+        sets = {
+            'jsparse._NOT_A_FUNCTION_NAME': jsparse._NOT_A_FUNCTION_NAME,
+            'jssem._NOT_A_CALL': __import__('jssem')._NOT_A_CALL,
+            'jssem.JS_KEYWORDS': __import__('jssem').JS_KEYWORDS,
+            'jsast.KEYWORDS': jsast.KEYWORDS,
+            'jsast.KEYWORDS_STMT': jsast.KEYWORDS_STMT,
+        }
+        stray = {}
+        for label, values in sets.items():
+            extra = set(values) - jskw.JS_RESERVED
+            if extra:
+                stray[label] = sorted(extra)
+        ok = ok & check('关键字清单同源', not stray,
+                        '; '.join('%s 多出 %s' % (k, v) for k, v in stray.items()))
+    except Exception as exc:
+        ok = ok & check('关键字清单能读', False, repr(exc))
     return ok
 
 
@@ -416,7 +439,7 @@ def check_output_side(ok):
 
 
 
-PRODUCT_MODULES = ('ipcsurface.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
+PRODUCT_MODULES = ('ipcsurface.py', 'jskw.py', 'jsasar.py', 'jslabels.py', 'jsparse.py',
                    'jssem.py', 'jsast.py', 'jsreport.py', 'native_imports.py',
                    'precise_engine.py', 'jsevents.py', 'jswarn.py')
 

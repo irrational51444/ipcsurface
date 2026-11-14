@@ -7,6 +7,7 @@
 这些一律不算「安全」，报告里必须写「未分析」——没分析不等于没问题。
 """
 
+import jskw
 import os
 
 DANGER_KINDS = {
@@ -137,10 +138,9 @@ def classify_root(rhs):
     return ('expr', None)
 
 
-_NOT_A_CALL = frozenset((
+_NOT_A_CALL = jskw.subset(
     'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'delete',
-    'do', 'else', 'with', 'function', 'void', 'await', 'yield', 'in', 'of',
-))
+    'new', 'void', 'instanceof', 'in', 'of', 'do', 'else', 'case')
 
 
 def state_writes_interproc(tokens, start, end, tainted, defs, depth=2):
@@ -1292,10 +1292,11 @@ def _body_has_danger(tokens, body):
     return False
 
 
-JS_KEYWORDS = {'if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
-               'new', 'delete', 'void', 'await', 'yield', 'do', 'else', 'try', 'finally',
-               'in', 'of', 'instanceof', 'with', 'throw', 'case', 'default', 'var',
-               'let', 'const', 'class', 'extends', 'super', 'this'}
+JS_KEYWORDS = jskw.subset(
+    'if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
+    'new', 'delete', 'void', 'in', 'of', 'do', 'else', 'case', 'class',
+    'var', 'let', 'const', 'try', 'finally', 'throw', 'instanceof', 'with',
+    'yield', 'await', 'import', 'export')
 
 
 def _scan_body(tokens, body):

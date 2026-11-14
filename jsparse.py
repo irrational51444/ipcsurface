@@ -12,6 +12,7 @@
 """
 
 import re
+import jskw
 
 IDENT_START = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$')
 IDENT_PART = IDENT_START | set('0123456789')
@@ -380,12 +381,12 @@ def method_defs(tokens):
     return out
 
 
-_NOT_A_FUNCTION_NAME = frozenset({
+# 控制关键字不是函数名。清单在 `jskw` 里，和词法层、语法树层共用一份。
+_NOT_A_FUNCTION_NAME = jskw.subset(
     'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new',
     'delete', 'void', 'in', 'of', 'do', 'else', 'case', 'function', 'class',
     'var', 'let', 'const', 'try', 'finally', 'throw', 'instanceof', 'with',
-    'yield', 'await', 'import', 'export', 'super', 'this',
-})
+    'yield', 'await', 'import', 'export', 'super', 'this')
 
 
 def function_defs(tokens):
