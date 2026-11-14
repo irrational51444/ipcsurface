@@ -1,0 +1,110 @@
+{
+  "note": "人工标注的 sanitizer 语料。每条 handler 标三件事：位置、形态（拒绝/放行）、校验对象。没检出校验不等于没有校验——这是 sanitizer 口径的 refutes_if。",
+  "count": 6,
+  "entries": [
+    {
+      "id": "copy-asar",
+      "file": "main.js",
+      "line": 66,
+      "offset": 190383,
+      "sinks": [
+        "c"
+      ],
+      "source_head": "( o , i ) => { try { let c = F . basename ( i ) , d = /^obsidian-(\\d+\\.\\d+\\.\\d+)/ . exec ( c ) , b = F . join ( v , d [ 0 ] `${d[0]}.asar` ) ; mo . copyFileSync ( i , b ) , o . returnValue = ! 0 } catch ( c ) { console . error ( \"Failed to copy asar\" , c ) , o . returnValue = ! 1 } }",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    },
+    {
+      "id": "print-to-pdf",
+      "file": "main.js",
+      "line": 66,
+      "offset": 191436,
+      "sinks": [
+        "w"
+      ],
+      "source_head": "async ( o , i ) => { console . log ( \"Saving PDF...\" ) ; let c = o . sender ; try { let { filepath : d } = i , b = await c . printToPDF ( i ) ; await m . promises . writeFile ( d , b ) , i . open && de ( d ) } finally { console . log ( \"Done.\" ) , c . send ( \"print-to-pdf\" , { } ) } }",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    },
+    {
+      "id": "vault-move",
+      "file": "main.js",
+      "line": 66,
+      "offset": 192073,
+      "sinks": [
+        "r"
+      ],
+      "source_head": "( o , i , c ) => { if ( i && typeof i == \"string\" ) for ( let d in R ) { let b = R [ d ] ; if ( b . path === i ) { if ( Y [ d ] ) { o . returnValue = \"EVAULTOPEN\" ; return } try { m . renameSync ( i , c ) } catch ( k ) { o . returnValue = k . toString ( ) ; return } o . returnValue = \"\" , b . path = c , _ ( ) ; return } } o . returnValue = ! 1 }",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    },
+    {
+      "id": "vault-open",
+      "file": "main.js",
+      "line": 66,
+      "offset": 192341,
+      "sinks": [
+        "e",
+        "m"
+      ],
+      "source_head": "( o , i , c ) => { if ( c ) { if ( m . existsSync ( i ) ) { o . returnValue = \"Vault already exists\" ; return } try { m . mkdirSync ( i , { recursive : ! 0 } ) } catch ( d ) { o . returnValue = d . toString ( ) ; return } } o . returnValue = h ( i ) }",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    },
+    {
+      "id": "set-icon",
+      "file": "main.js",
+      "line": 66,
+      "offset": 194691,
+      "sinks": [
+        "r",
+        "w"
+      ],
+      "source_head": "( o , i , c ) => { C . icon && m . rmSync ( F . join ( v , C . icon ) , { force : ! 0 } ) , i && c ? m . writeFileSync ( F . join ( v , i ) , c ) : i = null , ( C . icon || \"\" ) !== ( i || \"\" ) && ( i ? C . icon = i : delete C . icon , _ ( ) ) , o . returnValue = null }",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    },
+    {
+      "id": "register-cli",
+      "file": "main.js",
+      "line": 66,
+      "offset": 195791,
+      "sinks": [
+        "a",
+        "c",
+        "e",
+        "m",
+        "r",
+        "u",
+        "w"
+      ],
+      "source_head": "async o => { if ( ! p ) return { success : ! 1 , message : u `Unable to add to command line because the executable is \"${u}\" instead of \"obsidian\".` } ; try { let i = ( 0 , ho . promisify ) ( co . exec ) , c = process . execPath , d = F . dirname ( c ) ; if ( oe ) { let { stdout : b } = await i ( `powershell -Command \"[Environment]::GetEnvironmentVariable('Path', 'User')\"` ) ; return b . trim ( ) . split ( \";\" ) . some ( D => D . trim ( ) . toLowerCase ( ) === d . toLowerCase ( ) ) ? { success : ! 0 , message : \"Already registered in PATH\" } : ( await i ( d `powershell -Command \"[Environment]:",
+      "sanitizer": {
+        "position": null,
+        "kind": null,
+        "target": null,
+        "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
+      }
+    }
+  ]
+}

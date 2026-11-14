@@ -4552,7 +4552,40 @@ class SubgraphQueryTests(unittest.TestCase):
                          '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
 
 
-class TruncationCountTests(unittest.TestCase):
+class SanitizerCorpusTests(unittest.TestCase):
+    """sanitizer 语料的骨架：文件在、字段齐、来源可回原文。
+
+    标注本身是人的活。这条测试只管「结构没走样」——别让人标完发现
+    字段名对不上，或者位置指向别处。
+    """
+
+    PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        'golden', 'sanitizers.json')
+
+    def load(self):
+        import json
+
+        with open(self.PATH, encoding='utf-8') as fh:
+            return json.load(fh)
+
+    def test_corpus_has_entries_with_the_three_fields(self):
+        data = self.load()
+        entries = data.get('entries') or []
+        self.assertTrue(entries, '语料是空的')
+        # empty-allowed: 空集已经在上一行 assertTrue 挡住，走到这里一定有内容
+        for item in entries:
+            with self.subTest(channel=item.get('id')):
+                for key in ('id', 'file', 'line', 'offset', 'sinks', 'sanitizer'):
+                    self.assertIn(key, item)
+                san = item['sanitizer']
+                for key in ('position', 'kind', 'target'):
+                    self.assertIn(key, san, '标注三件事：位置、形态、对象')
+
+    def test_corpus_refutes_if_wording_is_present(self):
+        data = self.load()
+        note = data.get('note') or ''
+        self.assertIn('没检出', note,
+                      'sanitizer 口径必须写死「没检出校验不等于没有校验」')
     """Chain cut off by the depth cap must be counted — that is the denominator."""
 
     def run_taint(self, src, depth=2):
@@ -4623,6 +4656,38 @@ class TruncationCountTests(unittest.TestCase):
         key = (d0['body_start'], d0['body_end'])
         hits = jssem.summary_sinks(summaries, key, {'p'})
         self.assertTrue(hits, '摘要组合要能穿过四层调用，不靠加深递归')
+
+    def test_two_summary_entry_points_agree(self):
+        """镜像测试：子图版和全量版是两处实现，同输入必须同输出。
+
+        这已经是第二次「同一份语义抄两遍、改一处漏一处」了（第一次是三层
+        各有一份关键字清单，第二次就是这里）。收敛成单一来源会牺牲性能
+        （全量版在有大量函数时慢一个数量级），所以选择「双实现 + 镜像测试」：
+        改任何一处，这条测试先红。
+        """
+        import jsparse
+        import jssem
+
+        src = ('ipcMain.handle("c1", function (e, p) { a(p); });\n'
+               'function a(x) { b(x); }\n'
+               'function b(y) { c(y); }\n'
+               'function c(z) { fs.writeFileSync(z); }\n'
+               'function unused(q) { fs.unlinkSync(q); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        roots = [r['span'] for r in regs if r.get('span')]
+
+        sub = jssem.subgraph_summaries(toks, defs, roots)
+        whole = jssem.function_summaries(toks, defs)
+        for key, summary in sub.items():
+            with self.subTest(func=summary.get('name')):
+                self.assertIn(key, whole, '子图里有的函数，全量表里必须有')
+                self.assertEqual(
+                    sorted(summary['sinks'].items()),
+                    sorted(whole[key]['sinks'].items()),
+                    '两个入口对同一个函数给出的 sinks 必须一致')
 
     def test_via_path_names_the_hops(self):
         import jsparse

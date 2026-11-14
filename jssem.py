@@ -2295,7 +2295,8 @@ def function_summaries(tokens, defs, rounds=4):
     for key, d in by_key.items():
         params = list(d.get('params') or [])
         if not params:
-            summaries[key] = {'params': [], 'sinks': {}, 'calls': []}
+            summaries[key] = {'params': [], 'sinks': {},
+                              'name': _name_of(key, defs), 'calls': []}
             continue
         sinks = {}
         calls = []
@@ -2326,7 +2327,8 @@ def function_summaries(tokens, defs, rounds=4):
                     mapping[arg[0].text] = callee_params[pos]
             if mapping:
                 calls.append((callee, mapping))
-        summaries[key] = {'params': params, 'sinks': sinks, 'calls': calls}
+        summaries[key] = {'params': params, 'sinks': sinks,
+                          'name': _name_of(key, defs), 'calls': calls}
 
     # 摘要组合：把 callee 的 sinks 按形参映射拉进 caller，跑到不动点。
     # 轮数封顶，环状调用图不会死循环；每轮只做集合合并，不再遍历函数体。

@@ -642,3 +642,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.156.0，报告字段没有变化；这次给子图摘要的每个 sink 加了 via 路径（经过哪些函数才摸到），主链路未切换，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 17:23
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.157.0，报告字段没有变化；这次加了子图/全量摘要的镜像测试、修掉全量摘要缺函数名的问题、并立起 sanitizer 语料骨架，schema 契约没动，golden 里只有 version 和 fingerprint 变。

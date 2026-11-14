@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.156.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.157.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：
 有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及
@@ -311,7 +311,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **556 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **559 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：`python scripts/perf_check.py`，固定种子造包测吞吐，低于下限 CI 红
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
@@ -396,7 +396,7 @@ CI 六个任务，缺一不可：`check`（Linux）、`windows`、`fuzz`、`prob
   才算「函数返回值」，一律保守归真空。
 - 发布前跑一次 `python scripts/check_release_tag.py v<版本>`。它的 `2` 是「查不到」，
   不是「CI 红」。
-- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **5 / 8**（真空断言口径）——
+- 注释豁免要贴着断言写（中间不许夹语句），比率当前是 **6 / 9**（真空断言口径）——
   这个数涨了就是信号。另外 3 处没走注释豁免，用的是 `non_empty()` 前置断言。
 - **本轮教训**：先说「做不到」，再去做；做完要给出「影响了几条结论」的数字。
   没有数字的改动不算做完了。
