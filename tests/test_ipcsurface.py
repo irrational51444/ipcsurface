@@ -4552,6 +4552,44 @@ class SubgraphQueryTests(unittest.TestCase):
                          '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
 
 
+class OnDemandDepthTests(unittest.TestCase):
+    """按需加深：浅跑没结果、但确实有链被砍断，才为这一条重跑。"""
+
+    def test_short_chain_stays_shallow(self):
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("c", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { fs.writeFileSync(x); }\n')}
+        got = ipc.channel_taint_map(files) or {}
+        self.assertTrue(got.get('c'),
+                        '两跳内的链浅跑就该出来，不该触发加深')
+
+    def test_deep_chain_is_rescued_by_on_demand_pass(self):
+        """五层链：浅跑（两跳）穿不过，按需加深要把它救回来。"""
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("deep", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { b(x); }\n'
+                             b'function b(y) { c(y); }\n'
+                             b'function c(z) { d(z); }\n'
+                             b'function d(w) { fs.writeFileSync(w); }\n')}
+        got = ipc.channel_taint_map(files) or {}
+        apis = [row[0] for row in (got.get('deep') or [])]
+        self.assertIn('writeFileSync', apis,
+                      '被深度砍断又救不回来，等于白做按需加深')
+
+    def test_facts_record_truncation_on_deep_chain(self):
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("deep", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { b(x); }\n'
+                             b'function b(y) { c(y); }\n'
+                             b'function c(z) { d(z); }\n'
+                             b'function d(w) { fs.writeFileSync(w); }\n')}
+        facts = ipc.scan_asar(files)
+        self.assertIn('taint_truncated', facts)
+
+
 class SanitizerStateTests(unittest.TestCase):
     """三态：guarded / exposed / unknown。压成两态就是替人下结论。"""
 
@@ -4831,6 +4869,22 @@ class SanitizerCorpusTests(unittest.TestCase):
         key = (d0['body_start'], d0['body_end'])
         hits = jssem.summary_sinks(summaries, key, {'p'})
         self.assertTrue(hits, '摘要组合要能穿过四层调用，不靠加深递归')
+
+    def test_scope_visibility_narrows_disjoint_blocks(self):
+        """同名函数定义在两个不相交的块里，调用点只可能看到自己那条链上的。"""
+        import jsparse
+        import jssem
+
+        src = ('function outer() { function f(x) { a(x); } f(1); }\n'
+               'function other() { function f(x) { b(x); } f(2); }\n')
+        toks = jsparse.tokenize(src)
+        defs = [d for d in jssem.find_modules(toks)] if False else None
+        parsed = jsparse.function_defs(toks)
+        cands = [d for d in parsed if d['name'] == 'f']
+        self.assertGreaterEqual(len(cands), 2, '构造里应该有两个同名 f')
+        at = toks.index([t for t in toks if t.text == 'f'][0])
+        kept = jssem._scope_visible(cands, toks, at)
+        self.assertLess(len(kept), len(cands), '不相交块里的同名定义应该被筛掉')
 
     def test_two_summary_entry_points_agree(self):
         """镜像测试：子图版和全量版是两处实现，同输入必须同输出。

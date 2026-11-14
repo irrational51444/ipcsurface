@@ -2050,6 +2050,35 @@ def _same_arity(candidates, argc):
     return matched or candidates
 
 
+def _scope_visible(candidates, tokens, at):
+    """同名候选里，只留「声明所在块是调用点所在块的祖先」的那些。
+
+    这是 P0-1 的最后一层过滤：模块归属管不到的文件（单文件打包），
+    至少能问一句「这个声明在调用点可见吗」。JS 的函数声明是块级可见的，
+    如果候选定义在另一个不相交的块里，调用点根本看不到它。
+
+    没有可用块信息时原样返回——不能凭空收窄。
+    """
+    if len(candidates) < 2:
+        return candidates
+    try:
+        _parent, blocks, _binds = scope_index(tokens)
+    except Exception:
+        return candidates
+    if at >= len(blocks):
+        return candidates
+    chain = set()
+    cur = blocks[at]
+    while cur is not None:
+        chain.add(cur)
+        cur = _parent.get(cur)
+    # 比的是「这个声明所在的块」，不是 body_start 本身——
+    # body_start 是 `{` 之后第一个 token，它属于那个新开的块。
+    kept = [d for d in candidates
+            if blocks[d['body_start']] in chain]
+    return kept or candidates
+
+
 def _same_module_only(candidates, modules, at):
     """同名候选里，只留「和调用点在同一个 webpack 模块内」的那些。
 
@@ -2342,7 +2371,8 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
              'edges_skipped': 0,
              'edges_built': 0,
              'edges_ambiguous': 0,
-             'edges_arity_narrowed': 0}
+             'edges_arity_narrowed': 0,
+             'edges_scope_narrowed': 0}
     for name, items in name_defs.items():
         if len(items) > 1:
             stats['ambiguous_names'] += 1
@@ -2365,6 +2395,11 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
             candidates = _same_module_only(candidates, modules, i)
             if not candidates:
                 continue
+            if len(candidates) > 1:
+                scoped = _scope_visible(candidates, tokens, i)
+                if len(scoped) < len(candidates):
+                    stats['edges_scope_narrowed'] = stats.get('edges_scope_narrowed', 0) + 1
+                candidates = scoped
             if len(candidates) > 1:
                 try:
                     _args, _close = _split_args(tokens, i + 1)
