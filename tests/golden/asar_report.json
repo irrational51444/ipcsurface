@@ -273,7 +273,7 @@
   "version": "<version>",
   "fingerprint": {
     "input_sha256": "<input-sha256>",
-    "version": "0.155.0",
+    "version": "0.156.0",
     "schema": "ipcsurface/asar/37",
     "params": {},
     "channels": [

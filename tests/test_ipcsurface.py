@@ -4624,6 +4624,30 @@ class TruncationCountTests(unittest.TestCase):
         hits = jssem.summary_sinks(summaries, key, {'p'})
         self.assertTrue(hits, '摘要组合要能穿过四层调用，不靠加深递归')
 
+    def test_via_path_names_the_hops(self):
+        import jsparse
+        import jssem
+
+        src = ('ipcMain.handle("deep", function (e, p) { a(p); });\n'
+               'function a(x) { b(x); }\n'
+               'function b(y) { c(y); }\n'
+               'function c(z) { d(z); }\n'
+               'function d(w) { fs.writeFileSync(w); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        sums = jssem.subgraph_summaries(toks, defs, [regs[0]['span']])
+        a_def = [d for d in defs if d['name'] == 'a'][0]
+        key = (a_def['body_start'], a_def['body_end'])
+        hits = jssem.summary_sinks(sums, key, {'x'})
+        self.assertTrue(hits)
+        api, param, _line, via = hits[0]
+        self.assertEqual(api, 'writeFileSync')
+        self.assertEqual(param, 'x', '脏的是 a 的第一个形参')
+        self.assertEqual(tuple(via), ('b', 'c', 'd'),
+                         '路径要能读出来：经过谁才摸到 sink')
+
     def test_facts_carry_the_truncation_count(self):
         files = {'main.js': (b'const {ipcMain} = require("electron");\n'
                              b'ipcMain.handle("x", function (e, p) {'

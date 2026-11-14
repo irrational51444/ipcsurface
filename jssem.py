@@ -2083,6 +2083,14 @@ def _pick_nearest(candidates, at):
     return after[0] if after else None
 
 
+def _name_of(key, defs):
+    """函数体区间 → 函数名。摘要里存一份，路径才读得出「经过谁」。"""
+    for d in defs:
+        if (d['body_start'], d['body_end']) == key:
+            return d['name']
+    return None
+
+
 def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
                         modules=None):
     """只对「从 roots 可达」的函数建摘要——局部子图，不是全量。
@@ -2219,7 +2227,8 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
             continue
         params = list(d.get('params') or [])
         if not params:
-            summaries[key] = {'params': [], 'sinks': {}, 'calls': edges.get(key, [])}
+            summaries[key] = {'params': [], 'sinks': {}, 'name': _name_of(key, defs),
+                          'calls': edges.get(key, [])}
             continue
         try:
             flows = flows_into_danger(tokens, key[0], key[1], params)
@@ -2228,8 +2237,10 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
         sinks = {}
         for api, arg, line, _shape in flows:
             if arg in params:
-                sinks.setdefault(arg, []).append((api, line))
+                # 三元组：sink、行号、经过的函数名（空 = 直接在本函数体里碰到）
+                sinks.setdefault(arg, []).append((api, line, ()))
         summaries[key] = {'params': params, 'sinks': sinks,
+                          'name': _name_of(key, defs),
                           'calls': edges.get(key, [])}
 
     # 组合：只在可达集内部拼接，跑到不动点
@@ -2243,10 +2254,11 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
                 if not target:
                     continue
                 for src_param, dst_param in mapping.items():
-                    for api, line in target['sinks'].get(dst_param) or []:
+                    for api, line, via in target['sinks'].get(dst_param) or []:
+                        hop = (target.get('name') or '?',) + tuple(via)
                         bucket = summary['sinks'].setdefault(src_param, [])
-                        if (api, line) not in bucket:
-                            bucket.append((api, line))
+                        if (api, line, hop) not in bucket:
+                            bucket.append((api, line, hop))
                             changed = True
         if not changed:
             break
@@ -2293,7 +2305,7 @@ def function_summaries(tokens, defs, rounds=4):
             flows = []
         for api, arg, line, _shape in flows:
             if arg in params:
-                sinks.setdefault(arg, []).append((api, line))
+                sinks.setdefault(arg, []).append((api, line, ()))
         limit = min(key[1], len(tokens) - 1)
         for i in range(key[0], limit - 1):
             if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
@@ -2326,10 +2338,11 @@ def function_summaries(tokens, defs, rounds=4):
                 if not target:
                     continue
                 for src_param, dst_param in mapping.items():
-                    for api, line in target['sinks'].get(dst_param) or []:
+                    for api, line, via in target['sinks'].get(dst_param) or []:
+                        hop = (target.get('name') or '?',) + tuple(via)
                         bucket = summary['sinks'].setdefault(src_param, [])
-                        if (api, line) not in bucket:
-                            bucket.append((api, line))
+                        if (api, line, hop) not in bucket:
+                            bucket.append((api, line, hop))
                             changed = True
         if not changed:
             break
@@ -2343,8 +2356,8 @@ def summary_sinks(summaries, func_key, tainted_params):
         return []
     hits = []
     for param in tainted_params:
-        for api, line in summary['sinks'].get(param) or []:
-            hits.append((api, param, line))
+        for api, line, via in summary['sinks'].get(param) or []:
+            hits.append((api, param, line, tuple(via)))
     return hits
 
 
@@ -2385,8 +2398,8 @@ def interproc_taint_via_summaries(tokens, start, end, tainted, defs, summaries):
         if not dirty_params:
             continue
         key = (target['body_start'], target['body_end'])
-        for api, param, line in summary_sinks(summaries, key, dirty_params):
-            hits.append((tokens[i].text, api, param, line))
+        for api, param, line, via in summary_sinks(summaries, key, dirty_params):
+            hits.append((tokens[i].text, api, param, line, tuple(via)))
     return hits
 
 
