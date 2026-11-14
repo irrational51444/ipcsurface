@@ -280,7 +280,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **546 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **545 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：`python scripts/perf_check.py`，固定种子造包测吞吐，低于下限 CI 红
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算
