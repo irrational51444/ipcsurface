@@ -4590,7 +4590,57 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
-class CrossFunctionSanitizerTests(unittest.TestCase):
+class RealPackageRegressionTests(unittest.TestCase):
+    """真包人工对账发现的三个污点缺陷（ACLOS 4 报 2 真 2 假）。
+
+    比合成用例值钱的地方在于：这三条都是「看起来对」的写法。
+    """
+
+    def taint(self, src):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        if not regs or not regs[0].get('span'):
+            return None, []
+        span = regs[0]['span']
+        params = ipc.handler_params(toks, span[0], span[1])
+        dirty = jssem.tainted_names(jssem.assignments(toks, span[0], span[1], params))
+        flows = jssem.flows_into_danger(toks, span[0], span[1], params)
+        return params, flows
+
+    def test_nested_async_arrow_params_are_read(self):
+        """`(async (e, o) => {...})`：外层括号包住整个箭头函数。
+
+        直接拿外层 `(` 配平，两个形参落在 depth 2 全被漏掉——
+        ACLOS 那两条真高危通道就是这么消失的。
+        """
+        src = ('ipcMain.handle("c", (async (e, o) => { '
+               'fs.readFileSync(o); }));')
+        params, flows = self.taint(src)
+        self.assertEqual(params, ['e', 'o'])
+        self.assertIn('readFileSync', [f[0] for f in flows])
+
+    def test_let_shadowing_kills_the_taint(self):
+        """`(e => { let e = h(); ... })`：形参被同函数内 let 盖掉，之后不是外部输入。"""
+        src = ('ipcMain.handle("c", (e => { let e = h(); '
+               'fs.existsSync(e); }));')
+        _params, flows = self.taint(src)
+        self.assertEqual(flows, [], '形参被 let 遮蔽后不该再当脏源')
+
+    def test_zero_arg_handler_does_not_blame_inner_params(self):
+        """零参 handler 里的递归函数形参不是外部输入。"""
+        src = ('ipcMain.handle("c", (async () => { '
+               'g = e => { e && fs.existsSync(e) }; g(internal); }));')
+        params, flows = self.taint(src)
+        self.assertEqual(params, [], '零参 handler 不该解析出形参')
+        self.assertEqual(flows, [])
+
+
+class RealPackageRegressionTests2(unittest.TestCase):
     """校验写在别的函数里，算 handler 也校验过。"""
 
     def test_helper_check_counts(self):

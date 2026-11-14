@@ -1052,6 +1052,9 @@ def tainted_names(table, rounds=4):
     """谁身上带着外部输入。参数天生算，然后沿赋值传播，迭代到不动点。"""
     early = set()   # 这个函数不用解构那套，占位而已
     tainted = {name for name, values in table.items() if any(v is None for v in values)}
+    # 遮蔽另行处理（见 flows_into_danger）：只有 `let/const` 同名声明才算盖掉。
+    # 光看「最后一次赋值的值」会杀掉真形参——`o` 被解构用过一次就不再脏，
+    # 那是把真高危也一起冤枉了。
     for _ in range(rounds):
         grew = False
         for name, values in table.items():
@@ -2810,6 +2813,14 @@ def flows_into_danger(tokens, start, end, params, aliases=None):
     """函数体里，哪个危险调用吃到了外部输入。返回 [(调用名, 参数名, 行号)]。"""
     table = assignments(tokens, start, end, params)
     tainted = tainted_names(table)
+    # `let/const` 同名声明会把形参盖掉：`(e => { let e = h(); ... })`
+    # 之后再用 `e`，用的不是外部输入。只有声明才算遮蔽，单纯赋值不算。
+    shadowed = set()
+    for k in range(start, min(end, len(tokens) - 1)):
+        if tokens[k].text in ('let', 'const') and tokens[k + 1].kind == 'ident':
+            shadowed.add(tokens[k + 1].text)
+    if shadowed:
+        tainted = {name for name in tainted if name not in shadowed}
     tainted |= callback_taints(tokens, start, end, tainted)
     tainted |= loop_taints(tokens, start, end, tainted)
     tainted |= catch_taints(tokens, start, end, tainted)

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.168.0'
+__version__ = '0.169.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/38'
@@ -2312,6 +2312,14 @@ def handler_params(tokens, start, end):
     i = start
     while i < end and tokens[i].text not in ('(', '{'):
         i += 1
+    # `(async (e, o) => {...})`：外层括号包住整个箭头函数，真正的形参列表在里面。
+    # 直接拿外层 `(` 去配平，两个形参落在 depth 2，会被漏光——ACLOS 那两条
+    # 真高危通道就是这么消失的。
+    while (i + 1 < end and tokens[i].text == '('
+           and tokens[i + 1].text in ('async', '(')):
+        i += 1
+        if tokens[i].text == 'async' and i + 1 < end:
+            i += 1
     if i >= end or tokens[i].text != '(':
         # 单形参箭头函数没有括号：sync o => {...}。以前这里直接返回 [],
         # 于是所有 async 单参 handler 的形参都是空的——sanitizer 检测因此
@@ -2325,6 +2333,12 @@ def handler_params(tokens, start, end):
     depth = 0
     for j in range(i, min(end, len(tokens))):
         text = tokens[j].text
+        if text == '=>':
+            # 撞上 `=>` 说明这个括号包的是单参箭头函数本身，
+            # 不是形参列表：`(e => {...})`。以前会一路扫到配对的 `)`，
+            # 把整个函数体里的标识符都当成形参——真包上因此出了两条误报
+            # （ACLOS 的 runDiagnose、aiDebug:buildLogArchive）。
+            return names[-1:] if names else []
         if text == '(':
             depth += 1
             continue
@@ -2334,7 +2348,9 @@ def handler_params(tokens, start, end):
                 break
             continue
         if tokens[j].kind == 'ident' and depth == 1:
-            names.append(text)
+            # `async()` 这种：`async` 是修饰符，不是形参。
+            if text not in ('async', 'function', 'return', 'await'):
+                names.append(text)
     return names
 
 

@@ -702,3 +702,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.168.0，报告字段结构没变；这次修了 OBJECT_LITERAL_DEF 的可选前缀导致的灾难性回溯（pcsuite 从 389 秒降到 143 秒），并把 pcsuite 的 5 条通道加进语料，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 23:03
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.169.0，报告字段结构没变；这次修了形参列表解析（外层括号 + 箭头函数）和 let 遮蔽两处污点缺陷，ACLOS 高危通道从 4 条变 2 条、与人工核对一致，golden 里 version/fingerprint 之外也反映通道变化。
