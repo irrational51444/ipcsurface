@@ -107,3 +107,63 @@ Vue 组件的 ref 名）。但**只要 `web-ipc-preload.js` 或 `common-browser-
 - `webviewSend` 的调用方是否可控（webview 里加载的页面是第三方）；
 - `jsbridge.call({namespace, funcName, params})` 走 `LoginVerifyWebviewCall`，
   主进程侧有没有按 namespace/funcName 白名单过滤——没查。
+
+## 六、哪个窗口加载了这些 preload（静态查清了）
+
+上一节留的那一环补上了。`webPreferences.preload` 全是 `path.join(__dirname, ...)`，
+所以静态能读出来：
+
+| 窗口 / 容器 | preload | 关键 webPreferences |
+| --- | --- | --- |
+| `common-browser.js` | `common-browser-preload.js` | `nodeIntegration: false`、`contextIsolation: true`、`webviewTag: true` |
+| `highlightwindowtab` 的 webview | `web-ipc-preload.js` | `setAttribute("disablewebsecurity", true)` |
+| `common_browser` 的 webview | `webview-browser-proload.js` | — |
+| 渲染侧 Vue 组件 | `career-webview-preload.js` | 由 `window.preloadUrl` 拼出来 |
+
+### 最要紧的一条
+
+`common-browser.js` 那个窗口写着 **`nodeIntegration: false` + `contextIsolation: true`**
+——按理说是「安全配置」。但它加载的 preload 里有：
+
+```js
+EAPI.sendToMain = ({channel, data}) => ipcRenderer.send(channel, data)
+```
+
+`contextIsolation` 拦的是「页面直接拿 `require`」，拦不住「preload 主动开一个透传口」。
+**窗口配置得再安全，一个透传口就把整张 IPC 表交出去了。**
+
+这个窗口还开着 `webviewTag: true` —— 里面能嵌 webview，加载的网页是第三方。
+
+### `deleteCorruptFile` 的完整链条（现在齐了）
+
+```
+common-browser 窗口里的页面（或它嵌的 webview）
+  → EAPI.sendToMain({channel: "deleteCorruptFile", data: <任意路径>})
+  → ipcRenderer.send("deleteCorruptFile", <任意路径>)
+  → a.on("deleteCorruptFile", o => l.unlinkSync(o))
+  → 删除任意当前用户可删的文件
+```
+
+这条链只缺一样东西没验证：**那个窗口实际加载的 URL 是不是可信来源**。
+静态看不出来（`loadURL` 的地址可能来自配置或登录态），要跑起来看。
+
+### `uploadLogArchive` 的入口也找到了
+
+`webViewApi.invoke`（`webview-browser-proload.js` 和 `career-webview-preload.js` 各有一个）
+是 invoke 透传，能调 `ipcMain.handle`。挂它需要页面在那个 webview 里。
+
+### 一个更糟的细节
+
+`web-ipc-preload.js` 那个 webview 带 `disablewebsecurity`。这意味着那个 webview 里的页面
+不受同源策略约束，配合 `AclosApi.webviewSend(channel, data)` 透传口，
+**任意通道的 `send` 都能从那个 webview 发出来**。
+
+## 七、工具这边补了什么
+
+0.170.0 加了 `passthrough_ports`：扫 `exposeInMainWorld` 的对象，找
+「通道参数直接进 `ipcRenderer.send/invoke`」的方法。ACLOS 上 5 个真透传口，
+Sentry 的常量通道不再误报。
+
+**还没做的**：把「透传口」和「通道」关联起来——现在报告分两节列，读者得自己连。
+理想形态是「这条通道能被哪些透传口调到」，那需要把 preload 挂到窗口、窗口挂到 URL，
+静态做不完整。
