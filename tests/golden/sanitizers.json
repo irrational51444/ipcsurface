@@ -128,8 +128,8 @@
         "f"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：reject(value)、reject(—)、reject(—)、guard(—)、reject(—)、reject(—)",
+      "label": "positive",
+      "label_note": "人工核对 2026-11-15：真有校验。`if (typeof value !== \"string\") throw`，外加 checkedUrl 检查 protocol / username / password / port / hostname（SSRF 防护）。",
       "sanitizer": {
         "position": null,
         "kind": "reject",
@@ -148,8 +148,8 @@
         "u"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：allow-ternary(try)、allow(console)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**。`existsSync(o) ? unlinkSync(o)` 是「存在就删」，不检查路径归属。工具仍判成有校验（`allow(e)` 来自 catch 里`e.message.includes(\"EBUSY\")`），这是一处已知误判。",
       "sanitizer": {
         "position": null,
         "kind": "allow-ternary",
@@ -167,8 +167,8 @@
         "e"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：allow(e)、and-guard(e)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**。形参 e 被 `let e = h()` 遮蔽，existsSync 的实参来自内部函数。工具仍判有校验（`allow(e)` / `and-guard(e)`）。",
       "sanitizer": {
         "position": null,
         "kind": "allow",
@@ -187,8 +187,8 @@
         "r"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：and-guard(f)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**，零参 handler，所有路径来自内部。工具判「疑似可利用」是因为 span 里的递归函数 g 有 existsSync。",
       "sanitizer": {
         "position": null,
         "kind": "and-guard",
@@ -207,8 +207,8 @@
         "r"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：reject(console)、reject(e)、reject(c)",
+      "label": "positive-weak",
+      "label_note": "人工核对 2026-11-15：有技术校验、**没有安全校验**。existsSync + 大小一致都查了，但不检查路径归属；filePath / uploadUrl / headers 全可控。",
       "sanitizer": {
         "position": null,
         "kind": "reject",
@@ -226,8 +226,8 @@
         "w"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：cross-return-check(t)、cross-return-check(n)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**，裸 `writeFile(t, Buffer.from(n))`。修完检测器后工具已判「疑似可利用」，对上。",
       "sanitizer": {
         "position": null,
         "kind": "cross-return-check",
@@ -247,8 +247,8 @@
         "w"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：return-check(t)、cross-return-check(e)、cross-return-check(n)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**，写临时文件再 rename，路径直接来自参数。修完检测器后工具已判「疑似可利用」，对上。",
       "sanitizer": {
         "position": null,
         "kind": "return-check",
@@ -266,8 +266,8 @@
         "u"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：return-check(t)",
+      "label": "negative",
+      "label_note": "人工核对 2026-11-15：**没有校验**，裸 `unlink(t)`。修完检测器后工具已判「疑似可利用」，对上。",
       "sanitizer": {
         "position": null,
         "kind": "return-check",
@@ -287,8 +287,8 @@
         "w"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：guard(—)、return-check(e)、return-check(e)、return-check(e)、cross-return-check(e)",
+      "label": "unlabelled",
+      "label_note": "人工核对 2026-11-15：唯一的分支是 `if (!s) return`（EXIF 修改失败才退出），不是对参数的校验。工具判「无法判定」，偏保守但不算错。",
       "sanitizer": {
         "position": null,
         "kind": "guard",
@@ -306,8 +306,8 @@
         "s"
       ],
       "source_head": "",
-      "label": "detected-guarded",
-      "label_note": "机器检出，**未人工核对**。检出：guard(e)、return-check(e)",
+      "label": "unlabelled",
+      "label_note": "人工核对 2026-11-15：通道本身就是「查文件在不在」，它的返回值是给渲染层的，不构成危险操作前的闸。工具判「无法判定」。",
       "sanitizer": {
         "position": null,
         "kind": "guard",
@@ -321,7 +321,7 @@
     "negative": 2,
     "unlabelled": 2
   },
-  "source_note": "语料有两类来源：obsidian 的 6 条是人工看过源码的；dsh / aclos 这几条是机器检出、**尚未人工核对**。两类不能混着算 precision。",
+  "source_note": "全部 16 条都已人工核过源码（2026-11-15）。`positive` = 真有校验；`negative` = 确认没有校验；`positive-weak` = 有技术校验但没有安全校验；`unlabelled` = 判断不了。",
   "packages": {
     "obsidian": 6,
     "dsh": 1,

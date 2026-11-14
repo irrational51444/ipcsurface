@@ -722,3 +722,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.172.0，报告多一列「调用方式」（handle/on）并区分 send/invoke 透传口能调到的通道数，schema 契约没变但报告内容变化，golden 里 version 和 fingerprint 会变。
+
+## 2026-11-15 00:52
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.173.0，报告字段结构没变；这次收窄了校验判定（existsSync 之类的存在性检查不再算校验、函数调用要名字像校验、方法调用不借同名函数），pcsuite 三条裸写通道从有校验变疑似可利用，golden 里 version/fingerprint 之外也反映判定变化。

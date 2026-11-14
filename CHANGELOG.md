@@ -2,6 +2,75 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.173.0 — 16 条语料全部人工核完，抓出三类误判
+
+爸爸要求今晚把剩下的都做完。第一件是把 10 条 `detected-*` 逐条读源码核掉。
+
+### 核出来的结论
+
+| 通道 | 人工 | 旧判定 | 根因 |
+| --- | --- | --- | --- |
+| `dsh:clipboard-image-read` | **真有校验** | 有校验 | — |
+| `uploadLogArchive` | 有技术校验、**无安全校验** | 有校验 | 见下 |
+| `deleteCorruptFile` | **无校验** | 有校验 | `existsSync` 被当校验 |
+| `runDiagnose` | **无校验** | 有校验 | `includes` 被当校验 |
+| `buildLogArchive` | **无校验** | 疑似可利用 | 递归函数内 sink |
+| `write-exif-to-file` | **无校验** | 有校验 | 三类误判全中 |
+| `write-exif-to-file-safe` | **无校验** | 有校验 | 同上 |
+| `delete-file` | **无校验** | 有校验 | 同上 |
+| `modify-exif-orientation` | 无校验（`if (!s) return` 不是参数校验） | 无法判定 | 偏保守 |
+| `common:check-file-exists` | 判断不了 | 无法判定 | — |
+
+### 三类误判，逐一修掉
+
+**一、`existsSync` / `resolve` / `parse` / `require` / `assert` 不是校验。**
+
+它们以前在「像校验的词」集合里。`existsSync(p) ? unlinkSync(p) : ...` 是
+「存在就删」——存在性检查不是安全校验，它能被攻击者用「文件存在」满足。
+
+**二、函数调用不能无条件算校验。**
+
+以前是「任何函数调用 + 实参里有形参 → 看过一眼」。于是 `writeFile(t, ...)`、
+`console.log(p)` 全被算成校验。收窄成「名字像校验」：`check*` / `valid*` /
+`verify*` / `allow*` / `assert*` / `isXxx` 这类。
+
+**三、方法调用不能借同文件函数的校验。**
+
+```
+Buffer.from(n)
+```
+
+`from` 恰好和同文件某个顶层函数重名，于是那个函数里的 `return typeof p === "string"`
+被借过来，映射到 `n` 上。修法：调用点前一个 token 是 `.` 就跳过。
+
+### pcsuite 前后的变化
+
+| 通道 | 修前 | 修后 |
+| --- | --- | --- |
+| `write-exif-to-file` | 有校验 | **疑似可利用** |
+| `write-exif-to-file-safe` | 有校验 | **疑似可利用** |
+| `delete-file` | 有校验 | **疑似可利用** |
+| `modify-exif-orientation` | 有校验 | 无法判定 |
+| `common:check-file-exists` | 有校验 | 无法判定 |
+
+三条裸写的写文件 / 删文件通道终于被判对了。
+
+### 还剩两处已知误判（写进语料，没修）
+
+- `deleteCorruptFile` 判有校验，`allow(e)` 来自 catch 里 `e.message.includes("EBUSY")`——
+  那是错误处理，不是校验前置；
+- `runDiagnose` 判有校验，`allow(e)` / `and-guard(e)` 同理。
+
+这两条是「`includes` / `match` / `test` 出现在 if 条件里就算校验」的固有噪声。
+真要修得追「这个 if 块里的 sink 是不是靠这个条件保护」，工作量比这一版大，
+先标 `negative` 记在语料里。
+
+### 语料现状
+
+16 条全部人工核过：`positive` 3、`positive-weak` 1、`negative` 8、`unlabelled` 4。
+
+用例 595 → 598。
+
 ## 0.172.0 — 通道区分 send/invoke，和透传口对上了
 
 上一版列了 5 个透传口，但没回答「这些口能调到哪些通道」。这一版补上。

@@ -2223,6 +2223,18 @@ def _param_in(segment, params):
     return None
 
 
+_NOT_A_CHECK_CALL = frozenset({
+    'existsSync', 'exists', 'writeFile', 'writeFileSync', 'readFile',
+    'readFileSync', 'unlink', 'unlinkSync', 'mkdir', 'mkdirSync', 'rename',
+    'renameSync', 'rmdir', 'rmSync', 'copyFile', 'copyFileSync', 'statSync',
+    'readdirSync', 'appendFile', 'appendFileSync', 'chmod', 'chmodSync',
+    'log', 'error', 'warn', 'info', 'debug', 'trace', 'stringify', 'join',
+    'resolve', 'parse', 'require', 'from', 'basename', 'dirname', 'extname',
+    'normalize', 'concat', 'slice', 'push', 'pop', 'map', 'filter', 'forEach',
+    'then', 'catch', 'finally', 'send', 'invoke', 'once', 'on', 'emit',
+})
+
+
 def _looks_like_check(segment, params=()):
     """条件里有没有「像校验」的东西。
 
@@ -2244,15 +2256,24 @@ def _looks_like_check(segment, params=()):
             return True
 
     ops = {'===', '!==', '==', '!=', '>', '<', '>=', '<=', 'instanceof', 'in'}
+    # `existsSync` / `resolve` / `parse` / `require` / `assert` 以前也在这个集合里，
+    # 但它们不是校验：`existsSync(p) ? unlinkSync(p) : ...` 是「存在就删」。
+    # pcsuite 上 4 条裸写的写文件/删文件通道全因此被报成「有校验」。
     words = {'typeof', 'startsWith', 'endsWith', 'includes', 'match', 'test',
-             'isAbsolute', 'normalize', 'resolve', 'realpathSync', 'existsSync',
-             'indexOf', 'isArray', 'assert', 'require', 'parse', 'validate'}
+             'isAbsolute', 'normalize', 'realpathSync', 'indexOf', 'isArray',
+             'validate'}
     for i, tok in enumerate(segment):
         if tok.text in ops or tok.text in words:
             return True
         # 函数调用，且实参里出现了形参 → 当作「看过了」
         if (tok.kind == 'ident' and i + 1 < len(segment)
                 and segment[i + 1].text == '(' and params):
+            # 反向排除，不搞正向白名单：`isValid(p)`、`ok(p)`、`checkPath(p)` 这类
+            # 自定义谓词名字五花八门，正向列不全（漏报最坏）；
+            # 真正要挡的是「存在性检查 / 写文件 / 打日志」这些明显不是校验的调用。
+            name = tok.text
+            if name in _NOT_A_CHECK_CALL:
+                continue
             for j in range(i + 2, len(segment)):
                 if segment[j].text == ')':
                     break
@@ -2278,6 +2299,11 @@ def cross_fn_sanitizers(tokens, start, end, params, defs):
     limit = min(end, len(tokens) - 1)
     for i in range(start, limit - 1):
         if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+            continue
+        # 方法调用不算：`Buffer.from(n)`、`__log.error(...)` 里的 `from` / `error`
+        # 只是碰巧和某个顶层函数重名。pcsuite 的 write-exif-to-file 就是这么
+        # 被 `from` 借走了校验，明明裸写 writeFile 却报成「有校验」。
+        if i > 0 and tokens[i - 1].text == '.':
             continue
         candidates = by_name.get(tokens[i].text)
         if not candidates:

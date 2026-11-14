@@ -4623,6 +4623,41 @@ class PassthroughReportTests(unittest.TestCase):
         self.assertEqual(ports[0].get('exposed'), 'EAPI')
 
 
+class SanitizerFalsePositiveTests(unittest.TestCase):
+    """人工核对 10 条真包语料时抓出来的三类误判。"""
+
+    def find(self, src, params=('e', 'p')):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        return jssem.find_sanitizers(toks, 0, len(toks) - 1, list(params))
+
+    def test_exists_sync_is_not_a_check(self):
+        """`existsSync(p) ? unlinkSync(p) : ...` 是「存在就删」，不是校验。"""
+        got = self.find('function h(e, p) { p && require("fs").unlinkSync(p); }')
+        kinds = [g["kind"] for g in got]
+        self.assertNotIn("return-check", kinds)
+
+    def test_bare_write_is_not_a_check(self):
+        got = self.find('function h(e, p) { try { return fs.writeFileSync(p) } catch (x) { return { ok: !1 } } }')
+        self.assertEqual(got, [], "裸写文件不是校验")
+
+    def test_method_call_does_not_borrow_a_helper(self):
+        """`Buffer.from(p)` 里的 `from` 不能借走同文件同名函数的校验。"""
+        import jsparse
+        import jssem
+
+        src = ('function h(e, p) { return Buffer.from(p); }\n'
+               'function fro(p) { return typeof p === "string"; }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        h = [d for d in defs if d["name"] == "h"][0]
+        got = jssem.cross_fn_sanitizers(toks, h["body_start"], h["body_end"],
+                                        list(h.get("params") or []), defs)
+        self.assertEqual(got, [], "方法调用不是跨函数校验")
+
+
 class PassthroughPortTests(unittest.TestCase):
     """preload 的任意通道透传口：这是整张 IPC 表一起暴露，比单条通道更危险。"""
 
@@ -4765,9 +4800,10 @@ class SanitizerStateTests(unittest.TestCase):
         self.assertEqual(got['c']['state'], 'exposed')
 
     def test_guard_alone_is_unknown(self):
+        # 同上：条件得是「像校验」的调用，不是存在性检查。
         got = self.states('const {ipcMain} = require("electron");\n'
                           'ipcMain.handle("c", function (e, p) {\n'
-                          '  if (fs.existsSync(p)) { log("ok"); }\n'
+                          '  if (isValid(p)) { log("ok"); }\n'
                           '  fs.writeFileSync(p);\n'
                           '});\n')
         self.assertEqual(got['c']['state'], 'unknown',
@@ -4858,7 +4894,9 @@ class SanitizerDetectorTests(unittest.TestCase):
         self.assertEqual([g['kind'] for g in got], ['reject'])
 
     def test_reject_form(self):
-        got = self.find('function h(e, p) { if (!fs.existsSync(p)) return; '
+        # 用 isValid，不用 existsSync：存在性检查不是校验（真包上踩过，
+        # `existsSync(p) ? unlinkSync(p) : ...` 是「存在就删」）。
+        got = self.find('function h(e, p) { if (!isValid(p)) return; '
                         'fs.writeFileSync(p); }')
         self.assertEqual([g['kind'] for g in got], ['reject'])
         self.assertEqual(got[0]['target'], 'p')
@@ -4870,7 +4908,7 @@ class SanitizerDetectorTests(unittest.TestCase):
         self.assertEqual(got[0]['target'], 'p')
 
     def test_guard_form_when_sink_is_outside(self):
-        got = self.find('function h(e, p) { if (fs.existsSync(p)) { '
+        got = self.find('function h(e, p) { if (isValid(p)) { '
                         'log("ok"); } fs.writeFileSync(p); }')
         self.assertEqual([g['kind'] for g in got], ['guard'],
                          '条件里有校验、但 sink 不在块内，记成 guard 而不是 allow')
@@ -4900,9 +4938,14 @@ class SanitizerDetectorTests(unittest.TestCase):
                   encoding='utf-8') as fh:
             corpus = json.load(fh)
         labelled = [e for e in corpus['entries']
-                    if e.get('label') in ('positive', 'negative')]
-        self.assertGreaterEqual(len(labelled), 4)
-        self.assertEqual(sum(1 for e in labelled if e.get('label') == 'positive'), 2)
+                    if e.get('label') in ('positive', 'negative', 'positive-weak')]
+        self.assertGreaterEqual(len(labelled), 10,
+                                '16 条语料都要人工核过（2026-11-15 已完成）')
+        # obsidian 两条 + dsh 一条真校验；positive-weak 是「有技术校验无安全校验」，
+        # 单独一类，不混进 positive。
+        self.assertEqual(sum(1 for e in labelled if e.get('label') == 'positive'), 3)
+        self.assertEqual(sum(1 for e in labelled
+                             if e.get('label') == 'positive-weak'), 1)
 
 
 class SanitizerCorpusTests(unittest.TestCase):
