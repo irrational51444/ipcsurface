@@ -4169,6 +4169,24 @@ class RealShapeCorpusTests(unittest.TestCase):
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
 
 
+class RegexPerformanceTests(unittest.TestCase):
+    """A regex on a 3 MB single-line bundle must not degrade into backtracking."""
+
+    def test_const_pair_regex_does_not_blow_up(self):
+        import time
+
+        line = ('identifier_' * 20000) + ':"x"'
+        start = time.monotonic()
+        ipc.CONST_PAIR_RE.findall(line)
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0,
+                        '标识符长度没限死会退化成几亿次回溯：%.2fs' % elapsed)
+
+    def test_const_pair_regex_still_finds_pairs(self):
+        found = ipc.CONST_PAIR_RE.findall('const x = {fileSave:"save-file"};')
+        self.assertIn(('fileSave', 'save-file'), found)
+
+
 class AliasScanTests(unittest.TestCase):
     """After a destructuring rename the literal scanner must still see the call."""
 

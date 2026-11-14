@@ -537,3 +537,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.137.0，报告字段没有变化；解构别名让字面扫描层多认出注册点，通道数随输入变，但 schema 契约本身没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 10:30
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.137.1，报告字段没有变化；这次修的是常量正则的回溯问题，输出不变，golden 里只有 version 和 fingerprint 变。

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.137.0'
+__version__ = '0.137.1'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/34'
@@ -2077,7 +2077,11 @@ def pick_main_js(files):
 
 # 限定长度的写法会在没引号的超长行上疯狂回溯：2.2 万个文件的样本跑了两分半。
 # 改成把值整段吃掉、事后判长度，回溯就没了。
-CONST_PAIR_RE = re.compile(r'([A-Za-z_$][\w$]*)\s*:\s*"([^"\\]*)"')
+# 标识符长度必须限死。`[\w$]*` 配上后面的 `\s*:\s*`，在一个 3.4 MB 的
+# Browserify 产物上会退化成几亿次回溯——ArmouryDevice 那个包就是这么被卡住的：
+# 全包 7.4 MB、486 个文件，扫描跑了十分钟还没结束，其中 99% 的时间花在这一条
+# 正则对一个大文件做无用回溯上。限到 80 个字符，每个位置最多试 81 次。
+CONST_PAIR_RE = re.compile(r'([A-Za-z_$][\w$]{0,80})\s*:\s*"([^"\\]{0,200})"')
 CONST_CACHE = {}
 
 
