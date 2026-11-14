@@ -4590,6 +4590,62 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+class PreciseMissTests(unittest.TestCase):
+    """精扫层在真包上漏报的两个根因（漏报第一大错）。"""
+
+    def _pe(self):
+        try:
+            import precise_engine as pe
+        except ImportError:
+            self.skipTest('tree-sitter 没装')
+        return pe
+
+    def test_non_ascii_text_does_not_shift_offsets(self):
+        """tree-sitter 的 start_byte 是 UTF-8 字节偏移，text 是 str。
+
+        直接 text[a:b] 是按字符切：文件里有一个中文注释，后面全体错位，
+        取出来的标识符是乱码。dsh 的 lib/main.js 就是这样一条通道都认不出。
+        """
+        pe = self._pe()
+        src = ('// 中文注释占位\n'
+               'const {ipcMain} = require("electron");\n'
+               'ipcMain.handle("demo", (e, o) => {});\n')
+        root = pe._parse(src).root_node
+        names = []
+        for n in pe._walk(root):
+            if n.type != 'call_expression':
+                continue
+            fn = n.child_by_field_name('function')
+            if fn is None or fn.type != 'member_expression':
+                continue
+            obj = fn.child_by_field_name('object')
+            if obj is not None:
+                names.append(pe._text_of(obj, src))
+        self.assertIn('ipcMain', names,
+                      '中文注释不该把后面的标识符切成乱码')
+
+    def test_parenthesized_handler_is_unwrapped(self):
+        """`on("x", (async (e, o) => {...}))`：handler 外面套了一层括号。"""
+        pe = self._pe()
+        src = ('const {ipcMain} = require("electron");\n'
+               'ipcMain.on("demo", (async (e, o) => { '
+               'require("fs").unlinkSync(o) }));\n')
+        root = pe._parse(src).root_node
+        got = None
+        for n in pe._walk(root):
+            if n.type != 'call_expression':
+                continue
+            fn = n.child_by_field_name('function')
+            if fn is None or fn.type != 'member_expression':
+                continue
+            prop = fn.child_by_field_name('property')
+            if prop is None or pe._text_of(prop, src) != 'on':
+                continue
+            got = pe._handler_of(n)
+        self.assertIsNotNone(got,
+                             'ACLOS 的 286 条通道全卡在这一层')
+
+
 class PreciseAliasTests(unittest.TestCase):
     """精扫层认三种 ipcMain 形态：裸名、解构别名、命名空间取属性。"""
 

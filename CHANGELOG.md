@@ -2,6 +2,60 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.176.0 — 精扫漏报的两个根因：中文注释把偏移切错、handler 外面套括号
+
+爸爸说漏报是第一大错。这一版把精扫层在真包上扫不出东西的两个根因挖出来了。
+
+### 一、`_text_of` 按字符切，但偏移是字节
+
+```python
+def _text_of(node, text):
+    return text[node.start_byte:node.end_byte]   # text 是 str
+```
+
+tree-sitter 的 `start_byte` / `end_byte` 是 **UTF-8 字节偏移**（`_parse` 传进去的
+是 `text.encode("utf-8")`），而 `text` 是 str。直接切片是按**字符**切。
+
+**文件里只要有一个中文注释，后面全体错位。** 取出来的标识符是乱码
+（`function` 变成 `funct`），跟 `ipcMain` 比永远不等。
+
+dsh 的 `lib/main.js` 就是这样：文本里明摆着有 `ipcMain.handle(...)`，
+AST 里取出来的对象名却是乱码，一条通道都认不出。
+
+修：按 UTF-8 字节切，编码结果按对象身份缓存（`_follow` 会调这个函数几千次）。
+
+### 二、handler 外面套了一层括号
+
+```js
+ipcMain.on("x", (async (e, o) => {...}))
+                    ↑ parenthesized_expression
+```
+
+`_handler_of` 只认 `arrow_function` / `function_expression` / `identifier`。
+`parenthesized_expression` 不认 → 返回 `None` → 整条通道跳过。
+
+ACLOS 的 286 条通道全卡在这一层。修法：先剥括号再判断类型。
+
+### 修完的结果
+
+| 包 | 粗扫 | 修前精扫 | 修后精扫 |
+| --- | --- | --- | --- |
+| obsidian | 47 | 22 | 22 |
+| dsh | 41 | **0** | **36** |
+| aclos | 286 | **0** | **17** |
+| bilibili | 1 | 0 | 0 |
+
+aclos 那 17 条里包含 `aiDebug:uploadLogArchive` 和 `deleteCorruptFile`——
+正是人工核对过的那两条真高危。
+
+### 还有一处没修：dsh 的通道名缺前缀
+
+粗扫是 `dsh-desktop:boot`，精扫出来是 `boot`——它的通道名是模板拼的
+（`\`dsh-desktop:${name}\``），`_channel_of` 只取字符串字面量部分。
+**这仍是漏报**，下游按完整通道名匹配会落空。
+
+用例 601 → 603。
+
 ## 0.175.0 — 精扫层认三种 ipcMain 形态，obsidian 从 0 条到 22 条
 
 上一版说得很明白：切主链路之前先做对照实验，结果精扫层在两个包上扫出 0 条通道。

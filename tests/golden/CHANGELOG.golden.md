@@ -737,3 +737,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.175.0，报告字段结构没变；这次修了精扫层的命名空间形态（l.ipcMain.handle），obsidian 上精扫从 0 条通道变 22 条，但精扫默认不开，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-15 02:00
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.176.0，报告字段结构没变；这次修了精扫层的两处漏报（中文注释导致的字节偏移错位、handler 外层的括号），精扫默认不开，golden 里只有 version 和 fingerprint 变。

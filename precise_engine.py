@@ -44,8 +44,28 @@ def _walk(node):
         yield from _walk(c)
 
 
+_BYTE_CACHE = {}
+
+
 def _text_of(node, text):
-    return text[node.start_byte:node.end_byte]
+    """取节点源码。
+
+    tree-sitter 的 `start_byte`/`end_byte` 是 **UTF-8 字节偏移**（`_parse` 传进去的是
+    `text.encode("utf-8")`），而 `text` 是 str。直接 `text[a:b]` 是按字符切——
+    文件里只要有一个中文注释，后面全体错位，取出来的标识符是乱码（`function`
+    变成 `funct`），跟 `ipcMain` 比永远不等。
+
+    dsh 的 `lib/main.js` 就是这样一条通道都认不出来的：文本里明明有
+    `ipcMain.handle(...)`，AST 里取出来的对象名却是乱码。
+
+    按字节切，编码结果缓存起来（`_follow` 会调这个函数几千次，每次都
+    encode 整个文件受不了）。
+    """
+    cached = _BYTE_CACHE.get(id(text))
+    if cached is None or cached[0] is not text:
+        cached = (text, text.encode('utf-8', 'ignore'))
+        _BYTE_CACHE[id(text)] = cached
+    return cached[1][node.start_byte:node.end_byte].decode('utf-8', 'ignore')
 
 
 def _parse(text):
@@ -200,11 +220,21 @@ def _handler_of(node):
     if len(named) < 2:
         return None
     h = named[1]
-    if h.type in ('arrow_function', 'function_expression'):
-        return h.child_by_field_name('body')
+    # `ipcMain.on("x", (async (e, o) => {...}))`：handler 外面套了一层括号，
+    # 类型是 `parenthesized_expression`。不剥这一层就认不出 handler，
+    # ACLOS 的 286 条通道因此全被跳过（一条不剩）。
+    guard = 0
+    while h.type == 'parenthesized_expression' and guard < 4:
+        inner = h.named_children
+        if not inner:
+            break
+        h = inner[0]
+        guard += 1
+    if h.type in ('arrow_function', 'function_expression', 'function_declaration'):
+        return h.child_by_field_name('body') or h
     if h.type == 'identifier':
         return h  # 名字，交给 _follow 去 funcs 里找
-    return None
+    return h
 
 
 def _array_consts(root, text):
