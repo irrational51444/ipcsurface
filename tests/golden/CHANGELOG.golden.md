@@ -647,3 +647,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.157.0，报告字段没有变化；这次加了子图/全量摘要的镜像测试、修掉全量摘要缺函数名的问题、并立起 sanitizer 语料骨架，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 17:43
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.158.0，报告字段没有变化；这次给 sanitizer 语料加了 label（positive/negative/unlabelled）并补了两条负例，schema 契约没动，golden 里只有 version 和 fingerprint 变。

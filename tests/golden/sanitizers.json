@@ -1,5 +1,5 @@
 {
-  "note": "人工标注的 sanitizer 语料。每条 handler 标三件事：位置、形态（拒绝/放行）、校验对象。没检出校验不等于没有校验——这是 sanitizer 口径的 refutes_if。",
+  "note": "人工标注的 sanitizer 语料。每条 handler 标三件事：位置、形态（reject 拒绝型 / allow 放行型）、校验对象；外加 label：positive（有校验）/ negative（无校验）/ unlabelled（待判断）。没检出校验不等于没有校验——这是 sanitizer 口径的 refutes_if。负例必须留：全是「有校验」的话 precision 算不出来。",
   "count": 6,
   "entries": [
     {
@@ -16,7 +16,9 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "negative",
+      "label_note": "命中 sink，体内只有 try/catch，没有参数校验；catch 不做拒绝"
     },
     {
       "id": "print-to-pdf",
@@ -32,7 +34,9 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "unlabelled",
+      "label_note": "待人工判断"
     },
     {
       "id": "vault-move",
@@ -48,7 +52,9 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "positive",
+      "label_note": "体内有 `if (i && typeof i == \"string\")`——放行型类型闸；同一段还有 `for (let d in R)`，d 是循环变量不是脏参"
     },
     {
       "id": "vault-open",
@@ -65,7 +71,9 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "positive",
+      "label_note": "体内有 `if (m.existsSync(i))` 一类存在性判断"
     },
     {
       "id": "set-icon",
@@ -82,7 +90,9 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "negative",
+      "label_note": "命中 sink，`C.icon &&` 是状态存在性判断，不是参数校验；算不算「放行型」需人工确认"
     },
     {
       "id": "register-cli",
@@ -104,7 +114,14 @@
         "kind": null,
         "target": null,
         "note": "待人工标注：position=行或偏移；kind=reject（拒绝型）或 allow（放行型）；target=被拦的是哪个参数"
-      }
+      },
+      "label": "unlabelled",
+      "label_note": "待人工判断"
     }
-  ]
+  ],
+  "label_counts": {
+    "positive": 2,
+    "negative": 2,
+    "unlabelled": 2
+  }
 }

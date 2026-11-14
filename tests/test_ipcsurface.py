@@ -4581,6 +4581,19 @@ class SanitizerCorpusTests(unittest.TestCase):
                 for key in ('position', 'kind', 'target'):
                     self.assertIn(key, san, '标注三件事：位置、形态、对象')
 
+    def test_corpus_keeps_negative_examples(self):
+        """语料里必须有负例：命中 sink 但完全没有校验的 handler。
+
+        全是「有校验」的样本，precision 根本算不出来——这是爸爸点出来的。
+        """
+        data = self.load()
+        entries = data.get('entries') or []
+        self.assertTrue(entries, '语料是空的')
+        labels = [e.get('label') for e in entries]
+        self.assertIn('negative', labels,
+                      '一条负例都没有，precision 算不出来')
+        self.assertIn('positive', labels)
+
     def test_corpus_refutes_if_wording_is_present(self):
         data = self.load()
         note = data.get('note') or ''

@@ -2,6 +2,44 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.158.0 — 语料补上负例；via 在真包上从来没非空过
+
+爸爸点了两件事，都做了，一件还带回一个坏消息。
+
+### 一、负例：2 条有校验、2 条没有、2 条待判
+
+语料原来 6 条全是从「有 sink 命中」里挑的，如果全都有校验，precision 算不出来。
+现在每条带 `label`：
+
+| 通道 | label | 依据 |
+| --- | --- | --- |
+| `vault-move` | positive | 体内有 `if (i && typeof i == "string")`，放行型类型闸 |
+| `vault-open` | positive | 体内有存在性判断 |
+| `copy-asar` | **negative** | 只有 try/catch，catch 不做拒绝 |
+| `set-icon` | **negative** | `C.icon &&` 是状态存在性判断，不是参数校验 |
+| `print-to-pdf` | unlabelled | 待人工判断 |
+| `register-cli` | unlabelled | 待人工判断 |
+
+`set-icon` 那条要人再看一眼：`C.icon &&` 算不算「放行型」是判断问题，不是代码问题。
+
+### 二、via 纳入 golden：做了，但真包上是空的
+
+按爸爸说的把 via 钉进 golden，先在 obsidian 试——**0 行**；换 ACLOS，2 行，`via` 全是空。
+
+也就是说：**真包上 via 路径从来没有非空过**。跨函数传递只在合成用例里出现过。
+钉进 golden 只能钉「空」——它能守住的只有「别把空变成 `?`」，
+
+这条由 `test_two_summary_entry_points_agree` 和 `test_via_path_names_the_hops` 守着，
+不再另存快照文件（0 行的快照守不住任何东西）。
+
+### 语料还是太小
+
+6 条全来自 obsidian 的同一个 `main.js`、同一个作者、同一种打包风格。
+爸爸给的标准是对的：**语料的价值在边界形态，不在条数**。要换包、要不同打包方式、
+要有路径处理类的 handler。这一步需要下载安装包解 asar，我还没做。
+
+用例 559 → 560。
+
 ## 0.157.0 — 抄两遍的坑用镜像测试锁死，sanitizer 语料骨架先立起来
 
 爸爸指出「同一份语义两处实现、改一处漏一处」是第二次了（第一次是三层关键字清单，
