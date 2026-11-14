@@ -96,6 +96,32 @@ def _find_danger_calls(node, text):
     return found
 
 
+def _ipc_main_names(root, text):
+    """本文件里 `ipcMain` 的本地名字：别名（`const {ipcMain: s} = ...`）和原名。"""
+    names = {'ipcMain'}
+    for n in _walk(root):
+        if n.type != 'variable_declarator':
+            continue
+        name = n.child_by_field_name('name')
+        value = n.child_by_field_name('value')
+        if name is None or name.type != 'object_pattern':
+            continue
+        # 不要求右边是 `require(...)`：压缩产物里是 webpack 的 `n(4482)`，
+        # 一个 'require' 字样都没有。只要解构里出现 ipcMain 键就认。
+        if value is None:
+            continue
+        for p in _walk(name):
+            if p.type != 'pair_pattern':
+                continue
+            key = p.child_by_field_name('key')
+            val = p.child_by_field_name('value')
+            if key is None or val is None:
+                continue
+            if _text_of(key, text) == 'ipcMain':
+                names.add(_text_of(val, text))
+    return names
+
+
 def _collect_functions(root, text):
     """文件里所有函数定义：名字 → 函数体节点。"""
     funcs = {}
@@ -335,6 +361,8 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs')):
                 if apis:
                     out.setdefault(channel, set()).update(apis)
 
+            # 别名只算一次。放进循环里就是 O(n²)——4MB 文件上直接跑满 10 分钟超时。
+            ipc_names = _ipc_main_names(root, text)
             for n in _walk(root):
                 # 循环枚举：for (const x of [...]) { ipcMain.on(x, fn) }
                 if n.type == 'for_in_statement':
@@ -352,7 +380,10 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs')):
                     prop = fn.child_by_field_name('property')
                     if obj is None or prop is None:
                         continue
-                    if _text_of(obj, text) != 'ipcMain':
+                    # 早先只认字面 `ipcMain`。压缩产物里全是别名：
+                    # `const {ipcMain: s} = require("electron")` 之后 `s.handle(...)`。
+                    # 结果在 obsidian / dsh 上一条通道都认不出来（47 条变 0 条）。
+                    if _text_of(obj, text) not in ipc_names:
                         continue
                     if _text_of(prop, text) not in ('handle', 'on', 'handleOnce'):
                         continue
