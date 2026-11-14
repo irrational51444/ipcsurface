@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.138.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.138.1**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -66,12 +66,25 @@ it on the next read needs heap modelling — not done, and not pretended.
   always lands on the wrong assignment. Following `{}` parentage gives visibility.
   Obsidian's `F.join(v, C.icon)` resolves `v` to `app.getPath("userData")` — two L2 rows
   moved from "root unknown" to anchored.
+- **Destructuring rename**: after `const {ipcMain: a} = require("electron")` the word
+  `ipcMain` never appears again. Matching the literal alone reported **zero channels**
+  for ACLOS; it now reports 285.
 - **Module graph**: `app.js` **195 modules / 304 dependency edges**; `quicklook.js`
   166 / 269; `main.js` has no module table (single-file bundle).
 
 **The module graph is fit for purpose, not omniscient**: it answers "who requires whom",
-not dynamic `require` (`n(var)`, `n("a"+b)` are dropped), and it does not yet carry values
-across modules.
+not dynamic `require` (`n(var)`, `n("a"+b)` are dropped).
+
+**Carrying values across modules resolves 0 times on Obsidian.** `app.js` has 28
+`n(id).name` uses, `quicklook.js` has 20, and not one matches an export entry — because
+`e.exports = a` (whole-object assignment) dominates, so members hang off `a.X` rather
+than the module body's `t.X`. Following that needs object-shape analysis, a different
+order of magnitude. The report prints the resolved/total pair; 0 is 0.
+
+**Cross-module handlers are 0 for 0 across 8 real apps on this machine.** The form
+`ipcMain.handle('x', mod.fn)` does not appear once in ~36k JS files; the only non-inline
+handlers are `this.onLogEvent`-style class methods (3 of them), whose method names are
+now followed into the method body.
 
 ### Beyond the five questions
 

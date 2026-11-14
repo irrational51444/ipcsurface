@@ -547,3 +547,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.138.0，报告字段没有变化；这次让 this.method 形态的 handler 能取到方法名，通道的 target 字段从 null 变成名字，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 11:07
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.138.1，报告字段没有变化；这次只改 README 和已知边界，golden 里只有 version 和 fingerprint 变。
