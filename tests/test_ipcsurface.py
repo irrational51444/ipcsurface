@@ -4604,6 +4604,17 @@ class SanitizerDetectorTests(unittest.TestCase):
         return jssem.find_sanitizers(toks, d0['body_start'], d0['body_end'],
                                      list(d0.get('params') or []))
 
+    def test_negation_on_param_is_a_check(self):
+        """`if (!p) return` 是最常见的拒绝型，以前因为「没有比较符」被降级成 guard。"""
+        got = self.find('function h(e, p) { if (!p) return; fs.writeFileSync(p); }')
+        self.assertEqual([g['kind'] for g in got], ['reject'])
+        self.assertEqual(got[0]['target'], 'p')
+
+    def test_negation_on_non_param_stays_guard(self):
+        got = self.find('function h(e, x) { if (!flag) return; fs.writeFileSync(x); }')
+        self.assertEqual([g['kind'] for g in got], ['guard'],
+                         '取反的不是形参，只能记 guard，不能冒充 reject')
+
     def test_single_param_arrow_handler_has_params(self):
         """`async o => {...}` 没有括号，以前这里返回空形参。
 

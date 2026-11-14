@@ -672,3 +672,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.162.0，报告字段结构没变；这次修了 async 单参 handler 形参取不到导致的整条漏检、补了 && 短路和提前 return 两类校验，三态判定随之变化，golden 里 version/fingerprint 之外也会反映通道判定变化。
+
+## 2026-11-14 21:16
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.163.0，报告字段结构没变；这次让 if (!形参) return 记成 reject 而不是 guard，但本机六个包里没有这种形态，三态数字不变，golden 里只有 version 和 fingerprint 变。

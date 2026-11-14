@@ -2089,6 +2089,14 @@ def _looks_like_check(segment, params=()):
 
     光有 `if (x)` 不算——那可能只是分支，不是校验。
     """
+    # `!p` 是最常见的写法之一（非空/假值检查）。以前它既没有比较符、
+    # 也没有函数调用，被当成「不像校验」，于是 `if (!p) return` 只记 guard。
+    # 按「漏报最坏」的口径，这类必须认出来——它就是拒绝型的前置。
+    for i in range(len(segment) - 1):
+        if segment[i].text == '!' and segment[i + 1].kind == 'ident' \
+                and segment[i + 1].text in (params or ()):
+            return True
+
     ops = {'===', '!==', '==', '!=', '>', '<', '>=', '<=', 'instanceof', 'in'}
     words = {'typeof', 'startsWith', 'endsWith', 'includes', 'match', 'test',
              'isAbsolute', 'normalize', 'resolve', 'realpathSync', 'existsSync',
