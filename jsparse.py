@@ -695,6 +695,14 @@ def ipc_registrations(tokens, objects=None, const_strings=None, ipc_names=None):
                 target = second[0].text
                 start_i = tokens.index(second[0])
                 end_i = start_i + 1
+            elif (len(second) == 3 and second[0].kind == 'ident'
+                    and second[1].text == '.' and second[2].kind == 'ident'):
+                # `this.onLogEvent`：类方法引用。方法名本身就是能找到的符号，
+                # 拿最后一段当 target，后面就能跟进方法体。ArmouryDevice 的
+                # 三条通道全是这种写法，以前一条都跟不进去。
+                target = second[2].text
+                start_i = tokens.index(second[0])
+                end_i = tokens.index(second[2]) + 1
             else:
                 start_i = tokens.index(second[0]) if second else 0
                 start = second[0].start if second else 0

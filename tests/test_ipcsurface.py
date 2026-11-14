@@ -4169,6 +4169,29 @@ class RealShapeCorpusTests(unittest.TestCase):
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
 
 
+class ThisMethodHandlerTests(unittest.TestCase):
+    """`ipcMain.on('log', this.onLog)` — the handler is a class method reference."""
+
+    def regs(self, src):
+        import jsparse
+
+        return jsparse.ipc_registrations(jsparse.tokenize(src))
+
+    def test_this_method_is_taken_as_the_target(self):
+        regs = self.regs('ipcMain.on("log", this.onLog);')
+        self.assertEqual(regs[0]['target'], 'onLog',
+                         'ArmouryDevice 三条通道全用 this.method，以前 target 是 None')
+
+    def test_bare_identifier_still_works(self):
+        regs = self.regs('ipcMain.on("log", onLog);')
+        self.assertEqual(regs[0]['target'], 'onLog')
+
+    def test_member_expression_takes_the_last_segment(self):
+        regs = self.regs('ipcMain.on("log", obj.method);')
+        self.assertEqual(regs[0]['target'], 'method',
+                         '取最后一段是刻意的近似：找不到同名函数就不跟，不会编')
+
+
 class RegexPerformanceTests(unittest.TestCase):
     """A regex on a 3 MB single-line bundle must not degrade into backtracking."""
 

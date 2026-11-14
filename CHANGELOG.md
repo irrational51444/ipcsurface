@@ -2,6 +2,38 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.138.0 — handler 是 `this.method` 时，不再是「认不出」
+
+扫完本机 8 个包之后，唯一的非内联 handler 出现在 ArmouryDevice：
+
+```js
+ipcMain.on("uwp", this.onUWPEvent);
+ipcMain.on("electron", this.onElectronEvent);
+ipcMain.on("log", this.onLogEvent);
+```
+
+这三条的 `target` 以前是 `None`——第二实参是三个 token（`this` `.` `onLogEvent`），
+而已有的提取只认「单个标识符」。于是这三条通道后面永远是空的。
+
+现在 `ident . ident` 这种形态取最后一段当 `target`。方法名本身是能找到的符号，
+`function_defs` 认得出来，就能接着跟进方法体。
+
+### 追进去之后：确实是空的
+
+三条方法体的内容是 `logMessage.debug(...)` 和 `this.send(...)`，没有文件、命令、
+网络调用。所以 capability 和 sink 仍然是空——**这个空是对的**，不是没跟进去。
+
+要是哪天真有方法体里写 `fs.writeFileSync(p, ...)`，现在这条路能走通了。
+三个用例守着：`this.method`、裸标识符、`obj.method` 取最后一段。
+
+### 「取最后一段」是刻意的近似
+
+`obj.method` 也取 `method`。如果本文件里恰好有个同名函数，会跟错。
+所以只跟**同名且能唯一找到**的，找不到就不跟——这一条由 `function_defs` 的行为保证，
+不是靠猜。
+
+用例 513 → 516。
+
 ## 0.137.1 — 一条正则把 10 分钟的扫描拖死，现在 13.6 秒
 
 ArmouryDevice 那个包（7.4 MB 的 JS、486 个文件）扫十分钟还出不来。查下来不是
