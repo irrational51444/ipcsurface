@@ -4590,6 +4590,39 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+class CrossFunctionSanitizerTests(unittest.TestCase):
+    """校验写在别的函数里，算 handler 也校验过。"""
+
+    def test_helper_check_counts(self):
+        import jsparse
+        import jssem
+
+        src = ('function h(e, p) { if (!check(p)) return; fs.writeFileSync(p); }\n'
+               'function check(v) { return typeof v === "string"; }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        h = [d for d in defs if d['name'] == 'h'][0]
+        got = jssem.cross_fn_sanitizers(toks, h['body_start'], h['body_end'],
+                                        list(h.get('params') or []), defs)
+        self.assertTrue(got, '`check(p)` 里 check 对形参做了校验，要算进来')
+        self.assertTrue(got[0]['kind'].startswith('cross-'),
+                        'kind 要带 cross- 前缀，报告里分得清本体校验和借别人校验')
+        self.assertEqual(got[0]['target'], 'p')
+
+    def test_helper_without_check_does_not_count(self):
+        import jsparse
+        import jssem
+
+        src = ('function h(e, p) { log(p); fs.writeFileSync(p); }\n'
+               'function log(v) { console.log(v); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        h = [d for d in defs if d['name'] == 'h'][0]
+        got = jssem.cross_fn_sanitizers(toks, h['body_start'], h['body_end'],
+                                        list(h.get('params') or []), defs)
+        self.assertEqual(got, [], 'helper 只是打印，不算校验')
+
+
 class SanitizerStateTests(unittest.TestCase):
     """三态：guarded / exposed / unknown。压成两态就是替人下结论。"""
 

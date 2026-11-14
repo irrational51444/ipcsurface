@@ -2144,6 +2144,60 @@ def _looks_like_check(segment, params=()):
     return False
 
 
+def cross_fn_sanitizers(tokens, start, end, params, defs):
+    """handler 调用的函数里做了校验，算 handler 也校验过。
+
+    只跟一层：`checkPath(p)` 里 checkPath 对自己的形参做了 `if (...) return`，
+    就认为 p 被看过。不递归——A 调 B、B 调 A 那种要防环，代价不划算。
+
+    返回的 kind 带 `cross-` 前缀，报告里能分清「本体内校验」和「借别人校验」。
+    """
+    if not params:
+        return []
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], []).append(d)
+    out = []
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit - 1):
+        if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+            continue
+        candidates = by_name.get(tokens[i].text)
+        if not candidates:
+            continue
+        callee = _pick_nearest(candidates, i)
+        if not callee:
+            continue
+        cparams = list(callee.get('params') or [])
+        if not cparams:
+            continue
+        try:
+            args, _close = _split_args(tokens, i + 1)
+        except Exception:
+            continue
+        mapping = {}
+        for pos, arg in enumerate(args):
+            if pos >= len(cparams):
+                break
+            if len(arg) == 1 and arg[0].kind == 'ident' and arg[0].text in params:
+                mapping[cparams[pos]] = arg[0].text
+        if not mapping:
+            continue
+        try:
+            inner = find_sanitizers(tokens, callee['body_start'],
+                                    callee['body_end'], cparams)
+        except Exception:
+            continue
+        for item in inner:
+            target = item.get('target')
+            if target in mapping:
+                out.append({'at': item['at'],
+                            'kind': 'cross-' + item['kind'],
+                            'target': mapping[target],
+                            'cond': '%s(%s)' % (tokens[i].text, mapping[target])})
+    return out
+
+
 def find_sanitizers(tokens, start, end, params, danger_words=()):
     """在函数体里找校验点，只认三种最朴素的形态。
 
@@ -2262,6 +2316,23 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
             out.append({'at': tokens[i].start, 'kind': 'and-guard',
                         'target': _param_in(cond, params),
                         'cond': ' '.join(t.text for t in cond)[:120]})
+
+    # 返回布尔的谓词：`function check(v) { return typeof v === "string"; }`。
+    # 这种函数本身就是校验，但形态是裸 `return 表达式`，前面几类一个都不认。
+    for i in range(start, limit - 2):
+        if tokens[i].text != 'return':
+            continue
+        seg = tokens[i + 1:min(i + 10, limit)]
+        if not seg or seg[0].text == ';':
+            continue
+        # `return;` 是拒绝型的结尾，不是谓词；`return fs.writeFileSync(p)`
+        # 是拿危险调用当返回值，也不是校验。这两种都不能记成 return-check。
+        if _has_danger(tokens, i + 1, min(i + 10, limit), danger_words):
+            continue
+        if _looks_like_check(seg, params):
+            out.append({'at': tokens[i].start, 'kind': 'return-check',
+                        'target': _param_in(seg, params),
+                        'cond': ' '.join(t.text for t in seg)[:120]})
 
     # 正则校验：`let d = /re/.exec(p)`、`RE.test(p)`、`p.match(RE)`。
     # 这类在路径处理里很常见：正则不匹配就拿到 null，后面 `d[0]` 直接抛，

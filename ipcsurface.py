@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.166.0'
+__version__ = '0.167.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/38'
@@ -2810,6 +2810,8 @@ def channel_sanitizer_map(files, max_files=12):
                 if not sinks:
                     continue
                 found = jssem.find_sanitizers(tokens, span[0], span[1], params)
+                found = found + jssem.cross_fn_sanitizers(
+                    tokens, span[0], span[1], params, defs)
                 dirty = jssem.tainted_names(
                     jssem.assignments(tokens, span[0], span[1], params))
             except Exception:

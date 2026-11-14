@@ -692,3 +692,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.166.0，报告字段结构没变；这次加了同名候选的作用域可见性过滤，主链路未切换，输出不变，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 21:53
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.167.0，报告字段结构没变；这次补了跨函数校验（cross- 前缀）和返回布尔谓词（return-check）两类，obsidian 有一条通道从无法判定升到有校验，golden 里 version/fingerprint 之外也反映判定变化。
