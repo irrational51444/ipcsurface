@@ -4470,6 +4470,40 @@ class TruncationCountTests(unittest.TestCase):
         self.assertEqual(truncated, [],
                          '调用了但没把脏值传进去，不算被深度砍断')
 
+    def test_summary_cache_does_not_change_results(self):
+        import jsparse
+        import jssem
+
+        src = ('function h(e, p) { a(p); a(p); }'
+               'function a(x) { b(x); }'
+               'function b(y) { m.writeFileSync(y); }')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [d for d in defs if d['name'] == 'h'][0]
+        plain = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'],
+                                      {'p'}, defs, depth=2)
+        cached = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'],
+                                       {'p'}, defs, depth=2, _cache={})
+        self.assertEqual(sorted(plain), sorted(cached),
+                         '加了缓存不能改变结论，只能改变算几次')
+
+    def test_summary_composition_reaches_four_hops(self):
+        import jsparse
+        import jssem
+
+        src = ('function h(e, p) { a(p); }'
+               'function a(x) { b(x); }'
+               'function b(y) { c(y); }'
+               'function c(z) { d(z); }'
+               'function d(w) { m.writeFileSync(w); }')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        summaries = jssem.function_summaries(toks, defs)
+        d0 = [d for d in defs if d['name'] == 'h'][0]
+        key = (d0['body_start'], d0['body_end'])
+        hits = jssem.summary_sinks(summaries, key, {'p'})
+        self.assertTrue(hits, '摘要组合要能穿过四层调用，不靠加深递归')
+
     def test_facts_carry_the_truncation_count(self):
         files = {'main.js': (b'const {ipcMain} = require("electron");\n'
                              b'ipcMain.handle("x", function (e, p) {'

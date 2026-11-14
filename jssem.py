@@ -2036,8 +2036,145 @@ def _still_has_hop(tokens, start, end, defs, tainted=None):
     return False
 
 
+def function_summaries(tokens, defs, rounds=4):
+    """函数摘要：每个函数的「副作用签名」，算一次、到处复用。
+
+    签名分两半：
+
+      - `sinks`：第 i 个形参能流到哪些危险调用；
+      - `calls`：第 i 个形参被原样传给同文件哪个函数的第 j 个形参。
+
+    两半都能组合：把callee 的 sinks 按形参映射拉进 caller，迭代到不动点。
+    这样「深」不再靠重复遍历函数体，而是靠拼摘要——一个函数算一次，
+    被十个地方调用也只算一次。
+
+    返回 {函数体区间: {'params': [...], 'sinks': {形参名: [(api, 行号)]},
+                       'calls': [(callee 区间, {形参名: 目标形参名})]}}
+
+    只认「实参正好是形参本身」的传参（`f(x)`）。`f(x.y)`、`f(g(x))`、
+    `f(x + 1)` 都不记——那要么得做表达式分析，要么会把干净的实参认成脏的。
+    """
+    by_key = {}
+    for d in defs:
+        key = (d['body_start'], d['body_end'])
+        by_key.setdefault(key, d)
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], (d['body_start'], d['body_end']))
+
+    summaries = {}
+    for key, d in by_key.items():
+        params = list(d.get('params') or [])
+        if not params:
+            summaries[key] = {'params': [], 'sinks': {}, 'calls': []}
+            continue
+        sinks = {}
+        calls = []
+        try:
+            flows = flows_into_danger(tokens, key[0], key[1], params)
+        except Exception:
+            flows = []
+        for api, arg, line, _shape in flows:
+            if arg in params:
+                sinks.setdefault(arg, []).append((api, line))
+        limit = min(key[1], len(tokens) - 1)
+        for i in range(key[0], limit - 1):
+            if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+                continue
+            callee = by_name.get(tokens[i].text)
+            if not callee or callee == key:
+                continue
+            try:
+                args, _close = _split_args(tokens, i + 1)
+            except Exception:
+                continue
+            callee_params = list(by_key[callee].get('params') or [])
+            mapping = {}
+            for pos, arg in enumerate(args):
+                if pos >= len(callee_params):
+                    break
+                if len(arg) == 1 and arg[0].kind == 'ident' and arg[0].text in params:
+                    mapping[arg[0].text] = callee_params[pos]
+            if mapping:
+                calls.append((callee, mapping))
+        summaries[key] = {'params': params, 'sinks': sinks, 'calls': calls}
+
+    # 摘要组合：把 callee 的 sinks 按形参映射拉进 caller，跑到不动点。
+    # 轮数封顶，环状调用图不会死循环；每轮只做集合合并，不再遍历函数体。
+    for _round in range(rounds):
+        changed = False
+        for key, summary in summaries.items():
+            for callee, mapping in summary['calls']:
+                target = summaries.get(callee)
+                if not target:
+                    continue
+                for src_param, dst_param in mapping.items():
+                    for api, line in target['sinks'].get(dst_param) or []:
+                        bucket = summary['sinks'].setdefault(src_param, [])
+                        if (api, line) not in bucket:
+                            bucket.append((api, line))
+                            changed = True
+        if not changed:
+            break
+    return summaries
+
+
+def summary_sinks(summaries, func_key, tainted_params):
+    """拿函数摘要回答「这些脏形参会碰到什么」，不重新遍历函数体。"""
+    summary = summaries.get(func_key)
+    if not summary:
+        return []
+    hits = []
+    for param in tainted_params:
+        for api, line in summary['sinks'].get(param) or []:
+            hits.append((api, param, line))
+    return hits
+
+
+def interproc_taint_via_summaries(tokens, start, end, tainted, defs, summaries):
+    """和 `interproc_taint` 同样的活，但查摘要，不递归遍历函数体。
+
+    `interproc_taint` 每遇到一个调用就把被调函数的体重新扫一遍；同一个函数被
+    二十个 handler 调用，就扫二十遍。这里换一下：摘要已经算过一次，
+    调用点只做「形参映射 + 查表」。
+
+    深度不再是参数——摘要组合已经在 `function_summaries` 里跑到不动点，
+    四层调用链和两层一样是一次查表。
+
+    返回 [(被调函数名, 危险 API, 形参, 行号)]，形状和 `interproc_taint` 一致。
+    """
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], d)
+    hits = []
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit):
+        if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+            continue
+        target = by_name.get(tokens[i].text)
+        if target is None:
+            continue
+        try:
+            args, _close = _split_args(tokens, i + 1)
+        except Exception:
+            continue
+        fparams = list(target.get('params') or [])
+        dirty_params = []
+        for pos, arg in enumerate(args):
+            if pos >= len(fparams):
+                break
+            if len(arg) == 1 and arg[0].kind == 'ident' and arg[0].text in tainted:
+                dirty_params.append(fparams[pos])
+        if not dirty_params:
+            continue
+        key = (target['body_start'], target['body_end'])
+        for api, param, line in summary_sinks(summaries, key, dirty_params):
+            hits.append((tokens[i].text, api, param, line))
+    return hits
+
+
 def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None,
-                    _truncated=None):
+                    _truncated=None, _cache=None):
     """L3：脏实参传进本文件里另一个函数，跟进去看它能不能到危险参数。
 
     只跟两种被调者：本文件里有 `function name()` 声明的、或 `const name = ...`
@@ -2078,8 +2215,16 @@ def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None,
         if not dirty_params:
             continue
         seen.add(key)
-        inner = flows_into_danger(tokens, target['body_start'], target['body_end'],
-                                  dirty_params)
+        # 函数体分析结果按区间缓存：同一个函数被二十个 handler 调用时，
+        # `flows_into_danger` 只跑一次。这就是摘要的收益，但不用预先把
+        # 全文件的函数都算一遍——那批包上实测是负优化（0.3 秒变 8.4 秒）。
+        if _cache is not None and key in _cache:
+            inner = _cache[key]
+        else:
+            inner = flows_into_danger(tokens, target['body_start'], target['body_end'],
+                                      dirty_params)
+            if _cache is not None:
+                _cache[key] = inner
         for api, arg, line, _shape in inner:
             hits.append((tok.text, api, arg, line))
         if depth > 1:
@@ -2087,7 +2232,7 @@ def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None,
                 (name, api, arg, ln2)
                 for name, api, arg, ln2 in interproc_taint(
                     tokens, target['body_start'], target['body_end'],
-                    set(dirty_params), defs, depth - 1, seen, _truncated)
+                    set(dirty_params), defs, depth - 1, seen, _truncated, _cache)
             )
         elif _truncated is not None:
             # 不往下走了。如果这个函数体里还有「调用同文件函数」的下一跳，

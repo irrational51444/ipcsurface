@@ -607,3 +607,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：scan_asar 的 facts 多了 taint_truncated 键（明确写 None 表示这一层没测，不是零），schema 从 asar/36 升到 asar/37；同时修了截断计数用错筛子、以及没有脏实参也算截断两个问题。下游按 asar/36 读不到这个键，需要先校验 schema。
+
+## 2026-11-14 15:23
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.150.0，报告字段没有变化；这次加了函数摘要 API 和函数体分析缓存，主链路结论不变、耗时不变，schema 契约没动，golden 里只有 version 和 fingerprint 变。
