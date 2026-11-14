@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.134.0'
+__version__ = '0.135.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/33'
+SCHEMA_VERSION = 'ipcsurface/asar/34'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2374,10 +2374,23 @@ def module_graph_map(files, max_files=8):
             tokens = jsparse.tokenize(text)
             modules = jssem.find_modules(tokens)
             edges = jssem.module_edges(tokens, modules) if modules else []
+            exports = jssem.module_exports(tokens, modules) if modules else {}
         except Exception:
             continue
         if not modules:
             continue
+        # 跨模块取成员：`n(8813).CONST` 有多少处、其中几处能从导出表里查出来。
+        # 查不出来不代表没有，只代表导出是整体赋值、成员不在模块体里挂。
+        uses = resolved = 0
+        for k in range(len(tokens) - 5):
+            if (tokens[k].kind == 'ident' and tokens[k + 1].text == '('
+                    and tokens[k + 2].text.isdigit()
+                    and tokens[k + 3].text == ')'
+                    and tokens[k + 4].text == '.'
+                    and tokens[k + 5].kind == 'ident'):
+                uses += 1
+                if jssem.resolve_require_member(tokens, modules, exports, k):
+                    resolved += 1
         shapes = {}
         for _mid, _p, _o, _c, shape in modules:
             shapes[shape] = shapes.get(shape, 0) + 1
@@ -2386,6 +2399,9 @@ def module_graph_map(files, max_files=8):
             'edges': len(edges),
             'targets': len({to for _src, to in edges}),
             'sources': len({src for src, _to in edges}),
+            'export_entries': len(exports),
+            'cross_members': uses,
+            'cross_resolved': resolved,
             'shapes': shapes,
             'ids': sorted(mid for mid, *_ in modules)[:40],
         }

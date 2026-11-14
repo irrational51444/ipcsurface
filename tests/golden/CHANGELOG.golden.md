@@ -522,3 +522,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.134.0，报告字段没有任何变化；golden 快照里的 version 字段跟着变，下游如果拿版本号做断言需要适配一次。
+
+## 2026-11-14 08:59
+
+- 变了的字段：fingerprint, schema
+- 理由：module_graph 的每个文件多了 export_entries、cross_members、cross_resolved 三个字段，用来报「导出表有几项、跨模块取成员几处、其中解出几处」，schema 从 asar/33 升到 asar/34。下游按 asar/33 读不到这三格，需要先校验 schema。

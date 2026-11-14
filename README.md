@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.134.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.135.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：
 有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及
@@ -113,9 +113,13 @@ set-icon  .icon ← i
 - **模块图**：`app.js` **195 个模块 / 304 条依赖边**；`quicklook.js` 166 / 269；
   `lib/mermaid.min.js` 1；`main.js` 没有模块表（单文件打包）。
 
-**模块图是适用，不是全能**：它只能回答「谁引用谁」，回答不了动态 `require`
-（`n(变量)`、`n("a"+b)` 现在直接丢掉），也还没做「跨模块搬值」——
-`n(8813)` 里 8813 那个模块的常量是什么，现在答不出来。
+**模块图是适用，不是全能**：它能回答「谁引用谁」，回答不了动态 `require`
+（`n(变量)`、`n("a"+b)` 现在直接丢掉）。
+
+**跨模块搬值试过了，obsidian 上解出 0 处。** app.js 有 28 处 `n(id).名字`，
+quicklook.js 有 20 处，导出表里一条也对不上——因为 `e.exports = a` 这种整体赋值
+占了绝大多数，成员挂在 `a.X` 上，不在模块体的 `t.X` 上。要跟进去得做对象形状分析，
+那是另一个量级。报告里这一格写「解出/共」，0 就是 0。
 
 ---
 
@@ -191,7 +195,7 @@ python ipcsurface.py build/static-asar.asar -o report.md
 **二、证据只记来源，不下结论。** 每条通道都带 `evidence`：名字从哪来、强度多少、
 **哪几种观察能推翻它**。强度排的是复核成本，不是概率。
 
-**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/33`；对不上就停下，
+**三、消费方必须先校验 `schema`。** 现在是 `ipcsurface/asar/34`；对不上就停下，
 别按字段在不在猜。
 
 ---
@@ -269,7 +273,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **500 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **504 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：`python scripts/perf_check.py`，固定种子造包测吞吐，低于下限 CI 红
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算

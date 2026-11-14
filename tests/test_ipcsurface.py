@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/33')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/34')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4167,6 +4167,55 @@ class RealShapeCorpusTests(unittest.TestCase):
         rows = self.facts()['frame']
         kinds = [r[1] for r in rows[0][3]]
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
+
+
+class ModuleExportTests(unittest.TestCase):
+    """The export table behind `n(8813).CONST` — edges alone say who, not what."""
+
+    def parse(self, src):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        mods = jssem.find_modules(toks)
+        return toks, mods, jssem.module_exports(toks, mods)
+
+    def test_exports_parameter_member_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{r.X="abc"}}')
+        self.assertIn(('1', 'X'), ex)
+        self.assertEqual([t.text for t in ex[('1', 'X')][0]], ['"abc"'])
+
+    def test_module_exports_member_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{e.exports.Y="z"}}')
+        self.assertIn(('1', 'Y'), ex)
+
+    def test_require_member_resolves_to_the_export(self):
+        import jssem
+
+        src = 'var t={1:(e,n,r)=>{r.Q="v"},2:(e,n,r)=>{return r(1).Q}}'
+        toks, mods, ex = self.parse(src)
+        pos = None
+        for i, tok in enumerate(toks):
+            if tok.kind == 'ident' and tok.text == 'r' and toks[i + 2].text == '1':
+                pos = i
+                break
+        self.assertIsNotNone(pos, 'probe call not found')
+        hit = jssem.resolve_require_member(toks, mods, ex, pos)
+        self.assertIsNotNone(hit, '跨模块取成员要能查到导出值')
+        self.assertEqual([t.text for t in hit[0]], ['"v"'])
+
+    def test_missing_export_returns_none(self):
+        import jssem
+
+        src = 'var t={1:(e,n,r)=>{r.Q="v"},2:(e,n,r)=>{return r(1).MISSING}}'
+        toks, mods, ex = self.parse(src)
+        pos = None
+        for i, tok in enumerate(toks):
+            if tok.kind == 'ident' and tok.text == 'r' and toks[i + 2].text == '1':
+                pos = i
+                break
+        self.assertIsNone(jssem.resolve_require_member(toks, mods, ex, pos),
+                          '导出表里没有的成员，不许编一个出来')
 
 
 class ModuleGraphTests(unittest.TestCase):

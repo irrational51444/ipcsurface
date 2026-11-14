@@ -303,6 +303,83 @@ def module_of(modules, index):
     return None
 
 
+def module_exports(tokens, modules):
+    """每个模块导出了什么：`t.X = ...`（t 是 exports 形参）和 `e.exports.X = ...`。
+
+    压缩产物里 `n(8813).CONST` 想知道 CONST 是什么，只能先有一张导出表——
+    光有边不够，边只说「谁引用谁」，不说「引用的东西是什么」。
+    只记 `名字 = 赋值` 这一种；导出整个对象（`e.exports = {...}`）不展开，
+    解不出就是解不出。
+
+    返回 {(模块 id, 名字): (rhs tokens, 字符偏移)}。
+    """
+    out = {}
+    for mid, params, body_open, body_close, _shape in modules:
+        if len(params) < 3:
+            continue
+        exports_param = params[2]
+        module_param = params[0]
+        for k in range(body_open + 1, max(body_open + 1, body_close - 3)):
+            tok = tokens[k]
+            if tok.kind != 'ident' or tok.text != exports_param:
+                continue
+            if tokens[k + 1].text != '.' or tokens[k + 2].kind != 'ident':
+                continue
+            if tokens[k + 3].text != '=':
+                continue
+            rhs = []
+            for r in range(k + 4, min(k + 20, body_close)):
+                if tokens[r].text in (';', ','):
+                    break
+                rhs.append(tokens[r])
+            out.setdefault((mid, tokens[k + 2].text), (rhs, tok.start))
+        for k in range(body_open + 1, max(body_open + 1, body_close - 5)):
+            if (tokens[k].kind != 'ident' or tokens[k].text != module_param
+                    or tokens[k + 1].text != '.' or tokens[k + 2].text != 'exports'
+                    or tokens[k + 3].text != '.' or tokens[k + 4].kind != 'ident'
+                    or tokens[k + 5].text != '='):
+                continue
+            rhs = []
+            for r in range(k + 6, min(k + 24, body_close)):
+                if tokens[r].text in (';', ','):
+                    break
+                rhs.append(tokens[r])
+            out.setdefault((mid, tokens[k + 4].text), (rhs, tokens[k].start))
+    return out
+
+
+def resolve_require_member(tokens, modules, exports, index):
+    """`n(8813).CONST` 这种：在 index 处看是不是跨模块取成员，取得到就返回值。
+
+    只认「调用名是本模块第三个形参、实参纯数字、后面紧跟 `.名字`」，
+    并且那个名字真的在目标模块的导出表里。任何一环对不上都返回 None。
+    """
+    mod = module_of(modules, index)
+    if mod is None:
+        return None
+    params = None
+    for mid, p, body_open, body_close, _shape in modules:
+        if mid == mod:
+            params = p
+            break
+    if not params or len(params) < 3:
+        return None
+    req = params[2]
+    for k in range(index, min(index + 40, len(tokens) - 5)):
+        if tokens[k].kind != 'ident' or tokens[k].text != req:
+            continue
+        if tokens[k + 1].text != '(' or not tokens[k + 2].text.isdigit():
+            continue
+        if tokens[k + 3].text != ')' or tokens[k + 4].text != '.':
+            continue
+        if tokens[k + 5].kind != 'ident':
+            continue
+        hit = exports.get((tokens[k + 2].text, tokens[k + 5].text))
+        if hit:
+            return hit
+    return None
+
+
 def _enclosing_call(tokens, idx, start):
     """这个位置落在哪个调用的括号里：`rmSync(F.join(v, C.icon))` 里的 `C.icon`
     落在 `F.join` 的实参里。
