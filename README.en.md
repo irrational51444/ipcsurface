@@ -49,6 +49,10 @@ the rest you neither trust nor need to verify.
 - **L2 one hop**: through `path.join` / `resolve`. **3 channels**, each with a verdict —
   anchored / escapes / root-is-a-parameter / root-is-a-local / root unknown.
 - **L3 cross-function**: into another function in the same file. **0 channels**.
+  This layer has a **hard cap of two hops**. Depth 3 was tried: +67% runtime, zero
+  change in results, so it stays at 2. Chains the cap cuts off are counted separately —
+  the report says "the depth cap cut off N chains" and says it even when N=0
+  ("this package needs no third hop"). obsidian and ACLOS: **0** each.
 
 ### 4. Is the value stored and reused next round? -> state fields
 
@@ -85,6 +89,29 @@ order of magnitude. The report prints the resolved/total pair; 0 is 0.
 `ipcMain.handle('x', mod.fn)` does not appear once in ~36k JS files; the only non-inline
 handlers are `this.onLogEvent`-style class methods (3 of them), whose method names are
 now followed into the method body.
+
+**How an export gets recognised** (added after 0.139):
+
+- four shapes: `t.X = ...`, `t["X"] = ...`, `e.exports.X = ...`, `e.exports = { X: ... }`,
+  plus the `const e = exports; e.X = ...` receiver alias and ESM's
+  `export function x` / `export { x }`;
+- when the name is a variable, it is computed first: `const K = "file:save"; exports[K]`
+  resolves, `"file" + "save"` resolves, `exports[getName()]` does not;
+- when the name comes from a config table it is enumerated: an array literal driving a
+  `for...of` loop, and object-literal keys via `for...in` or `Object.keys(M).forEach`.
+  If the array or object contains a variable, a spread or a call, the whole thing is
+  dropped — reporting half of it looks complete and silently loses entries.
+
+obsidian measured: `app.js` **73** export entries, `quicklook.js` **51**.
+
+**Following one hop across files** (after 0.140): `h = require("./m")` then
+`handle("x", h.save)` follows into the target function body; the bare name from
+`import { save } from "./m"` works the same way; a pure re-export
+`e.exports.save = require("./impl").save` follows a second hop.
+`wrap(require("./impl").save)` is **not** followed — that is an expression, not a re-export.
+
+On the real packages here these paths **fire zero times**; the capability is held down
+by 8 synthetic cases. The real packages are still waiting.
 
 ### Beyond the five questions
 
@@ -225,7 +252,20 @@ Six things someone else can verify without trusting the author:
 - **`fingerprint`** — input sha256 + version + schema + params + channel names. Same input must give the same value; unreadable input stays `null`.
 - **`refutes_if`** — per channel, what observation would prove the conclusion wrong, not what supports it.
 - **Samples** — md shows two per tier, picked by name sha1 so everyone sees the same two; JSON carries `sites` (all positions) and `evidence[*].where_all`.
-- **Hand-labelled ground truth** — `tests/golden/ground_truth.json`, scored by `scripts/ground_truth_check.py`. Current average coverage **1.00** — all four fixtures match, the three `dyn` names that used to be "cannot compute" are now enumerated (0.81.0). **That 1.00 covers four fixtures only**: 23 channels, every one written by me. `known_unreachable` is now empty; it stays honest only as long as it follows the source.
+- **Hand-labelled ground truth** — `tests/golden/real_packages.json`, scored by
+  `scripts/benchmark.py`. Current obsidian channel precision/recall **95% / 100%**,
+  combined **48% / 100%** over 24 hand-checked channels. The precision denominator is
+  **every reported channel**, including ones nobody has checked — so 48% is a floor,
+  not the true value. douyin / bilibili / vivo / ACLOS have no hand labelling yet and
+  are skipped outright: "not measured" is never printed as 0%. The exact definitions
+  and how to read each number are in `docs/benchmark.md`.
+
+- **Adversarial inventory** — `docs/adversarial.md` is written from the bypassing side:
+  18 ways to disguise a channel name, tried one by one — 13 recognised, 4 not, 1
+  inconclusive, each held down by `AdversarialShapeTests`. It also has a section listing
+  Electron semantics that are **not verified** (handle vs on, contextBridge boundaries,
+  sandboxed preload, `nodeIntegrationInSubFrames`, custom protocols); until someone
+  with Electron security background checks them, none of it may be read as covered.
 
 Corroboration levels (`strong` / `medium` / `weak-same-line` / `weak-near-line`) are not decoration: when the probe reports `sites` (name → `file:line`) in its JSON, the level is computed from both sides. **`unknown` only means the probe reported no position** — not computed, not "did not match". All four levels have been produced by the real CLI.
 

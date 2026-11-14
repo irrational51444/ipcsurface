@@ -86,6 +86,9 @@ obsidian：**47 条**。写法分四档——写死的 0 条、靠还原的（�
   还是**根看不见**。判定分五档：`锚定` / `可跳出` / `根是形参` / `根是局部变量` /
   `根看不见`。
 - **L3 跨函数**：脏值传进同文件的另一个函数，再流到危险参数。obsidian **0 条**。
+  这一层有**硬上限：两跳**。depth=3 试过，耗时 +67%、结果零变化，所以锁在 2。
+  被这个上限砍断的链会单独计数——报告里写「深度上限截断了 N 条链」，
+  N=0 时也写，写的是「这个包里没有需要第三跳的」。obsidian 和 ACLOS 都是 0 条。
 
 ### 四、值会不会被存下来、下一轮再用？→ 状态字段
 
@@ -127,6 +130,26 @@ quicklook.js 有 20 处，导出表里一条也对不上——因为 `e.exports 
 **跨模块 handler 在本机 8 个真包里是 0 例。** `ipcMain.handle('x', mod.fn)` 这种写法，
 3.6 万个 js 文件里一个都没有；唯一的非内联 handlers 是 `this.onLogEvent` 这类
 类方法引用（3 条），现在能把方法名当符号跟进方法体。
+
+**出口怎么认出来**（这一层是 0.139 之后补的）：
+
+- 四种写法都认：`t.X = ...`、`t["X"] = ...`、`e.exports.X = ...`、
+  `e.exports = { X: ... }`；外加 `const e = exports; e.X = ...` 的 receiver 别名，
+  以及 ESM 的 `export function x` / `export { x }`；
+- 名字写成变量时先算：`const K = "file:save"; exports[K] = ...` 认；
+  `const K = "file" + "save"` 认；`exports[getName()]` 不认；
+- 名字来自配置数组时枚举：`const OPS = ["a","b"]; for (const op of OPS) ...` 认，
+  对象字面量的键（`for (const k in MAP)` / `Object.keys(MAP).forEach`）也认；
+  数组或对象里混了变量、展开、函数调用就整条不收——收一半会让枚举看着完整实际漏几条。
+
+obsidian 实测：`app.js` 导出项 **73** 条，`quicklook.js` **51** 条。
+
+**跨文件跟一跳**（0.140 之后）：`h = require("./m")` 之后 `handle("x", h.save)`
+跟到目标函数体；`import { save } from "./m"` 的裸名字同理；
+`e.exports.save = require("./impl").save` 这种纯转发跟第二跳。
+`wrap(require("./impl").save)` 不跟——那不是转发，是表达式。
+
+这几条在本机真包上**触发 0 次**，能力由 8 条合成用例守着。真包等着。
 
 ---
 
@@ -225,10 +248,18 @@ python ipcsurface.py build/static-asar.asar -o report.md
   不是「什么能支持它」。
 - **每层给样本，JSON 给全量**：md 每层抽两条 `名字 @ file:line`（按名字 sha1 选，
   谁的机器上都一样）；JSON 里 `sites` 给全部位置，`evidence[*].where_all` 给每个名字的所有位置。
-- **人工标注对账**：`tests/golden/ground_truth.json` 是逐份源码数出来的通道清单，
-  `scripts/ground_truth_check.py` 算召回 / 精确 / 总覆盖率。**当前平均总覆盖率 1.00**——
-  四个靶场全对上了。这个 1.00 只说明这四个靶场（加起来 23 条通道、写法全是我自己写的），
-  不代表真实应用。
+- **人工标注对账**：`tests/golden/real_packages.json` 是逐份源码读出来的通道清单，
+  `scripts/benchmark.py` 算精确 / 召回。**当前 obsidian 通道级 95% / 100%，
+  合计 48% / 100%**（24 条已核通道）。精确率的分母是**全部报出的通道**，
+  没核过的也算进去，所以 48% 是下限不是真值。抖音 / bilibili / vivo / ACLOS
+  四个包还没有人工标注，脚本直接跳过——「没测」不写成 0%。
+  口径和每个数字怎么读，全在 `docs/benchmark.md`。
+
+- **对抗性清单**：`docs/adversarial.md` 是站在绕过的一方写的——18 种通道名伪装写法
+  逐条试过，认 13、不认 4、存疑 1，每一条都由
+  `tests/test_ipcsurface.py::AdversarialShapeTests` 守着。清单里还有一节
+  「Electron 语义上有哪些没验」，那几条要熟悉 Electron 安全的人逐条核，
+  **核之前不当作已覆盖**。
 
 交叉强度的四档（`strong` / `medium` / `weak-same-line` / `weak-near-line`）不是摆设：
 探针在 probe JSON 里给 `sites`（名字 → `file:line`），工具就按两侧位置算档。
