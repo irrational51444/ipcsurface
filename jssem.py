@@ -312,8 +312,11 @@ def _literal_array(tokens, body_open, body_close, name):
     那种算不出来，报一半比不报更坏。
     """
     for k in range(body_open + 1, body_close - 3):
-        if (tokens[k].kind == 'ident' and tokens[k].text == name
-                and tokens[k + 1].text == '=' and tokens[k + 2].text == '['):
+        if tokens[k].kind != 'ident' or tokens[k].text != name:
+            continue
+        if tokens[k + 1].text != '=':
+            continue
+        if tokens[k + 2].text == '[':
             close = _close_paren(tokens, k + 2)
             items = []
             for tok in tokens[k + 3:close]:
@@ -323,6 +326,22 @@ def _literal_array(tokens, body_open, body_close, name):
                     return []
                 items.append(tok.text.strip('"\'`'))
             return items
+        # `A.concat(B, C)`：左右两边都是字面量数组时，拼起来算。
+        # 任何一边算不出来，整条返回空——只报一半比不报更坏。
+        if (tokens[k + 2].kind == 'ident' and tokens[k + 3].text == '.'
+                and tokens[k + 4].text == 'concat' and tokens[k + 5].text == '('):
+            left = _literal_array(tokens, body_open, body_close, tokens[k + 2].text)
+            if not left:
+                return []
+            close = _close_paren(tokens, k + 5)
+            for tok in tokens[k + 6:close]:
+                if tok.kind != 'ident':
+                    continue
+                right = _literal_array(tokens, body_open, body_close, tok.text)
+                if not right:
+                    return []
+                left = left + right
+            return left
     return []
 
 
@@ -369,9 +388,25 @@ def module_exports(tokens, modules):
             while j < body_close - 2:
                 if (tokens[j].kind == 'ident' and tokens[j + 1].text == '='
                         and tokens[j + 2].kind == 'string'):
-                    consts.setdefault(tokens[j].text,
-                                      tokens[j + 2].text.strip('"\'`'))
-                    j += 3
+                    # `const K = "a" + "b"`：纯字面量拼接，拼完还是常量。
+                    # 只要中间夹了变量或调用，就到此为止，不当常量用。
+                    parts = [tokens[j + 2].text.strip('"\'`')]
+                    q = j + 3
+                    bad = False
+                    while q < body_close:
+                        if tokens[q].text != '+':
+                            break
+                        if q + 1 < body_close and tokens[q + 1].kind == 'string':
+                            parts.append(tokens[q + 1].text.strip('"\'`'))
+                            q += 2
+                            continue
+                        # `"a" + x`：拼了变量，这条就不算常量了。
+                        # 只留前半截当成名字，等于编了一个不存在的通道名。
+                        bad = True
+                        break
+                    if not bad:
+                        consts.setdefault(tokens[j].text, ''.join(parts))
+                    j = q
                 elif tokens[j].text == ',':
                     j += 1
                 else:
@@ -525,6 +560,52 @@ def _split_object_fields(tokens, open_at, close_at):
     return [f for f in fields if f]
 
 
+def esm_imports(tokens):
+    """`import { A, B as C } from "./m"` → {本地名: (类型, spec, 原名)}。
+
+    有了这张表，`ipcMain.handle("x", save)` 里的裸 `save` 才知道该去哪个文件找。
+    只认具名导入、默认导入和 `import * as ns`；动态 `import()` 不算——那是运行时的事。
+    """
+    out = {}
+    n = len(tokens)
+    for i in range(n - 6):
+        if tokens[i].text != 'import':
+            continue
+        j = i + 1
+        if tokens[j].text == '*':
+            if (j + 3 < n and tokens[j + 1].text == 'as'
+                    and tokens[j + 2].kind == 'ident'
+                    and tokens[j + 3].text == 'from'
+                    and tokens[j + 4].kind == 'string'):
+                out[tokens[j + 2].text] = ('*', tokens[j + 4].text.strip('"\'`'), None)
+            continue
+        if tokens[j].text == '{':
+            close = _close_paren(tokens, j)
+            if (close + 2 < n and tokens[close + 1].text == 'from'
+                    and tokens[close + 2].kind == 'string'):
+                spec = tokens[close + 2].text.strip('"\'`')
+                k = j + 1
+                while k < close:
+                    if tokens[k].kind != 'ident':
+                        k += 1
+                        continue
+                    name = tokens[k].text
+                    local = name
+                    if (k + 2 < close and tokens[k + 1].text == 'as'
+                            and tokens[k + 2].kind == 'ident'):
+                        local = tokens[k + 2].text
+                        k += 3
+                    else:
+                        k += 1
+                    out.setdefault(local, ('named', spec, name))
+            continue
+        if tokens[j].kind == 'ident':
+            if (j + 2 < n and tokens[j + 1].text == 'from'
+                    and tokens[j + 2].kind == 'string'):
+                out[tokens[j].text] = ('default', tokens[j + 2].text.strip('"\'`'), None)
+    return out
+
+
 def esm_exports(tokens):
     """ESM 的导出：`export function x(){}` / `export const x = ...` / `export { x }`。
 
@@ -634,6 +715,12 @@ def export_body(tokens, modules, rel, name):
     if hit is None and name in esm:
         hit = esm[name][0]
     if not hit:
+        # ESM 具名导出（`export function save(){}`）本身没有右值，
+        # 函数名就是符号——去 function_defs 里按名字找体。
+        import jsparse
+        for d in jsparse.function_defs(tokens):
+            if d['name'] == name:
+                return (d['body_start'], d['body_end'])
         return None
     body = _body_of_rhs(tokens, hit)
     if not body:

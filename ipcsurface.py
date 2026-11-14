@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.142.0'
+__version__ = '0.143.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/35'
@@ -2469,20 +2469,37 @@ def ipc_registrations_of(tokens, objects, const_strings=None):
 def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
     """跨文件一跳：handler 指向别的文件里导出的函数，跟进去看它调了什么。
 
-    `h = require("./handler")` 之后 `ipcMain.handle("x", h.save)`——`save` 的函数体
-    不在当前文件。这里只做「一跳」：解析 require、在目标文件的导出表里找那个名字、
-    拿它的函数体区间、在区间里扫危险调用。跟不到就返回空，不猜。
+    两种入口：
+
+      - `const h = require("./mod")` 之后 `handle("x", h.save)`；
+      - `import { save } from "./mod"` 之后 `handle("x", save)`。
+
+    只做一跳：解析路径、在目标文件的导出表里找名字、拿函数体区间、扫危险调用。
+    跟不到就返回空，不猜。
     """
     try:
         import jssem
     except ImportError:
         return []
     name = reg.get('target')
+    if not name:
+        return []
     receiver = reg.get('receiver')
-    if not name or not receiver:
+    if receiver:
+        candidates = list(jssem.require_target(rel, tokens, receiver))
+        wanted = name
+    else:
+        # 裸名字：可能是 `import { name } from "./m"` 带进来的。
+        imported = jssem.esm_imports(tokens).get(name)
+        if not imported:
+            return []
+        kind, spec, original = imported
+        candidates = jssem.resolve_required_path(rel, spec)
+        wanted = original or name
+    if not candidates:
         return []
     apis = []
-    for candidate in jssem.require_target(rel, tokens, receiver):
+    for candidate in candidates:
         blob = files.get(candidate) if hasattr(files, 'get') else None
         if not blob:
             continue
@@ -2497,9 +2514,7 @@ def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
         target_tokens, modules = entry
         if not target_tokens:
             continue
-        # 没有模块表是正常的：普通 CommonJS 文件就是一层，
-        # `module_exports` 会把整个文件当模块体来看。
-        body = jssem.export_body(target_tokens, modules, candidate, name)
+        body = jssem.export_body(target_tokens, modules, candidate, wanted)
         if not body:
             continue
         for i in range(body[0], min(body[1] + 1, len(target_tokens) - 1)):
@@ -2747,9 +2762,10 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                     before = [d for d in same if (d.get('line') or 0) <= line]
                     pick = before[-1] if before else same[0]
                     span = (pick['body_start'], pick['body_end'])
-            if not span and reg.get('target') and reg.get('receiver'):
+            if not span and reg.get('target'):
                 # 跨文件一跳：`h = require("./mod")` 之后 `handle("x", h.save)`，
-                # `save` 的函数体在别的文件里。跟不到就是空，不猜。
+                # 或者 `import { save } from "./mod"` 之后 `handle("x", save)`。
+                # `save` 的函数体在别的文件里；跟不到就是空，不猜。
                 for api in _cross_file_handler_sinks(files, rel, tokens, reg,
                                                      cross_cache):
                     found.add((api, None, None, '跨文件'))

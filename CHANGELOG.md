@@ -2,6 +2,34 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.143.0 — 边界之内补两条：拼接常量、ESM 跨文件
+
+上一版自己列了四条「边界之内没做到的」，这一版补两条。
+
+### 一、纯字面量拼接算常量
+
+`const K = "file" + "Save"; exports[K] = ...` —— 拼完还是常量，认。
+`const K = "file" + name;` 里夹了变量，**整条作废**，不保留前半截——
+留「file」当通道名等于编一个不存在的名字。后一条有用例守着。
+
+### 二、ESM 导入接进跨文件
+
+以前 `import { save } from "./handler.js"` 之后 `ipcMain.handle("x", save)`，
+那个裸 `save` 跟不出去——跨文件那跳只认 `h.save` 这种带 receiver 的写法。
+
+现在建了一张导入表：`import { A, B as C } from "./m"`、`import def from "./m"`、
+`import * as ns from "./m"`。裸名字查表拿到目标文件和原名，再走导出表。
+
+两条链都验过：ESM 的 `import { save }` 和 CommonJS 的 `h = require("./handler")`，
+都能跟到目标函数体里的 `writeFileSync`。
+
+### 还差两条
+
+- 常量跨文件：`const K = require("./consts").CHANNEL` 还没解；
+- 跨文件两跳没做。
+
+用例 532 → 538。
+
 ## 0.142.0 — 能算的「动态」都算了：常量折叠 + 配置枚举
 
 上一版我说动态属性名放弃。爸爸追问了一句「为什么放弃」，拆开一看分三种：

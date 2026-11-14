@@ -4209,6 +4209,26 @@ class CrossFileHandlerTests(unittest.TestCase):
                          '包名在包里没有源文件，硬解析只会猜错')
 
 
+    def test_esm_imported_handler_is_followed(self):
+        files = {
+            'main.js': (b'import { save } from "./handler.js";\n'
+                        b'ipcMain.handle("esm-save", save);\n'),
+            'handler.js': b'export function save(p) { fs.writeFileSync(p); }\n',
+        }
+        got = self.sinks(files)
+        apis = [row[0] for row in got.get('esm-save') or []]
+        self.assertIn('writeFileSync', apis,
+                      '`import { save } from "./m"` 进来的裸名字也要能跟到函数体')
+
+    def test_import_table_records_alias(self):
+        import jssem
+        import jsparse
+
+        toks = jsparse.tokenize('import { open as openFile } from "./m";')
+        self.assertEqual(jssem.esm_imports(toks),
+                         {'openFile': ('named', './m', 'open')})
+
+
 class ThisMethodHandlerTests(unittest.TestCase):
     """`ipcMain.on('log', this.onLog)` — the handler is a class method reference."""
 
@@ -4425,6 +4445,28 @@ class ModuleExportTests(unittest.TestCase):
             'var t={1:(e,n,r)=>{const OPS=getOps();'
             'for (const op of OPS) { r[op] = function(){}; }}}')
         self.assertEqual(ex, {}, '数组来自函数调用，枚举不出来就不编')
+
+
+    def test_literal_concat_is_folded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{const K="a"+"b"; r[K]=1;}}')
+        self.assertIn(('1', 'ab'), ex, '纯字面量拼接还是常量')
+
+    def test_concat_with_variable_is_not_folded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{const K="a"+x; r[K]=1;}}')
+        self.assertEqual(ex, {}, '拼了变量就不算常量，只留前半截等于编名字')
+
+    def test_array_concat_enumerates(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{const A=["x"], B=["y"];'
+            'const C=A.concat(B); for (const k of C) { r[k]=1; }}}')
+        self.assertIn(('1', 'x'), ex)
+        self.assertIn(('1', 'y'), ex)
+
+    def test_array_concat_with_call_is_not_enumerated(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{const C=A.concat(getB());'
+            'for (const k of C) { r[k]=1; }}}')
+        self.assertEqual(ex, {}, '一边算不出来，整条就不报')
 
 
 class ModuleGraphTests(unittest.TestCase):
