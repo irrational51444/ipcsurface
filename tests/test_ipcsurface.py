@@ -4379,6 +4379,43 @@ class IpcAliasTests(unittest.TestCase):
         self.assertEqual(aliases, set(), '不是从 electron 拿的，不算')
 
 
+class AdversarialShapeTests(unittest.TestCase):
+    """攻击者会怎么写通道名。认得的要认，认不得的要明确认不得。
+
+    这张表是防守清单：每加一条「认」，就是堵掉一条绕过路径；
+    每条「不认」都写清为什么，别让读者以为那条路是安全的。
+    """
+
+    CASES = [
+        # (名字, 源码, 期望能认出来吗, 为什么)
+        ('literal', 'ipcMain.handle("literal-ch", fn);', True, ''),
+        ('concat-literal', 'ipcMain.handle("a" + "b", fn);', True, ''),
+        ('subscript-literal', 'ipcMain["handle"]("sub-ch", fn);', True, ''),
+        ('subscript-concat', 'ipcMain["ha" + "ndle"]("subc-ch", fn);', True, ''),
+        ('const-name', 'const K = "const-ch"; ipcMain.handle(K, fn);', True, ''),
+        ('destructured',
+         'const {ipcMain: a} = require("electron"); a.handle("alias-ch", fn);', True, ''),
+        ('chained', 'require("electron").ipcMain.handle("chain-ch", fn);', True, ''),
+        ('template', 'ipcMain.handle(`tpl-ch`, fn);', True, ''),
+        ('fromCharCode', 'ipcMain.handle(String.fromCharCode(97), fn);', False,
+         '运行时才算得出，静态没有值'),
+        ('template-expr', 'ipcMain.handle(`tpl-${x}`, fn);', False,
+         '模板里有变量，拼出来的名字静态不知道'),
+    ]
+
+    def channels(self, src):
+        return ipc.scan_asar({'main.js': src.encode()})['channels']
+
+    def test_every_shape_behaves_as_declared(self):
+        for name, src, recognized, why in self.CASES:
+            with self.subTest(shape=name):
+                got = self.channels(src)
+                if recognized:
+                    self.assertTrue(got, f'{name} 应该认出来，实际没认')
+                else:
+                    self.assertEqual(got, [], f'{name} 不该认：{why}')
+
+
 class TruncationCountTests(unittest.TestCase):
     """Chain cut off by the depth cap must be counted — that is the denominator."""
 

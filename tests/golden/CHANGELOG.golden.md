@@ -592,3 +592,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：新增 facts 顶层键 taint_truncated（因深度上限被砍断的跨函数链条数，没有下一跳的不算），报告里多一行说明，schema 从 asar/35 升到 asar/36。下游按 asar/35 读不到这个键，需要先校验 schema。
+
+## 2026-11-14 13:25
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.147.0，报告字段没有变化；这次让同文件常量驱动的动态注册点也能解析出通道名，并新增对抗性视角文档，schema 契约没动，golden 里只有 version 和 fingerprint 变。

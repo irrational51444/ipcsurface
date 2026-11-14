@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.146.0'
+__version__ = '0.147.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/36'
@@ -1491,6 +1491,11 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         _aliases = set()
         for _mt in _ALIAS_RE.finditer(text):
             _aliases.add(_mt.group(1))
+        # 本文件的字符串常量：动态注册点里写的是变量名时先查这张表。
+        # 查得到就是「能算出来的名字」，查不到才算真动态。
+        local_consts = {}
+        for _mt in _LOCAL_CONST_RE.finditer(text):
+            local_consts.setdefault(_mt.group(1), _mt.group(3))
         if _aliases:
             _alt = '|'.join(re.escape(a) for a in sorted(_aliases))
             file_patterns = []
@@ -1535,6 +1540,13 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
                             capability[value] = {'apis': caps, 'guards': guards,
                                                    'level': level, 'where': where}
                 elif kind in ('dynamic_handle', 'dynamic_invoke'):
+                    # 名字写成变量时先查同文件常量表：`const K = "x"; handle(K, fn)`
+                    # 这种「动态」其实算得出来，不该进「算不出来」那一堆。
+                    folded = local_consts.get(value)
+                    if folded:
+                        (handlers if kind == 'dynamic_handle' else invokes).append(
+                            (folded, where))
+                        continue
                     if not value.startswith(("'", '"')):
                         dynamic.append((f'{kind.split("_")[1]}: {value}', where))
                 elif kind == 'preload':
@@ -2450,6 +2462,11 @@ def module_graph_map(files, max_files=8):
         }
     return out or None
 
+
+# 同文件的字符串常量：`const K = "ch-name"`。长度限死，避免在大文件上回溯。
+_LOCAL_CONST_RE = re.compile(
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*"
+    r"(['\"])([^'\"\n]{0,200})\2")
 
 _ALIAS_RE = re.compile(
     r"\{[^{}]{0,400}?\bipcMain\s*:\s*([A-Za-z_$][\w$]*)[^{}]{0,400}?\}"
