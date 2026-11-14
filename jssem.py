@@ -352,6 +352,16 @@ def module_exports(tokens, modules):
             tok = tokens[k]
             if tok.kind != 'ident' or tok.text not in receivers:
                 continue
+            # `exports = { X: ... }`：整体重赋值。不推荐，但真有人这么写，
+            # 认不出来就等于整份导出表是空的。
+            if tokens[k + 1].text == '=' and tokens[k + 2].text == '{':
+                close = _close_paren(tokens, k + 2)
+                for segment in _split_object_fields(tokens, k + 2, close):
+                    if (len(segment) >= 2 and segment[0].kind in ('ident', 'string')
+                            and segment[1].text == ':'):
+                        out.setdefault((mid, segment[0].text.strip('"\'`')),
+                                       (segment[2:], segment[0].start))
+                continue
             if tokens[k + 1].text == '.' and tokens[k + 2].kind == 'ident':
                 name = tokens[k + 2].text
                 eq_at = k + 3
@@ -383,7 +393,19 @@ def module_exports(tokens, modules):
                 rhs = tokens[k + 6:stop]
                 out.setdefault((mid, tokens[k + 4].text), (rhs, tokens[k].start))
                 continue
-            if tokens[k + 3].text != '=' or tokens[k + 4].text != '{':
+            if tokens[k + 3].text != '=':
+                continue
+            # `module.exports = class X { ... }`：导出一个类。
+            # 记成类名（匿名就记 `default`），值为空——构造函数里有危险调用的话，
+            # 那属于「实例化时才发生」，静态这层不追。
+            if tokens[k + 4].text == 'class':
+                cls_at = k + 5
+                if cls_at < body_close and tokens[cls_at].kind == 'ident':
+                    out.setdefault((mid, tokens[cls_at].text), ([], tokens[cls_at].start))
+                else:
+                    out.setdefault((mid, 'default'), ([], tokens[k + 4].start))
+                continue
+            if tokens[k + 4].text != '{':
                 continue
             # `module.exports = { X: ..., Y: ... }`：按顶层逗号切开
             close = _close_paren(tokens, k + 4)

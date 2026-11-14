@@ -4385,6 +4385,19 @@ class ModuleExportTests(unittest.TestCase):
         self.assertEqual(sorted(jssem.esm_exports(toks)), ['default'])
 
 
+    def test_reassigned_exports_object_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{r={A:"x"}}}')
+        self.assertIn(('1', 'A'), ex, 'exports 整体重赋值也要认，不然整张表是空的')
+
+    def test_exported_class_is_recorded_by_name(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{e.exports=class Foo{}}}')
+        self.assertIn(('1', 'Foo'), ex)
+
+    def test_anonymous_exported_class_is_default(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{e.exports=class{}}}')
+        self.assertIn(('1', 'default'), ex, '匿名类没有名字，记成 default 而不是丢掉')
+
+
 class ModuleGraphTests(unittest.TestCase):
     """打包文件里的模块表：谁是谁，谁 require 了谁。"""
 
