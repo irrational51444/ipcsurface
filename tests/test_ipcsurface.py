@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/39')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/40')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4588,6 +4588,28 @@ class OnDemandDepthTests(unittest.TestCase):
                              b'function d(w) { fs.writeFileSync(w); }\n')}
         facts = ipc.scan_asar(files)
         self.assertIn('taint_truncated', facts)
+
+
+class PreloadWiringTests(unittest.TestCase):
+    """透传口「挂在谁身上」：静态写死的和运行时拼的都要认。"""
+
+    def test_static_join_is_wired(self):
+        files = {
+            'win.js': (b'new BrowserWindow({webPreferences: {'
+                        b'preload: require("path").join(__dirname, "../preload/win-preload.js")'
+                        b'}});'),
+        }
+        wiring = ipc.preload_wiring(files)
+        self.assertIn('win-preload.js', wiring)
+        self.assertIn('win.js', wiring['win-preload.js'])
+
+    def test_runtime_concat_is_wired(self):
+        files = {
+            'page.js': (b'e.preload = `${window.preloadUrl}\\\\web-preload.js`;'),
+        }
+        wiring = ipc.preload_wiring(files)
+        self.assertIn('web-preload.js', wiring,
+                      '运行时拼的路径也要认，否则 5 个里只能对上 1 个')
 
 
 class ChannelKindTests(unittest.TestCase):

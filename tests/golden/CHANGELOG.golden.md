@@ -727,3 +727,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.173.0，报告字段结构没变；这次收窄了校验判定（existsSync 之类的存在性检查不再算校验、函数调用要名字像校验、方法调用不借同名函数），pcsuite 三条裸写通道从有校验变疑似可利用，golden 里 version/fingerprint 之外也反映判定变化。
+
+## 2026-11-15 01:00
+
+- 变了的字段：fingerprint, schema
+- 理由：facts 里 passthrough_ports 的每条记录多了 windows 字段（这个 preload 被哪个文件的 webPreferences.preload 挂上），schema 从 asar/39 升到 asar/40。下游按 39 读不到这个字段。

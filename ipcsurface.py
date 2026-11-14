@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.173.0'
+__version__ = '0.174.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/39'
+SCHEMA_VERSION = 'ipcsurface/asar/40'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2904,6 +2904,65 @@ def channel_kinds(files, max_files=40):
     return out
 
 
+def preload_wiring(files, max_files=200):
+    """哪个文件把哪个 preload 挂到了 `webPreferences.preload` 上。
+
+    静态能走到的最远一步：知道「这个透传口装在哪个窗口上」。
+    再往后（那个窗口加载什么 URL）得跑起来看，静态不硬猜。
+
+    返回 {preload 文件名: [来源文件, …]}。
+    """
+    out = {}
+    for rel, blob in files.items():
+        if not rel.endswith('.js') or not blob or b'preload' not in blob:
+            continue
+        text = blob.decode('utf-8', 'ignore')
+        for marker in ('webPreferences', 'preload:'):
+            start = 0
+            while True:
+                idx = text.find(marker, start)
+                if idx < 0:
+                    break
+                start = idx + len(marker)
+                window = text[idx:idx + 400]
+                if 'preload' not in window:
+                    continue
+                for name in ('preload',):
+                    pos = window.find(name)
+                    tail = window[pos:pos + 160]
+                    for quote in ('"', "'", '`'):
+                        seg_start = tail.find(quote)
+                        while seg_start >= 0:
+                            seg_end = tail.find(quote, seg_start + 1)
+                            if seg_end < 0:
+                                break
+                            literal = tail[seg_start + 1:seg_end]
+                            if literal.endswith('.js'):
+                                key = literal.replace('\\', '/').split('/')[-1]
+                                out.setdefault(key, [])
+                                if rel not in out[key]:
+                                    out[key].append(rel)
+                            seg_start = tail.find(quote, seg_end + 1)
+    # 动态拼接：`e.preload = `${window.preloadUrl}\\web-ipc-preload.js``
+    # 静态读不到完整路径，但能认出「这个文件里出现了这个 preload 文件名，
+    # 而且同文件里有 preloadUrl」——记成来源，标注是拼出来的。
+    for rel, blob in files.items():
+        if not rel.endswith('.js') or not blob:
+            continue
+        if b'preloadUrl' not in blob:
+            continue
+        text = blob.decode('utf-8', 'ignore')
+        if 'preload' not in text:
+            continue
+        for token in text.replace('\\', '/').split('/'):
+            token = token.split('`')[0].split('"')[0].split("'")[0]
+            if token.endswith(('.js',)) and ('preload' in token or 'proload' in token):
+                out.setdefault(token, [])
+                if rel not in out[token]:
+                    out[token].append(rel)
+    return out
+
+
 def channel_passthrough_map(files, max_files=40):
     """preload 里有没有「任意通道透传口」。
 
@@ -2923,6 +2982,10 @@ def channel_passthrough_map(files, max_files=40):
     if not names:
         return []
     names.sort(key=lambda rel: -len(files[rel] or b''))
+    try:
+        wiring = preload_wiring(files)
+    except Exception:
+        wiring = {}
     out = []
     for rel in names[:max_files]:
         try:
@@ -2933,9 +2996,12 @@ def channel_passthrough_map(files, max_files=40):
             ports = jssem.passthrough_ports(tokens)
         except Exception:
             continue
+        short = rel.replace('\\', '/').split('/')[-1]
+        hosts = wiring.get(short) or []
         for item in ports:
             item = dict(item)
             item['file'] = rel
+            item['windows'] = hosts
             out.append(item)
     return out
 

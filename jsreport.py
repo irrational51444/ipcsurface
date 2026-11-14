@@ -978,17 +978,22 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             out.append('透传口意味着 renderer 传什么通道就发什么通道——'
                        '上面这张表里任何一条，只要那个窗口加载的页面不可信，都能被调到。')
             out.append('')
-            out.append('| preload | 暴露名 | 方法 | 操作 |')
-            out.append('| --- | --- | --- | --- |')
+            out.append('| preload | 暴露名 | 方法 | 操作 | 挂在谁身上 |')
+            out.append('| --- | --- | --- | --- | --- |')
             for item in real[:12]:
-                out.append('| `%s` | `%s` | `%s` | %s |'
+                hosts = item.get('windows') or []
+                where = '、'.join('`%s`' % h for h in hosts) if hosts else '—'
+                out.append('| `%s` | `%s` | `%s` | %s | %s |'
                            % (item.get('file'), item.get('exposed'),
-                              item.get('method'), item.get('op')))
+                              item.get('method'), item.get('op'), where))
             if len(real) > 12:
                 out.append('| … | | | 还有 %d 个 |' % (len(real) - 12))
             out.append('')
-            out.append('> 静态只能证明「透传口存在」。哪个窗口加载了这些 preload、'
-                       '那个窗口加载的 URL 可不可信，要跑起来才知道——这两件事报告不下结论。')
+            out.append('> 「挂在谁身上」是静态读出来的：`webPreferences.preload` 直接写的；'
+                       '或者同文件里有 `preloadUrl` 拼出来的。静态只能走到这一步。')
+            out.append('>')
+            out.append('> 那个文件最后加载什么 URL、那 URL 可不可信，**要跑起来才知道**——'
+                       '报告在这里不下结论。')
             out.append('')
         elif ports:
             out.append('检查了 %d 个 preload，没有发现「通道参数直接进 ipcRenderer」的透传口。'

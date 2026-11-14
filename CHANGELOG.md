@@ -2,6 +2,40 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.174.0 — 透传口查到「挂在谁身上」为止，再往后不硬猜
+
+上一版只列了透传口，没回答「它装在哪个窗口上」。这一版补到静态能走的最远一步。
+
+### ACLOS 实测
+
+| preload | 暴露名 | 方法 | 操作 | 挂在谁身上 |
+| --- | --- | --- | --- | --- |
+| `webview-browser-proload.js` | `webViewApi` | `sendToMain` | send | `assets/common_browser.*.js` |
+| `webview-browser-proload.js` | `webViewApi` | `invoke` | invoke | `assets/common_browser.*.js` |
+| `career-webview-preload.js` | `webViewApi` | `invoke` | invoke | `assets/index.*.js` |
+| `web-ipc-preload.js` | `AclosApi` | `webviewSend` | send | `assets/highlightwindowtab.*.js` |
+| `common-browser-preload.js` | `EAPI` | `sendToMain` | send | `libs/common-browser.js` |
+
+5 个全对上了。
+
+### 两种挂法都要认
+
+1. **静态写死**：`webPreferences: { preload: path.join(__dirname, "../preload/x.js") }`
+   —— 直接读字符串；
+2. **运行时拼**：`` e.preload = `${window.preloadUrl}\\web-ipc-preload.js` ``
+   —— 路径拼不出来，但能认出「这个文件里出现了这个 preload 文件名，且同文件有 `preloadUrl`」。
+
+只认第一种的话，5 个里只能对上 1 个。
+
+### 报告里也把话说死了
+
+> 那个文件最后加载什么 URL、那 URL 可不可信，**要跑起来才知道**——报告在这里不下结论。
+
+「挂在谁身上」是静态事实；「能不能被利用」还差最后一环。
+
+`schema` 升到 `ipcsurface/asar/40`（`passthrough_ports` 的条目多了 `windows` 字段）。
+用例 598 → 600。
+
 ## 0.173.0 — 16 条语料全部人工核完，抓出三类误判
 
 爸爸要求今晚把剩下的都做完。第一件是把 10 条 `detected-*` 逐条读源码核掉。
