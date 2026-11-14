@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.147.0'
+__version__ = '0.148.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/36'
@@ -67,10 +67,16 @@ PATTERNS = [
                           r"\(\s*['\"]([^'\"]+)['\"]")),
     ('invoke', re.compile(r"ipcRenderer(?:\.(?:invoke|send|sendSync)|\[\s*['\"](?:invoke|send|sendSync)['\"]\s*\])"
                           r"\(\s*['\"]([^'\"]+)['\"]")),
-    ('dynamic_handle', re.compile(r"ipcMain(?:\.(?:handle|on)|\[\s*['\"](?:handle|on)['\"]\s*\])"
-                                  r"\(\s*([^'\"\s][^,)]*\)?)")),
-    ('dynamic_invoke', re.compile(r"ipcRenderer(?:\.(?:invoke|send)|\[\s*['\"](?:invoke|send)['\"]\s*\])"
-                                  r"\(\s*([^'\"\s][^,)]*\)?)")),
+    # 括号型和模板型放在前面优先匹配：`String.fromCharCode(97, 98)` 里那个逗号
+    # 会让后面的通用分支只吃到 `String.fromCharCode(97`，算出来是半个名字。
+    ('dynamic_handle', re.compile(
+        r"ipcMain(?:\.(?:handle|on)|\[\s*['\"](?:handle|on)['\"]\s*\])"
+        r"\(\s*(String\.fromCharCode\(\s*[\d,\s]{0,120}\)|`[^`]{0,140}`"
+        r"|[^'\"\s][^,)]{0,120})")),
+    ('dynamic_invoke', re.compile(
+        r"ipcRenderer(?:\.(?:invoke|send)|\[\s*['\"](?:invoke|send)['\"]\s*\])"
+        r"\(\s*(String\.fromCharCode\(\s*[\d,\s]{0,120}\)|`[^`]{0,140}`"
+        r"|[^'\"\s][^,)]{0,120})")),
     ('preload', re.compile(r"preload\s*:\s*([^,\n}]+)")),
     # 值可能是 `!0` / `!1`——压缩产物里 true/false 就这么写。
     # 只认 `\w+` 的话，obsidian 的
@@ -496,6 +502,14 @@ SIMPLE_FUNC_DEF = re.compile(
     r"function\s+([A-Za-z_$][\w$]*)\s*\(([^)]{0,200})\)\s*\{\s*return\s+([^;{}]{1,300});?\s*\}")
 SIMPLE_ARROW_DEF = re.compile(
     r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\(([^)]{0,200})\)\s*=>\s*([^;{}\n]{1,300})")
+FOR_IN_HEAD = re.compile(
+    r"for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+in\s+([^)]{1,200})\)")
+# 对象字面量：`const MAP = { a: 1, "b": 2 }`。长度限死，避免大文件上回溯。
+OBJECT_LITERAL_DEF = re.compile(
+    r"(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\{([^{}]{1,4000})\}")
+OBJECT_KEY = re.compile(
+    r"""(?:^|[,{])\s*(?:([A-Za-z_$][\w$]{0,60})|(['"])([^'"\n]{1,120})\2)\s*:""")
+
 FOR_OF_HEAD = re.compile(r"for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+of\s+([^)]{1,600})\)")
 FOR_EACH_HEAD = re.compile(
     r"forEach\s*\(\s*(?:function\s*\(([A-Za-z_$][\w$]*)[^)]*\)|\(?([A-Za-z_$][\w$]*)\)?\s*=>)\s*\{")
@@ -685,6 +699,26 @@ def parse_simple_functions(text):
     return table
 
 
+def parse_object_keys(text):
+    """`const MAP = { a: fn, "b": fn }` → {'MAP': ('a', 'b')}。
+
+    对象里如果混了展开、计算属性、方法简写，整条不收——
+    收一半会让后面的枚举看起来完整，实际上漏了几条，那比不收更坏。
+    """
+    out = {}
+    for match in OBJECT_LITERAL_DEF.finditer(text):
+        name = match.group(1)
+        body = match.group(2)
+        if '...' in body or '[' in body or '(' in body:
+            continue
+        keys = []
+        for item in OBJECT_KEY.finditer(body):
+            keys.append(item.group(1) or item.group(3))
+        if keys:
+            out[name] = tuple(keys)
+    return out
+
+
 def parse_loops(text, arrays):
     """找出遍历「有限取值」的循环：[(开始, 结束, 变量名, 取值元组, 来源说明)]。"""
     loops = []
@@ -701,6 +735,20 @@ def parse_loops(text, arrays):
             if end is None:
                 continue
             loops.append((brace, end, match.group(1), values, source))
+    # `for (const k in MAP)`：对象的键就是循环变量的取值。
+    objects = parse_object_keys(text)
+    for match in FOR_IN_HEAD.finditer(text):
+        source = match.group(2).strip()
+        values = objects.get(source)
+        if not values:
+            continue
+        brace = text.find('{', match.end())
+        if brace == -1 or text[match.end():brace].strip():
+            continue
+        end = _block_end(text, brace)
+        if end is None:
+            continue
+        loops.append((brace, end, match.group(1), values, source))
     for match in FOR_EACH_HEAD.finditer(text):
         var = match.group(1) or match.group(2)
         brace = match.end() - 1
@@ -710,12 +758,21 @@ def parse_loops(text, arrays):
         # forEach 的数组在调用点左边：OPS.forEach(…) ——往前取一个标识符
         before = text[max(0, match.start() - 120):match.start()]
         names = re.findall(r'([A-Za-z_$][\w$]*)\s*\.\s*$', before)
-        if not names:
+        # `Object.keys(MAP).forEach(k => ...)`：键枚举的另一种写法。
+        # 它前面不是「标识符.」，所以要在 names 为空之前先试这条路。
+        keyed = re.findall(
+            r"Object\s*\.\s*keys\s*\(\s*([A-Za-z_$][\w$]*)\s*\)\s*\.\s*$", before)
+        if not names and not keyed:
             continue
-        values = arrays.get(names[0])
+        if keyed:
+            values = parse_object_keys(text).get(keyed[0])
+            source_name = keyed[0]
+        else:
+            values = arrays.get(names[0])
+            source_name = names[0]
         if not values:
             continue
-        loops.append((brace, end, var, values, names[0]))
+        loops.append((brace, end, var, values, source_name))
     return loops
 
 
@@ -1542,7 +1599,7 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
                 elif kind in ('dynamic_handle', 'dynamic_invoke'):
                     # 名字写成变量时先查同文件常量表：`const K = "x"; handle(K, fn)`
                     # 这种「动态」其实算得出来，不该进「算不出来」那一堆。
-                    folded = local_consts.get(value)
+                    folded = fold_const_expr(value) or local_consts.get(value)
                     if folded:
                         (handlers if kind == 'dynamic_handle' else invokes).append(
                             (folded, where))
@@ -2639,6 +2696,49 @@ def jssem_tokens_of(rel, blob):
     import jsparse
     text = blob.decode('utf-8', 'ignore')
     return jsparse.tokenize(text)
+
+
+_FROM_CHAR_CODE = re.compile(r"String\.fromCharCode\(([\d\s,]{1,200})\)")
+_TEMPLATE_FULL = re.compile(r"^`([^`]{1,300})`$")
+_TEMPLATE_PART = re.compile(r"\$\{\s*(['\"])([^'\"{}]{1,40})\1\s*\}")
+
+
+def fold_const_expr(expr):
+    """把能算的通道名表达式算成字符串，算不出返回 None。
+
+    只做两种，都要求里面全是常量：
+
+      - `String.fromCharCode(97, 98)` → 'ab'；
+      - 模板字符串里每个插值都是带引号的字面量 → 直接拼。
+
+    夹了变量、函数调用、运算的一律 None。这一层的原则是宁可不认，
+    不把半个名字当成真名字——半个名字比没有名字更坏。
+    """
+    if not expr:
+        return None
+    s = expr.strip()
+    mt = _FROM_CHAR_CODE.fullmatch(s)
+    if mt:
+        parts = [p.strip() for p in mt.group(1).split(',') if p.strip()]
+        try:
+            codes = [int(p) for p in parts]
+        except ValueError:
+            return None
+        if not codes or any(c < 0 or c > 0x10FFFF for c in codes):
+            return None
+        try:
+            return ''.join(chr(c) for c in codes)
+        except ValueError:
+            return None
+    mt = _TEMPLATE_FULL.fullmatch(s)
+    if mt:
+        body = mt.group(1)
+        if '${' not in body:
+            return body
+        if _TEMPLATE_PART.sub('', body).count('${'):
+            return None
+        return _TEMPLATE_PART.sub(lambda m: m.group(2), body)
+    return None
 
 
 def taint_truncation_count(files, max_files=12):

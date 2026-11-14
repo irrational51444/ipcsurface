@@ -7,7 +7,7 @@
 
 - 每一条「认得出」都要有用例守着；
 - 每一条「认不出」都要写清为什么，别让读的人以为那条路是安全的；
-- 清单不完整是常态，`docs/known-wrong.md` 里的是已经踩到的，这里是主动试的。
+- 清单不完整是常态。`docs/known-wrong.md` 里的是已经踩到的，这里是主动试的。
 
 ## 通道名怎么伪装
 
@@ -21,13 +21,16 @@
 | `const {ipcMain: a} = require("electron"); a.handle("x", fn)` | ✅ | 解构重命名 |
 | `require("electron").ipcMain.handle("x", fn)` | ✅ | 链式取成员 |
 | ``ipcMain.handle(`tpl`, fn)`` | ✅ | 无插值的模板字符串 |
-| `ipcMain.handle(String.fromCharCode(97, 98), fn)` | ❌ | 运行时才算得出，静态没有值 |
+| `ipcMain.handle(String.fromCharCode(97, 98), fn)` | ✅ | 实参是数字字面量，算出来 |
+| ``ipcMain.handle(`tpl-${"x"}`, fn)`` | ✅ | 插值是字面量，拼出来 |
+| `for (const k in MAP) ipcMain.handle(k, fn)` | ✅ | 对象的键能枚举 |
+| `Object.keys(MAP).forEach(k => ipcMain.handle(k, fn))` | ✅ | 同上 |
+| `const OPS = ["a","b"]; for (const op of OPS) ...` | ✅ | 数组字面量能枚举 |
 | ``ipcMain.handle(`tpl-${x}`, fn)`` | ❌ | 模板里有变量 |
 | `ipcMain.handle(getName(), fn)` | ❌ | 函数返回值 |
-| `for (const k in MAP) ipcMain.handle(k, fn)` | ❌ | 对象键枚举，见下 |
-| `Object.keys(MAP).forEach(k => ipcMain.handle(k, fn))` | ❌ | 同上 |
+| `const MAP = { ...rest }; for (const k in MAP)` | ❌ | 对象里有展开，键不全，整条不收 |
+| `ipcMain.handle(obj[method], fn)` | ❌ | 下标取的变量 |
 | `eval("ipcMain.handle('x', fn)")` | ⚠️ | 认得出**是因为原始字符串还在文本里**，不是真解析了 eval |
-| `new Function("...")` | ❌ | 同上，且我们不做动态求值 |
 
 `eval` 那一行要特别说：它不是「我们看穿了 eval」，是「那段代码的字面形式恰好还躺在文件里」。
 打乱一下字符串就认不出。别把它当成能力。
@@ -60,13 +63,19 @@
 
 这一节是**待人工核对**清单，不是结论：
 
-- `ipcMain.handle` 和 `ipcMain.on` 的区别（invoke/单向）有没有影响「危险」判定——目前两者一视同仁；
+- `ipcMain.handle` 和 `ipcMain.on` 的区别（invoke / 单向）有没有影响「危险」判定——目前两者一视同仁；
 - `contextBridge.exposeInMainWorld` 暴露的对象里，函数和值的边界怎么算——现在只报暴露了哪些名字；
 - preload 在 `sandbox: true` 下的能力上限——现在没按 sandbox 值去收窄 preload 的分析；
 - `webPreferences` 里的 `nodeIntegrationInSubFrames`、`enableRemoteModule` 是否该单独判——现在只判 nodeIntegration / contextIsolation；
 - `protocol.registerFileProtocol` 之类自定义协议的风险档——现在只报「注册了」，不分档。
 
 这几条要熟悉 Electron 安全的人逐条核。核之前，报告里不要把它们读成「已覆盖」。
+
+## 数字（2026-11-14）
+
+通道名伪装 18 种写法：**认 13、不认 4、存疑 1**。
+上一版是认 8、不认 4、存疑 1——这一版把 `fromCharCode`、模板常量插值、对象键枚举
+（`for-in` 与 `Object.keys`）都补上了。
 
 ## 怎么用这份清单
 

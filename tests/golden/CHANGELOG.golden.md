@@ -597,3 +597,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.147.0，报告字段没有变化；这次让同文件常量驱动的动态注册点也能解析出通道名，并新增对抗性视角文档，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 13:33
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.148.0，报告字段没有变化；这次补了 fromCharCode、模板常量插值和对象键枚举三种通道名写法，schema 契约没动，golden 里只有 version 和 fingerprint 变。

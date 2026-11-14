@@ -4397,10 +4397,26 @@ class AdversarialShapeTests(unittest.TestCase):
          'const {ipcMain: a} = require("electron"); a.handle("alias-ch", fn);', True, ''),
         ('chained', 'require("electron").ipcMain.handle("chain-ch", fn);', True, ''),
         ('template', 'ipcMain.handle(`tpl-ch`, fn);', True, ''),
-        ('fromCharCode', 'ipcMain.handle(String.fromCharCode(97), fn);', False,
-         '运行时才算得出，静态没有值'),
+        ('fromCharCode', 'ipcMain.handle(String.fromCharCode(97, 98), fn);', True,
+         '实参是数字字面量，能算'),
+        ('template-const', 'ipcMain.handle(`tpl-${"x"}`, fn);', True,
+         '插值是字面量，能拼'),
         ('template-expr', 'ipcMain.handle(`tpl-${x}`, fn);', False,
          '模板里有变量，拼出来的名字静态不知道'),
+        ('call-result', 'ipcMain.handle(getName(), fn);', False,
+         '函数返回值，静态没有值'),
+        ('for-in-object',
+         'const MAP = { save: 1, open: 2 };'
+         'for (const k in MAP) { ipcMain.handle(k, fn); }', True,
+         '对象的键能枚举'),
+        ('object-keys',
+         'const MAP = { save: 1, open: 2 };'
+         'Object.keys(MAP).forEach(k => { ipcMain.handle(k, fn); });', True,
+         'Object.keys 也是键枚举'),
+        ('for-in-spread',
+         'const MAP = { save: 1, ...rest };'
+         'for (const k in MAP) { ipcMain.handle(k, fn); }', False,
+         '对象里有展开，键不全，整条不收'),
     ]
 
     def channels(self, src):
