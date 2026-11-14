@@ -304,14 +304,17 @@ def module_of(modules, index):
 
 
 def module_exports(tokens, modules):
-    """每个模块导出了什么：`t.X = ...`（t 是 exports 形参）和 `e.exports.X = ...`。
+    """每个模块导出了什么。四种写法都认：
 
-    压缩产物里 `n(8813).CONST` 想知道 CONST 是什么，只能先有一张导出表——
-    光有边不够，边只说「谁引用谁」，不说「引用的东西是什么」。
-    只记 `名字 = 赋值` 这一种；导出整个对象（`e.exports = {...}`）不展开，
-    解不出就是解不出。
+      1. `t.X = ...`           exports 形参上挂成员；
+      2. `t["X"] = ...`        下标写法，索引是字符串字面量；
+      3. `e.exports.X = ...`   module.exports 上直接挂；
+      4. `e.exports = {X: ...}` 整体换成对象字面量。
 
-    返回 {(模块 id, 名字): (rhs tokens, 字符偏移)}。
+    外加一层 receiver 别名：`const e = exports; e.X = ...` 里的 `e` 也算导出对象。
+    动态属性名（`t[name]`）直接放弃——静态不知道 `name` 是什么。
+
+    返回 {(模块 id, 出口名): (rhs tokens, 字符偏移)}。
     """
     out = {}
     for mid, params, body_open, body_close, _shape in modules:
@@ -319,32 +322,130 @@ def module_exports(tokens, modules):
             continue
         exports_param = params[2]
         module_param = params[0]
-        for k in range(body_open + 1, max(body_open + 1, body_close - 3)):
+        limit = body_close
+
+        # receiver 别名：`const e = exports;` 之后 `e.X = ...` 也是导出。
+        receivers = {exports_param}
+        for k in range(body_open + 1, limit):
+            if k + 4 >= body_close:
+                break
+            if (tokens[k].text in ('const', 'var', 'let')
+                    and tokens[k + 1].kind == 'ident'
+                    and tokens[k + 2].text == '='
+                    and tokens[k + 3].kind == 'ident'
+                    and tokens[k + 3].text == exports_param):
+                receivers.add(tokens[k + 1].text)
+
+        for k in range(body_open + 1, limit):
+            if k + 4 >= body_close:
+                break
             tok = tokens[k]
-            if tok.kind != 'ident' or tok.text != exports_param:
+            if tok.kind != 'ident' or tok.text not in receivers:
                 continue
-            if tokens[k + 1].text != '.' or tokens[k + 2].kind != 'ident':
+            if tokens[k + 1].text == '.' and tokens[k + 2].kind == 'ident':
+                name = tokens[k + 2].text
+                eq_at = k + 3
+            elif (tokens[k + 1].text == '[' and tokens[k + 2].kind == 'string'
+                    and tokens[k + 3].text == ']'):
+                name = tokens[k + 2].text.strip('"\'`')
+                eq_at = k + 4
+            else:
                 continue
-            if tokens[k + 3].text != '=':
+            if tokens[eq_at].text != '=':
                 continue
             rhs = []
-            for r in range(k + 4, min(k + 20, body_close)):
+            for r in range(eq_at + 1, min(eq_at + 17, body_close)):
                 if tokens[r].text in (';', ','):
                     break
                 rhs.append(tokens[r])
-            out.setdefault((mid, tokens[k + 2].text), (rhs, tok.start))
-        for k in range(body_open + 1, max(body_open + 1, body_close - 5)):
+            out.setdefault((mid, name), (rhs, tok.start))
+
+        # `module.exports.X = ...`
+        for k in range(body_open + 1, limit):
+            if k + 5 >= body_close:
+                break
             if (tokens[k].kind != 'ident' or tokens[k].text != module_param
-                    or tokens[k + 1].text != '.' or tokens[k + 2].text != 'exports'
-                    or tokens[k + 3].text != '.' or tokens[k + 4].kind != 'ident'
-                    or tokens[k + 5].text != '='):
+                    or tokens[k + 1].text != '.' or tokens[k + 2].text != 'exports'):
                 continue
-            rhs = []
-            for r in range(k + 6, min(k + 24, body_close)):
-                if tokens[r].text in (';', ','):
-                    break
-                rhs.append(tokens[r])
-            out.setdefault((mid, tokens[k + 4].text), (rhs, tokens[k].start))
+            if tokens[k + 3].text == '.' and tokens[k + 4].kind == 'ident' \
+                    and tokens[k + 5].text == '=':
+                rhs = []
+                for r in range(k + 6, min(k + 22, body_close)):
+                    if tokens[r].text in (';', ','):
+                        break
+                    rhs.append(tokens[r])
+                out.setdefault((mid, tokens[k + 4].text), (rhs, tokens[k].start))
+                continue
+            if tokens[k + 3].text != '=' or tokens[k + 4].text != '{':
+                continue
+            # `module.exports = { X: ..., Y: ... }`：按顶层逗号切开
+            close = _close_paren(tokens, k + 4)
+            for segment in _split_object_fields(tokens, k + 4, close):
+                if (len(segment) >= 2 and segment[0].kind in ('ident', 'string')
+                        and segment[1].text == ':'):
+                    name = segment[0].text.strip('"\'`')
+                    rhs = []
+                    for r in segment[2:18]:
+                        rhs.append(r)
+                    out.setdefault((mid, name), (rhs, segment[0].start))
+    return out
+
+
+def _split_object_fields(tokens, open_at, close_at):
+    """把 `{ a: ..., b: ... }` 按顶层逗号切成字段 token 列表。"""
+    fields, current, depth = [], [], 0
+    for tok in tokens[open_at + 1:close_at]:
+        if tok.text in ('(', '[', '{'):
+            depth += 1
+        elif tok.text in (')', ']', '}'):
+            depth -= 1
+        if tok.text == ',' and depth == 0:
+            fields.append(current)
+            current = []
+            continue
+        current.append(tok)
+    if current:
+        fields.append(current)
+    return [f for f in fields if f]
+
+
+def esm_exports(tokens):
+    """ESM 的导出：`export function x(){}` / `export const x = ...` / `export { x }`。
+
+    只认写死的名字。`export default` 记成 `default`——它不是具名出口，
+    但也确实导出了东西，别让调用方以为这是个空模块。
+    """
+    out = {}
+    n = len(tokens)
+    for i in range(n - 2):
+        if tokens[i].text != 'export':
+            continue
+        j = i + 1
+        if tokens[j].text == 'default':
+            out.setdefault('default', (tokens[j + 1:j + 6], tokens[i].start))
+            continue
+        if tokens[j].text in ('function', 'class'):
+            k = j + 1
+            if k < n and tokens[k].text == '*':
+                k += 1
+            if k < n and tokens[k].kind == 'ident':
+                out.setdefault(tokens[k].text, ([], tokens[i].start))
+            continue
+        if tokens[j].text in ('const', 'let', 'var'):
+            k = j + 1
+            if k < n and tokens[k].kind == 'ident':
+                rhs = []
+                for r in range(k + 2, min(k + 14, n)):
+                    if tokens[r].text in (';', ','):
+                        break
+                    rhs.append(tokens[r])
+                out.setdefault(tokens[k].text, (rhs, tokens[i].start))
+            continue
+        if tokens[j].text == '{':
+            close = _close_paren(tokens, j)
+            for tok in tokens[j + 1:close]:
+                if tok.kind == 'ident' and tok.text != 'as':
+                    out.setdefault(tok.text, ([], tok.start))
     return out
 
 

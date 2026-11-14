@@ -552,3 +552,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.138.1，报告字段没有变化；这次只改 README 和已知边界，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 11:15
+
+- 变了的字段：fingerprint, schema
+- 理由：module_graph 的每个文件多了一个 esm_entries 字段，用来报 ESM 具名导出的条数，跟 CommonJS 的 export_entries 分开算，schema 从 asar/34 升到 asar/35。下游按 asar/34 读不到这一列，需要先校验 schema。

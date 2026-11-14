@@ -16,15 +16,28 @@
 所以 `depth=2` 留着。以后谁想加深，先拿这张表说服自己——或者拿一个真的
 有更深的链的包来推翻它。
 
-## `exports.x = function () {}` 这种写法，函数体认不出来
+## `exports.x = function () {}` 这种写法：导出名认了，函数体还认不出
 
-`function_defs` 只认函数声明（`function name() {}`）。`exports.doSave = function () {}`
-是把函数表达式赋给成员，认不出来——那个函数体里的危险 API 就跟着丢了。
+**导出名认了。** `module_exports` 现在四种写法都认：
 
-实测：`obsidian` 那种打包产物里这种写法不少。影响是跨文件跟图时断在这一跳。
+- `t.X = ...`（exports 形参上挂成员）
+- `t["X"] = ...`（下标，索引是字符串字面量）
+- `e.exports.X = ...`
+- `e.exports = { X: ..., Y: ... }`（整体换成对象字面量，字段一个个拆）
+
+外加 receiver 别名：`const e = exports; e.X = ...` 里的 `e` 也算导出对象；
+ESM 的 `export function x(){}` / `export const x = ...` / `export { x }` 单独一张表。
+动态属性名（`t[name]`）放弃——静态不知道 `name` 是什么。
+
+obsidian 实测：`app.js` 导出项从 22 条涨到 **60 条**，`quicklook.js` 从 8 条涨到 **41 条**。
+
+**函数体还认不出。** `function_defs` 只认函数声明（`function name() {}`）和
+`= function (...)` 表达式；`exports.doSave = function () {}` 是把函数表达式赋给**成员**，
+那个函数体不在 `function_defs` 的索引里。影响：跨文件跟图时断在这一跳。
 
 **绕法**：同一个文件里如果还有 `function doSave()` 这样的声明，能走声明那条；
-只有赋值表达式的，目前没有办法。
+只有成员赋值表达式的，目前没有办法——要做的话得让 `module_exports` 同时记住 rhs
+的函数体区间，那是阶段二的事。
 
 ## 外部有效性：这些数字能证明到哪一步
 
@@ -292,7 +305,7 @@
 
 ## 版本锁
 
-版本：0.138.1
+版本：0.139.0
 
 这张表和版本一起走：`scripts/selfcheck.py` 会核对这里的版本号与当前版本一致，
 并对每类的最少条数、表格列名做断言。改版本号时如果没回来动这张表，自检会红——

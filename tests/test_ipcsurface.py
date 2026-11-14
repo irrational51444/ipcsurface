@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/34')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/35')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4314,6 +4314,35 @@ class ModuleExportTests(unittest.TestCase):
                 break
         self.assertIsNone(jssem.resolve_require_member(toks, mods, ex, pos),
                           '导出表里没有的成员，不许编一个出来')
+
+
+    def test_subscript_export_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{r["Q"]="v"}}')
+        self.assertIn(('1', 'Q'), ex, '下标写法的导出名也要认')
+
+    def test_object_literal_export_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{e.exports={A:"x", B:function(){}}}}')
+        self.assertIn(('1', 'A'), ex)
+        self.assertIn(('1', 'B'), ex, '整体赋值成人字面量，字段要一个个拆出来')
+
+    def test_receiver_alias_is_recorded(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{const k=r; k.Z="v"}}')
+        self.assertIn(('1', 'Z'), ex, 'const k = exports 之后 k.X 也是导出')
+
+    def test_esm_named_exports(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('export function a(){} export const b = 1; export {c};')
+        ex = jssem.esm_exports(toks)
+        self.assertEqual(sorted(ex), ['a', 'b', 'c'])
+
+    def test_esm_default_is_not_a_named_export(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize('export default function (){}')
+        self.assertEqual(sorted(jssem.esm_exports(toks)), ['default'])
 
 
 class ModuleGraphTests(unittest.TestCase):

@@ -1152,16 +1152,17 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('压缩产物把几十上百个源文件压进同一份 JS。不建这张表，跨模块的东西'
                    '就都是黑的：`n(8813).CONST` 里的 8813 是谁，没人知道。')
         out.append('')
-        out.append('| 文件 | 模块 | 依赖边 | 被引用的 | 引用别人的 | 导出项 | 跨模块取成员（解出/共） | 写法 |')
-        out.append('| --- | --- | --- | --- | --- | --- | --- | --- |')
+        out.append('| 文件 | 模块 | 依赖边 | 被引用的 | 引用别人的 | 导出项 | ESM 导出 | 跨模块取成员（解出/共） | 写法 |')
+        out.append('| --- | --- | --- | --- | --- | --- | --- | --- | --- |')
         for rel in sorted(graph, key=lambda k: -graph[k]['modules']):
             item = graph[rel]
             shapes = '、'.join(f'{k}×{v}' for k, v in sorted(item['shapes'].items()))
             cross = ('%d/%d' % (item.get('cross_resolved', 0), item.get('cross_members', 0))
                      if item.get('cross_members') else '—')
-            out.append('| `%s` | %d | %d | %d | %d | %d | %s | %s |'
+            out.append('| `%s` | %d | %d | %d | %d | %d | %d | %s | %s |'
                        % (rel, item['modules'], item['edges'], item['targets'],
-                          item['sources'], item.get('export_entries', 0), cross, shapes))
+                          item['sources'], item.get('export_entries', 0),
+                          item.get('esm_entries', 0), cross, shapes))
         out.append('')
         out.append('> 模块只认「数字 id 加函数体」这一种形状。`case 0:t=function(){...}`'
                    ' 这种 `switch` 标签长得一样，靠上下文排除——不排除会凭空多出模块。'
