@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.159.0'
+__version__ = '0.160.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/37'
+SCHEMA_VERSION = 'ipcsurface/asar/38'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2748,6 +2748,78 @@ def fold_const_expr(expr):
     return None
 
 
+def channel_sanitizer_map(files, max_files=12):
+    """每条有危险调用的通道，校验拦不拦得住——三态，没有「安全」。
+
+      - `guarded`：检出至少一处校验，且它拦的正是流到 sink 的那个形参；
+      - `exposed`：有 sink、一处校验都没检出——**疑似可利用**，但要人看；
+      - `unknown`：检出了校验，但它拦的不是这个形参（可能是状态、别的参数），
+        或者 sink 在 guard 的块外、前置性未定。
+
+    三态必须都在。把 `unknown` 压成 `exposed` 是冤枉人，压成 `guarded`
+    是替人下「安全」结论。
+
+    返回 {通道: {'state', 'sanitizers': [...], 'sinks': [...]}}。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return {}
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return {}
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in with_ipc[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+            objects = parse_object_literals(text)
+            defs = jsparse.function_defs(tokens)
+            regs = [r for r in ipc_registrations_of(tokens, objects) if r['channel']]
+        except Exception:
+            continue
+        for reg in regs:
+            span = reg.get('span')
+            if not span and reg.get('target'):
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
+            if not span:
+                continue
+            try:
+                params = handler_params(tokens, span[0], span[1])
+                sinks = sorted({a for a, *_r in
+                                jssem.sinks_in_span(tokens, span[0], span[1])})
+                if not sinks:
+                    continue
+                found = jssem.find_sanitizers(tokens, span[0], span[1], params)
+                dirty = jssem.tainted_names(
+                    jssem.assignments(tokens, span[0], span[1], params))
+            except Exception:
+                continue
+            # guard 不算「守住」：前置性未定，sink 可能在块外。
+            solid = [f for f in found
+                     if f['kind'] != 'guard' and f.get('target')]
+            targets = {f['target'] for f in solid}
+            if not found:
+                state = 'exposed'
+            elif targets & (set(params) | dirty):
+                state = 'guarded'
+            else:
+                state = 'unknown'
+            out[reg['channel']] = {
+                'state': state,
+                'where': rel,
+                'sanitizers': found,
+                'sinks': sinks,
+            }
+    return out
+
+
 def taint_truncation_count(files, max_files=12):
     """有多少条链因为深度上限断了。
 
@@ -4974,6 +5046,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_path_taint'] = channel_path_taint_map(files)
         facts['channel_state_writes'] = channel_state_writes_map(files)
         facts['taint_truncated'] = taint_truncation_count(files)
+        facts['channel_sanitizers'] = channel_sanitizer_map(files)
         facts['module_graph'] = module_graph_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。

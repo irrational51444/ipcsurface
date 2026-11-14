@@ -928,6 +928,29 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('- 没扫到 contextBridge.exposeInMainWorld')
     out.append('')
 
+    san = facts.get('channel_sanitizers') or {}
+    if san:
+        out.append('### 校验拦不拦得住')
+        out.append('')
+        out.append('只有三态，没有「安全」。`guard` 表示条件里有校验但 sink 在块外，'
+                   '前置性未定——算进 `unknown`，不算「守住」。')
+        out.append('')
+        out.append('| 通道 | 判定 | 检出的校验 | 危险调用 |')
+        out.append('| --- | --- | --- | --- |')
+        label = {'guarded': '有校验', 'exposed': '疑似可利用', 'unknown': '无法判定'}
+        for name in sorted(san):
+            item = san[name]
+            checks = '、'.join('%s(%s)' % (f['kind'], f.get('target') or '—')
+                               for f in item.get('sanitizers') or []) or '—'
+            sinks = '、'.join('`%s`' % s for s in item.get('sinks') or []) or '—'
+            out.append('| `%s` | %s | %s | %s |'
+                       % (name, label.get(item.get('state'), item.get('state')),
+                          checks, sinks))
+        out.append('')
+        out.append('> **没检出校验不等于没有校验。** 校验可能写在 helper 里、跨文件、'
+                   '包在 Promise 链里，或者用更绕的写法——这几种一个都不认。')
+        out.append('')
+
     out.append('## 通道')
     out.append('')
     out.append('| 通道 | 主进程 | 页面侧 |')

@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/37')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/38')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4550,6 +4550,45 @@ class SubgraphQueryTests(unittest.TestCase):
         self.assertIn('unlinkSync', got.get('c1') or [])
         self.assertEqual(got.get('c2'), [],
                          '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
+
+
+class SanitizerStateTests(unittest.TestCase):
+    """三态：guarded / exposed / unknown。压成两态就是替人下结论。"""
+
+    def states(self, src):
+        return ipc.channel_sanitizer_map({'main.js': src.encode()})
+
+    def test_rejected_sink_with_check_is_guarded(self):
+        got = self.states('const {ipcMain} = require("electron");\n'
+                          'ipcMain.handle("c", function (e, p) {\n'
+                          '  if (typeof p !== "string") return;\n'
+                          '  fs.writeFileSync(p);\n'
+                          '});\n')
+        self.assertEqual(got['c']['state'], 'guarded')
+
+    def test_sink_without_any_check_is_exposed(self):
+        got = self.states('const {ipcMain} = require("electron");\n'
+                          'ipcMain.handle("c", function (e, p) {\n'
+                          '  fs.writeFileSync(p);\n'
+                          '});\n')
+        self.assertEqual(got['c']['state'], 'exposed')
+
+    def test_guard_alone_is_unknown(self):
+        got = self.states('const {ipcMain} = require("electron");\n'
+                          'ipcMain.handle("c", function (e, p) {\n'
+                          '  if (fs.existsSync(p)) { log("ok"); }\n'
+                          '  fs.writeFileSync(p);\n'
+                          '});\n')
+        self.assertEqual(got['c']['state'], 'unknown',
+                         'guard 的前置性没定，不能算「守住」，也不能算「没校验」')
+
+    def test_check_on_state_not_param_is_unknown(self):
+        got = self.states('const {ipcMain} = require("electron");\n'
+                          'ipcMain.handle("c", function (e, p) {\n'
+                          '  if (S.ready === true) { fs.writeFileSync(p); }\n'
+                          '});\n')
+        self.assertEqual(got['c']['state'], 'unknown',
+                         '拦的是状态不是参数，判不了这条参数有没有被拦')
 
 
 class SanitizerDetectorTests(unittest.TestCase):
