@@ -685,6 +685,7 @@ def ipc_registrations(tokens, objects=None, const_strings=None, ipc_names=None):
             if folded:
                 channel = folded
         target, calls, guards = None, [], []
+        receiver = None
         # start_i/end_i 是 _window 的来源，必须两个分支都赋值——
         # 之前只在 else 分支赋，`ipcMain.on('x', handler)`（第二个参数是单个标识符）
         # 会走到第 642 行 UnboundLocalError 直接崩。抓样例时撞上的。
@@ -701,6 +702,7 @@ def ipc_registrations(tokens, objects=None, const_strings=None, ipc_names=None):
                 # 拿最后一段当 target，后面就能跟进方法体。ArmouryDevice 的
                 # 三条通道全是这种写法，以前一条都跟不进去。
                 target = second[2].text
+                receiver = second[0].text
                 start_i = tokens.index(second[0])
                 end_i = tokens.index(second[2]) + 1
             else:
@@ -714,12 +716,25 @@ def ipc_registrations(tokens, objects=None, const_strings=None, ipc_names=None):
                          and tokens[k + 1].text == '(']
         span = None
         if len(args) >= 2 and args[1]:
-            span = (tokens.index(args[1][0]), tokens.index(args[1][-1]))
+            second_tokens = args[1]
+            # 第二实参如果是「名字引用」（`handler`、`h.save`），它本身不是函数体，
+            # 把它当 span 会让下游去扫那两个 token，然后以为「扫过了」。
+            # 只有真正的函数/箭头表达式才配当处理函数体。
+            is_reference = (
+                (len(second_tokens) == 1 and second_tokens[0].kind == 'ident')
+                or (len(second_tokens) == 3
+                    and second_tokens[0].kind == 'ident'
+                    and second_tokens[1].text == '.'
+                    and second_tokens[2].kind == 'ident'))
+            if not is_reference:
+                span = (tokens.index(second_tokens[0]),
+                        tokens.index(second_tokens[-1]))
         # 名字是变量（ipcMain.on(chName, ...)）时 channel 是 None。这种注册
         # **确实存在**，只是静态读不到它等于什么——所以不能当没看见，要把那个
         # 表达式本身记下来，回头进 unresolved_reasons['dynamic-registration']。
         first_expr = ' '.join(t.text for t in first) if (channel is None and first) else ''
         found.append({'channel': channel, 'target': target, 'span': span,
+                      'receiver': receiver,
                       'calls': list(dict.fromkeys(calls)),
                       'guards': list(dict.fromkeys(guards)),
                       'first_expr': first_expr,

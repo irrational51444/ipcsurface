@@ -4169,6 +4169,46 @@ class RealShapeCorpusTests(unittest.TestCase):
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
 
 
+class CrossFileHandlerTests(unittest.TestCase):
+    """Stage two: the handler lives in another file, follow one hop into it."""
+
+    def sinks(self, files):
+        mapped = ipc.channel_sinks_map(files, with_paths=True)
+        return mapped[0] if mapped else {}
+
+    def test_exported_function_is_followed(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'const h = require("./handler");\n'
+                        b'ipcMain.handle("cross-save", h.save);\n'),
+            'handler.js': b'e.exports.save = function (p) { fs.writeFileSync(p); };\n',
+        }
+        got = self.sinks(files)
+        apis = [row[0] for row in got.get('cross-save') or []]
+        self.assertIn('writeFileSync', apis,
+                      '导出函数的函数体要跟进去，不能停在 h.save 这两个 token 上')
+
+    def test_missing_export_is_not_guessed(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'const h = require("./handler");\n'
+                        b'ipcMain.handle("cross-save", h.MISSING);\n'),
+            'handler.js': b'e.exports.save = function (p) { fs.writeFileSync(p); };\n',
+        }
+        got = self.sinks(files)
+        self.assertNotIn('cross-save', got, '导出表里没有的名字，不许编一条链出来')
+
+    def test_relative_spec_resolves_to_candidates(self):
+        import jssem
+
+        self.assertEqual(list(jssem.resolve_required_path('src/main.js', './handler')),
+                         ['src/handler.js', 'src/handler/index.js'])
+        self.assertEqual(list(jssem.resolve_required_path('main.js', '../lib/x')),
+                         ['lib/x.js', 'lib/x/index.js'])
+        self.assertEqual(list(jssem.resolve_required_path('main.js', 'electron')), [],
+                         '包名在包里没有源文件，硬解析只会猜错')
+
+
 class ThisMethodHandlerTests(unittest.TestCase):
     """`ipcMain.on('log', this.onLog)` — the handler is a class method reference."""
 

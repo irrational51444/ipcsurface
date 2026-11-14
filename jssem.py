@@ -7,6 +7,8 @@
 这些一律不算「安全」，报告里必须写「未分析」——没分析不等于没问题。
 """
 
+import os
+
 DANGER_KINDS = {
     # 真包里核对时发现少了几样：Obsidian 的 vault-open 是 mkdirSync、copy-asar 是 copyFileSync，
     # 这两个都不在旧表里，于是「能碰文件」的能力被漏掉了。
@@ -317,7 +319,15 @@ def module_exports(tokens, modules):
     返回 {(模块 id, 出口名): (rhs tokens, 字符偏移)}。
     """
     out = {}
-    for mid, params, body_open, body_close, _shape in modules:
+    # 没有模块表的文件（普通 CommonJS）也当一层：整个文件就是「模块体」，
+    # 导出对象叫 `exports`，模块对象叫 `module`。不加这一条的话，
+    # 跨文件跟到一个非打包的 handler.js 就什么都读不出来。
+    if modules:
+        spans = modules
+    else:
+        spans = [('file', ['module', 'exports', 'exports'], 0,
+                  max(0, len(tokens) - 1), 'file')]
+    for mid, params, body_open, body_close, _shape in spans:
         if len(params) < 3:
             continue
         exports_param = params[2]
@@ -353,11 +363,11 @@ def module_exports(tokens, modules):
                 continue
             if tokens[eq_at].text != '=':
                 continue
-            rhs = []
-            for r in range(eq_at + 1, min(eq_at + 17, body_close)):
-                if tokens[r].text in (';', ','):
-                    break
-                rhs.append(tokens[r])
+            # 右值要用括号配平来切：函数体里本身有分号和逗号，
+            # 数到第 16 个 token 或碰到第一个分号都会把函数体切碎，
+            # 后面就再也找不到它的体区间了。
+            stop = _end_of_statement(tokens, eq_at + 1, body_close)
+            rhs = tokens[eq_at + 1:stop]
             out.setdefault((mid, name), (rhs, tok.start))
 
         # `module.exports.X = ...`
@@ -369,11 +379,8 @@ def module_exports(tokens, modules):
                 continue
             if tokens[k + 3].text == '.' and tokens[k + 4].kind == 'ident' \
                     and tokens[k + 5].text == '=':
-                rhs = []
-                for r in range(k + 6, min(k + 22, body_close)):
-                    if tokens[r].text in (';', ','):
-                        break
-                    rhs.append(tokens[r])
+                stop = _end_of_statement(tokens, k + 6, body_close)
+                rhs = tokens[k + 6:stop]
                 out.setdefault((mid, tokens[k + 4].text), (rhs, tokens[k].start))
                 continue
             if tokens[k + 3].text != '=' or tokens[k + 4].text != '{':
@@ -447,6 +454,112 @@ def esm_exports(tokens):
                 if tok.kind == 'ident' and tok.text != 'as':
                     out.setdefault(tok.text, ([], tok.start))
     return out
+
+
+def resolve_required_path(rel, spec):
+    """把 `require("./modA")` 解析成 asar 里的相对路径候选。
+
+    只处理相对路径和带扩展名的写法。`require("electron")`、`require("fs")` 这类
+    包名一律返回空——它们在包里没有源文件，硬解析只会猜错。
+
+    返回候选列表，按可能性排序：`./a` → `a.js`、`a/index.js`。
+    """
+    if not spec or not spec.startswith('.'):
+        return []
+    directory = os.path.dirname(rel).replace('\\', '/')
+    base = spec.replace('\\', '/')
+    if directory:
+        joined = _normpath(directory + '/' + base)
+    else:
+        joined = _normpath(base)
+    if joined.endswith('.js') or joined.endswith('.json'):
+        return [joined]
+    return [joined + '.js', joined + '/index.js']
+
+
+def _normpath(path):
+    parts = []
+    for piece in path.split('/'):
+        if piece in ('', '.'):
+            continue
+        if piece == '..':
+            if parts:
+                parts.pop()
+            continue
+        parts.append(piece)
+    return '/'.join(parts)
+
+
+def require_target(rel, tokens, receiver):
+    """在同文件里找 `receiver = require("./x")`，返回规范化后的目标路径。"""
+    if not receiver:
+        return None
+    limit = len(tokens) - 6
+    for i in range(1, max(1, limit)):
+        if tokens[i].kind != 'ident' or tokens[i].text != receiver:
+            continue
+        if tokens[i + 1].text != '=':
+            continue
+        if tokens[i + 2].kind != 'ident' or tokens[i + 2].text != 'require':
+            continue
+        if tokens[i + 3].text != '(' or tokens[i + 4].kind != 'string':
+            continue
+        spec = tokens[i + 4].text.strip('"\'`')
+        for candidate in resolve_required_path(rel, spec):
+            yield candidate
+
+
+def export_body(tokens, modules, rel, name):
+    """在目标文件的导出表里找 `name`，返回它的函数体区间。
+
+    只认 rhs 是函数表达式或箭头函数的情况；rhs 是个标识符（`exports.a = impl`）
+    就跟一层，跟不到就返回 None——不猜。
+    """
+    exports = module_exports(tokens, modules)
+    esm = esm_exports(tokens)
+    hit = exports.get((None, name)) if False else None
+    for (mid, ename), (rhs, _off) in exports.items():
+        if ename == name:
+            hit = rhs
+            break
+    if hit is None and name in esm:
+        hit = esm[name][0]
+    if not hit:
+        return None
+    body = _body_of_rhs(tokens, hit)
+    if not body:
+        return None
+    # `_body_of_rhs` 给的是 rhs 里的相对下标，换算成整份 token 的绝对下标。
+    try:
+        base = tokens.index(hit[0])
+    except ValueError:
+        return None
+    return (base + body[0], base + body[1])
+
+
+def _body_of_rhs(tokens, rhs):
+    """从一段 rhs token 里找出函数体的 (start, end)；找不到返回 None。"""
+    for i, tok in enumerate(rhs):
+        if tok.text == 'function':
+            j = i + 1
+            if j < len(rhs) and rhs[j].kind == 'ident':
+                j += 1
+            if j < len(rhs) and rhs[j].text == '(':
+                close = _close_paren(rhs, j)
+                if close + 1 < len(rhs) and rhs[close + 1].text == '{':
+                    end = _close_paren(rhs, close + 1)
+                    return (close + 2, end - 1)
+            continue
+        if tok.text == '=' and i + 1 < len(rhs):
+            # `= (…) => { … }`：箭头函数
+            j = i + 1
+            if rhs[j].text == '(':
+                close = _close_paren(rhs, j)
+                if close + 2 < len(rhs) and rhs[close + 1].text == '=>':
+                    if rhs[close + 2].text == '{':
+                        end = _close_paren(rhs, close + 2)
+                        return (close + 3, end - 1)
+    return None
 
 
 def resolve_require_member(tokens, modules, exports, index):

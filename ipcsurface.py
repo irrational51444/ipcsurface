@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.139.0'
+__version__ = '0.140.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/35'
@@ -2466,6 +2466,55 @@ def ipc_registrations_of(tokens, objects, const_strings=None):
     return jsparse.ipc_registrations(tokens, objects, const_strings, aliases)
 
 
+def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
+    """跨文件一跳：handler 指向别的文件里导出的函数，跟进去看它调了什么。
+
+    `h = require("./handler")` 之后 `ipcMain.handle("x", h.save)`——`save` 的函数体
+    不在当前文件。这里只做「一跳」：解析 require、在目标文件的导出表里找那个名字、
+    拿它的函数体区间、在区间里扫危险调用。跟不到就返回空，不猜。
+    """
+    try:
+        import jssem
+    except ImportError:
+        return []
+    name = reg.get('target')
+    receiver = reg.get('receiver')
+    if not name or not receiver:
+        return []
+    apis = []
+    for candidate in jssem.require_target(rel, tokens, receiver):
+        blob = files.get(candidate) if hasattr(files, 'get') else None
+        if not blob:
+            continue
+        entry = cache.get(candidate)
+        if entry is None:
+            try:
+                target_tokens = jssem_tokens_of(candidate, blob)
+                entry = (target_tokens, jssem.find_modules(target_tokens))
+            except Exception:
+                entry = (None, None)
+            cache[candidate] = entry
+        target_tokens, modules = entry
+        if not target_tokens:
+            continue
+        # 没有模块表是正常的：普通 CommonJS 文件就是一层，
+        # `module_exports` 会把整个文件当模块体来看。
+        body = jssem.export_body(target_tokens, modules, candidate, name)
+        if not body:
+            continue
+        for i in range(body[0], min(body[1] + 1, len(target_tokens) - 1)):
+            hit = jssem.danger_at(target_tokens, i, body[1] + 1)
+            if hit and hit[0] and hit[0] not in apis:
+                apis.append(hit[0])
+    return apis
+
+
+def jssem_tokens_of(rel, blob):
+    import jsparse
+    text = blob.decode('utf-8', 'ignore')
+    return jsparse.tokenize(text)
+
+
 def code_snippet(text, offset, span=48, limit=None, floor=None):
     """给一个字符偏移，切出可读的一小段源码。
 
@@ -2622,6 +2671,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
     paths = {}
     ast_out = {}
     ast_ambiguous = set()
+    cross_cache = {}   # 跨文件目标文件的 token 流，按路径缓存
     ast_supported = True
     reg_at = {}   # 通道 -> '文件:行'，给证据用的注册点位置
     dynamic_regs = []   # 名字是变量的注册：看得见这里有个门，读不到它叫什么
@@ -2697,6 +2747,12 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
                     before = [d for d in same if (d.get('line') or 0) <= line]
                     pick = before[-1] if before else same[0]
                     span = (pick['body_start'], pick['body_end'])
+            if not span and reg.get('target') and reg.get('receiver'):
+                # 跨文件一跳：`h = require("./mod")` 之后 `handle("x", h.save)`，
+                # `save` 的函数体在别的文件里。跟不到就是空，不猜。
+                for api in _cross_file_handler_sinks(files, rel, tokens, reg,
+                                                     cross_cache):
+                    found.add((api, None, None, '跨文件'))
             if span:
                 found.update(jssem.sinks_in_span(tokens, span[0], span[1]))
                 if other_tokens:
