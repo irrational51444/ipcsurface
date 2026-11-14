@@ -567,3 +567,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.141.0，报告字段没有变化；这次补的是整体重赋值和导出类两种形态，输出随输入变但 schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 11:51
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.142.0，报告字段没有变化；这次把常量下标和字面量数组循环也枚举成具体导出名，输出随输入变但 schema 契约没动，golden 里只有 version 和 fingerprint 变。

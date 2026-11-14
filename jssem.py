@@ -305,6 +305,27 @@ def module_of(modules, index):
     return None
 
 
+def _literal_array(tokens, body_open, body_close, name):
+    """找 `name = ["a", "b", ...]`，把字符串元素摊出来。
+
+    只认字面量数组。数组里混了变量、函数调用、展开的，一律返回空——
+    那种算不出来，报一半比不报更坏。
+    """
+    for k in range(body_open + 1, body_close - 3):
+        if (tokens[k].kind == 'ident' and tokens[k].text == name
+                and tokens[k + 1].text == '=' and tokens[k + 2].text == '['):
+            close = _close_paren(tokens, k + 2)
+            items = []
+            for tok in tokens[k + 3:close]:
+                if tok.text == ',':
+                    continue
+                if tok.kind != 'string':
+                    return []
+                items.append(tok.text.strip('"\'`'))
+            return items
+    return []
+
+
 def module_exports(tokens, modules):
     """每个模块导出了什么。四种写法都认：
 
@@ -333,6 +354,29 @@ def module_exports(tokens, modules):
         exports_param = params[2]
         module_param = params[0]
         limit = body_close
+
+        # 同模块的字符串常量表：`const K = "x"; exports[K] = ...`。
+        # 这类「动态」属性名其实算得出来——它的值就在上面几行。
+        consts = {}
+        k = body_open + 1
+        while k < limit:
+            if tokens[k].text not in ('const', 'let', 'var'):
+                k += 1
+                continue
+            # 一条声明里可能有多个：`let A = "a", B = "b";`。
+            # 逐段收，碰到分号或别的形态就停。
+            j = k + 1
+            while j < body_close - 2:
+                if (tokens[j].kind == 'ident' and tokens[j + 1].text == '='
+                        and tokens[j + 2].kind == 'string'):
+                    consts.setdefault(tokens[j].text,
+                                      tokens[j + 2].text.strip('"\'`'))
+                    j += 3
+                elif tokens[j].text == ',':
+                    j += 1
+                else:
+                    break
+            k = j + 1
 
         # receiver 别名：`const e = exports;` 之后 `e.X = ...` 也是导出。
         receivers = {exports_param}
@@ -368,6 +412,14 @@ def module_exports(tokens, modules):
             elif (tokens[k + 1].text == '[' and tokens[k + 2].kind == 'string'
                     and tokens[k + 3].text == ']'):
                 name = tokens[k + 2].text.strip('"\'`')
+                eq_at = k + 4
+            elif (tokens[k + 1].text == '[' and tokens[k + 2].kind == 'ident'
+                    and tokens[k + 3].text == ']'):
+                # `exports[K]`：K 在同模块里被赋成字符串字面量，就把它当名字。
+                # 不在表里（来自参数、配置、函数返回值）就跳过——那种算不出来。
+                name = consts.get(tokens[k + 2].text)
+                if not name:
+                    continue
                 eq_at = k + 4
             else:
                 continue
@@ -417,6 +469,41 @@ def module_exports(tokens, modules):
                     for r in segment[2:18]:
                         rhs.append(r)
                     out.setdefault((mid, name), (rhs, segment[0].start))
+
+        # 配置驱动：`for (const op of OPS) exports[op] = ...`。
+        # OPS 是同模块的字面量数组时，把它摊成具体名字——这种「动态」也能算。
+        for k in range(body_open + 1, limit):
+            if k + 6 >= body_close:
+                break
+            if tokens[k].text != 'for' or tokens[k + 1].text != '(':
+                continue
+            if not (tokens[k + 2].text in ('const', 'let', 'var')
+                    and tokens[k + 3].kind == 'ident'
+                    and tokens[k + 4].text in ('of', 'in')
+                    and tokens[k + 5].kind == 'ident'):
+                continue
+            loop_var = tokens[k + 3].text
+            array_name = tokens[k + 5].text
+            items = _literal_array(tokens, body_open, body_close, array_name)
+            if not items:
+                continue
+            close = _close_paren(tokens, k + 1)
+            body_at = close + 1
+            if body_at >= body_close or tokens[body_at].text != '{':
+                continue
+            body_end = _close_paren(tokens, body_at)
+            uses = False
+            for q in range(body_at, max(body_at, body_end - 3)):
+                if (tokens[q].kind == 'ident' and tokens[q].text in receivers
+                        and tokens[q + 1].text == '['
+                        and tokens[q + 2].text == loop_var
+                        and tokens[q + 3].text == ']'):
+                    uses = True
+                    break
+            if not uses:
+                continue
+            for item in items:
+                out.setdefault((mid, item), ([], tokens[k].start))
     return out
 
 

@@ -4398,6 +4398,35 @@ class ModuleExportTests(unittest.TestCase):
         self.assertIn(('1', 'default'), ex, '匿名类没有名字，记成 default 而不是丢掉')
 
 
+    def test_subscript_with_constant_is_folded(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{const K="fileSave"; r[K]=function(){}}}')
+        self.assertIn(('1', 'fileSave'), ex, '同模块常量当下标，算得出来就不该放弃')
+
+    def test_multi_variable_declaration_is_folded(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{let A="a", B="b"; r[A]=1; r[B]=2;}}')
+        self.assertIn(('1', 'a'), ex)
+        self.assertIn(('1', 'b'), ex)
+
+    def test_subscript_with_unknown_name_is_skipped(self):
+        _t, _m, ex = self.parse('var t={1:(e,n,r)=>{r[someVar]=1}}')
+        self.assertEqual(ex, {}, '来自参数或外部的名字，算不出来就不报')
+
+    def test_loop_over_literal_array_enumerates(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{const OPS=["save","open"];'
+            'for (const op of OPS) { r[op] = function(){}; }}}')
+        self.assertIn(('1', 'save'), ex)
+        self.assertIn(('1', 'open'), ex, '循环遍历字面量数组，名字是可以摊出来的')
+
+    def test_loop_over_computed_array_is_not_enumerated(self):
+        _t, _m, ex = self.parse(
+            'var t={1:(e,n,r)=>{const OPS=getOps();'
+            'for (const op of OPS) { r[op] = function(){}; }}}')
+        self.assertEqual(ex, {}, '数组来自函数调用，枚举不出来就不编')
+
+
 class ModuleGraphTests(unittest.TestCase):
     """打包文件里的模块表：谁是谁，谁 require 了谁。"""
 
