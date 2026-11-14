@@ -1,6 +1,6 @@
 {
   "note": "人工标注的 sanitizer 语料。每条 handler 标三件事：位置、形态（reject 拒绝型 / allow 放行型）、校验对象；外加 label：positive（有校验）/ negative（无校验）/ unlabelled（待判断）。没检出校验不等于没有校验——这是 sanitizer 口径的 refutes_if。负例必须留：全是「有校验」的话 precision 算不出来。",
-  "count": 11,
+  "count": 16,
   "entries": [
     {
       "id": "copy-asar",
@@ -215,6 +215,105 @@
         "target": "console",
         "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
       }
+    },
+    {
+      "id": "write-exif-to-file",
+      "package": "pcsuite",
+      "file": "dist/electron/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "w"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：cross-return-check(t)、cross-return-check(n)",
+      "sanitizer": {
+        "position": null,
+        "kind": "cross-return-check",
+        "target": "t",
+        "note": "待人工核对：这类是文件读写 / EXIF 处理通道，值得优先看"
+      }
+    },
+    {
+      "id": "write-exif-to-file-safe",
+      "package": "pcsuite",
+      "file": "dist/electron/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "r",
+        "u",
+        "w"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：return-check(t)、cross-return-check(e)、cross-return-check(n)",
+      "sanitizer": {
+        "position": null,
+        "kind": "return-check",
+        "target": "t",
+        "note": "待人工核对：这类是文件读写 / EXIF 处理通道，值得优先看"
+      }
+    },
+    {
+      "id": "delete-file",
+      "package": "pcsuite",
+      "file": "dist/electron/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "u"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：return-check(t)",
+      "sanitizer": {
+        "position": null,
+        "kind": "return-check",
+        "target": "t",
+        "note": "待人工核对：这类是文件读写 / EXIF 处理通道，值得优先看"
+      }
+    },
+    {
+      "id": "modify-exif-orientation",
+      "package": "pcsuite",
+      "file": "dist/electron/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "r",
+        "u",
+        "w"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：guard(—)、return-check(e)、return-check(e)、return-check(e)、cross-return-check(e)",
+      "sanitizer": {
+        "position": null,
+        "kind": "guard",
+        "target": null,
+        "note": "待人工核对：这类是文件读写 / EXIF 处理通道，值得优先看"
+      }
+    },
+    {
+      "id": "common:check-file-exists",
+      "package": "pcsuite",
+      "file": "dist/electron/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "s"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：guard(e)、return-check(e)",
+      "sanitizer": {
+        "position": null,
+        "kind": "guard",
+        "target": "e",
+        "note": "待人工核对：这类是文件读写 / EXIF 处理通道，值得优先看"
+      }
     }
   ],
   "label_counts": {
@@ -222,5 +321,11 @@
     "negative": 2,
     "unlabelled": 2
   },
-  "source_note": "语料有两类来源：obsidian 的 6 条是人工看过源码的；dsh / aclos 这几条是机器检出、**尚未人工核对**。两类不能混着算 precision。"
+  "source_note": "语料有两类来源：obsidian 的 6 条是人工看过源码的；dsh / aclos 这几条是机器检出、**尚未人工核对**。两类不能混着算 precision。",
+  "packages": {
+    "obsidian": 6,
+    "dsh": 1,
+    "aclos": 4,
+    "pcsuite": 5
+  }
 }

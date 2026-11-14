@@ -2,6 +2,61 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.168.0 — 新包 pcsuite：389 秒 → 143 秒，一条正则吃掉 153 秒
+
+按爸爸说的「换包」，在本机又挖出两个没扫过的：`pcsuite`（348 MB）和
+`vivoControl`（46 MB）。
+
+### 扫之前先撞上性能墙
+
+pcsuite 第一次扫用了 **389 秒**。分段计时：
+
+| 阶段 | 耗时 |
+| --- | --- |
+| read_asar | 0.2s |
+| **scan_asar** | **341.6s** |
+| sanitizers | 33.9s |
+| taint | 37.4s |
+
+继续拆，`enumerate_computed_names` 占 273 秒，其中 **`verdor3.js` 一个文件 153 秒**。
+再拆，`OBJECT_LITERAL_DEF` 在这一条上 17 秒。
+
+根因：`const/let/var` 前缀被写成了**可选**，于是每个位置都要试一次 `X = {...}`，
+3.2 MB 的打包文件上就是几百万次尝试。
+
+改成必须有前缀：
+
+| | 修前 | 修后 |
+| --- | --- | --- |
+| `OBJECT_LITERAL_DEF`（3.2MB 文件） | 16.95s | **0.02s** |
+| `enumerate_computed_names`（同文件） | 153s | **0.3s** |
+| pcsuite `scan_asar` | 341.6s | **71.4s** |
+| pcsuite 全流程 | **389s** | **143s** |
+
+代价：无声明关键字的 `X = {...}` 不再被当成对象字面量定义。测试全绿，
+说明现有用例都带声明关键字。
+
+### 新样本：pcsuite 5 条全是有校验
+
+| 通道 | 判定 | 检出的校验 |
+| --- | --- | --- |
+| `write-exif-to-file` | 有校验 | cross-return-check ×2 |
+| `write-exif-to-file-safe` | 有校验 | return-check + cross-return-check ×2 |
+| `delete-file` | 有校验 | return-check |
+| `modify-exif-orientation` | 有校验 | guard + return-check ×2 |
+| `common:check-file-exists` | 有校验 | guard + return-check |
+
+这几条正好是爸爸说的「文件路径类 handler」，检出的是 `cross-return-check`
+（跨函数的布尔谓词）——两种新形态的组合。
+
+`vivoControl` 24 条通道，但一条危险调用都没有。
+
+### 语料现在 16 条、四个包
+
+obsidian 6、dsh 1、aclos 4、**pcsuite 5**。后面三个包全是 `detected-*`，没人工核过。
+
+用例 585 → 586。
+
 ## 0.167.0 — 校验写在别的函数里，也算校验
 
 补了两类以前完全漏掉的形态：

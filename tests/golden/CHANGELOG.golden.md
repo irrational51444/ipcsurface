@@ -697,3 +697,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.167.0，报告字段结构没变；这次补了跨函数校验（cross- 前缀）和返回布尔谓词（return-check）两类，obsidian 有一条通道从无法判定升到有校验，golden 里 version/fingerprint 之外也反映判定变化。
+
+## 2026-11-14 22:26
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.168.0，报告字段结构没变；这次修了 OBJECT_LITERAL_DEF 的可选前缀导致的灾难性回溯（pcsuite 从 389 秒降到 143 秒），并把 pcsuite 的 5 条通道加进语料，golden 里只有 version 和 fingerprint 变。

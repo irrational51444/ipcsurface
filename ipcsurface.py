@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.167.0'
+__version__ = '0.168.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/38'
@@ -505,8 +505,10 @@ SIMPLE_ARROW_DEF = re.compile(
 FOR_IN_HEAD = re.compile(
     r"for\s*\(\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s+in\s+([^)]{1,200})\)")
 # 对象字面量：`const MAP = { a: 1, "b": 2 }`。长度限死，避免大文件上回溯。
+# 必须有 const/let/var 前缀。以前前缀是可选的，于是每个位置都要试一次
+# `X = {...}`，在 3.2 MB 的打包文件上单这一条要 17 秒。
 OBJECT_LITERAL_DEF = re.compile(
-    r"(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\{([^{}]{1,4000})\}")
+    r"(?:const|let|var)\s+([A-Za-z_$][\w$]{0,60})\s*=\s*\{([^{}]{0,4000})\}")
 OBJECT_KEY = re.compile(
     r"""(?:^|[,{])\s*(?:([A-Za-z_$][\w$]{0,60})|(['"])([^'"\n]{1,120})\2)\s*:""")
 

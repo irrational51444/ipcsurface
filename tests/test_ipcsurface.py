@@ -4975,6 +4975,25 @@ class SanitizerCorpusTests(unittest.TestCase):
         self.assertEqual(tuple(via), ('b', 'c', 'd'),
                          '路径要能读出来：经过谁才摸到 sink')
 
+    def test_object_literal_regex_does_not_backtrack_wildly(self):
+        """`OBJECT_LITERAL_DEF` 在长文本上必须快。
+
+        以前 `const/let/var` 前缀是可选的，于是每个位置都要试一次 `X = {...}`：
+        3.2 MB 的打包文件上单这一条 17 秒，整包扫一次 341 秒。
+        """
+        import re
+        import time
+
+        blob = ('var a=1,b=2;function f(x){return x*2}' * 20000)
+        start = time.monotonic()
+        list(ipc.OBJECT_LITERAL_DEF.finditer(blob))
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 1.0,
+                        '正则在这段 %.1f KB 的文本上跑了 %.2f 秒，八成又在回溯'
+                        % (len(blob) / 1024, elapsed))
+        self.assertTrue(ipc.OBJECT_LITERAL_DEF.search('const M = { a: 1 };'),
+                        '加了前缀也不能认不出正常写法')
+
     def test_facts_carry_the_truncation_count(self):
         files = {'main.js': (b'const {ipcMain} = require("electron");\n'
                              b'ipcMain.handle("x", function (e, p) {'
