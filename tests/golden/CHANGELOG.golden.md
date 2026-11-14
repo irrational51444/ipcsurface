@@ -677,3 +677,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.163.0，报告字段结构没变；这次让 if (!形参) return 记成 reject 而不是 guard，但本机六个包里没有这种形态，三态数字不变，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 21:23
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.164.0，报告字段结构没变；这次把语料扩到 dsh 和 aclos 两个包（5 条机器检出样本，未人工核对），golden 里只有 version 和 fingerprint 变。

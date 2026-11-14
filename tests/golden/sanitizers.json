@@ -1,6 +1,6 @@
 {
   "note": "人工标注的 sanitizer 语料。每条 handler 标三件事：位置、形态（reject 拒绝型 / allow 放行型）、校验对象；外加 label：positive（有校验）/ negative（无校验）/ unlabelled（待判断）。没检出校验不等于没有校验——这是 sanitizer 口径的 refutes_if。负例必须留：全是「有校验」的话 precision 算不出来。",
-  "count": 6,
+  "count": 11,
   "entries": [
     {
       "id": "copy-asar",
@@ -117,11 +117,110 @@
       },
       "label": "unlabelled",
       "label_note": "待人工判断"
+    },
+    {
+      "id": "dsh-desktop:clipboard-image-read",
+      "package": "dsh",
+      "file": "lib/main.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "f"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：reject(value)、reject(—)、reject(—)、guard(—)、reject(—)、reject(—)",
+      "sanitizer": {
+        "position": null,
+        "kind": "reject",
+        "target": "value",
+        "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
+      }
+    },
+    {
+      "id": "deleteCorruptFile",
+      "package": "aclos",
+      "file": "modules/riotPatchSdk.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "e",
+        "u"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：allow-ternary(try)、allow(console)",
+      "sanitizer": {
+        "position": null,
+        "kind": "allow-ternary",
+        "target": "try",
+        "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
+      }
+    },
+    {
+      "id": "runDiagnose",
+      "package": "aclos",
+      "file": "modules/diagnose-tool.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "e"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：allow(e)、and-guard(e)",
+      "sanitizer": {
+        "position": null,
+        "kind": "allow",
+        "target": "e",
+        "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
+      }
+    },
+    {
+      "id": "aiDebug:buildLogArchive",
+      "package": "aclos",
+      "file": "modules/diagnose-tool.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "e",
+        "r"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：and-guard(f)",
+      "sanitizer": {
+        "position": null,
+        "kind": "and-guard",
+        "target": "f",
+        "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
+      }
+    },
+    {
+      "id": "aiDebug:uploadLogArchive",
+      "package": "aclos",
+      "file": "modules/diagnose-tool.js",
+      "line": 0,
+      "offset": 0,
+      "sinks": [
+        "e",
+        "r"
+      ],
+      "source_head": "",
+      "label": "detected-guarded",
+      "label_note": "机器检出，**未人工核对**。检出：reject(console)、reject(e)、reject(c)",
+      "sanitizer": {
+        "position": null,
+        "kind": "reject",
+        "target": "console",
+        "note": "待人工核对：确认这处确实是校验、且拦的确实是这个参数"
+      }
     }
   ],
   "label_counts": {
     "positive": 2,
     "negative": 2,
     "unlabelled": 2
-  }
+  },
+  "source_note": "语料有两类来源：obsidian 的 6 条是人工看过源码的；dsh / aclos 这几条是机器检出、**尚未人工核对**。两类不能混着算 precision。"
 }
