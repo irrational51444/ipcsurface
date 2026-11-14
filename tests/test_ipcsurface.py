@@ -4552,6 +4552,44 @@ class SubgraphQueryTests(unittest.TestCase):
                          '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
 
 
+class OnDemandDepthTests(unittest.TestCase):
+    """按需加深：浅跑没结果、但确实有链被砍断，才为这一条重跑。"""
+
+    def test_short_chain_stays_shallow(self):
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("c", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { fs.writeFileSync(x); }\n')}
+        got = ipc.channel_taint_map(files) or {}
+        self.assertTrue(got.get('c'),
+                        '两跳内的链浅跑就该出来，不该触发加深')
+
+    def test_deep_chain_is_rescued_by_on_demand_pass(self):
+        """五层链：浅跑（两跳）穿不过，按需加深要把它救回来。"""
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("deep", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { b(x); }\n'
+                             b'function b(y) { c(y); }\n'
+                             b'function c(z) { d(z); }\n'
+                             b'function d(w) { fs.writeFileSync(w); }\n')}
+        got = ipc.channel_taint_map(files) or {}
+        apis = [row[0] for row in (got.get('deep') or [])]
+        self.assertIn('writeFileSync', apis,
+                      '被深度砍断又救不回来，等于白做按需加深')
+
+    def test_facts_record_truncation_on_deep_chain(self):
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("deep", function (e, p) { '
+                             b'a(p); });\n'
+                             b'function a(x) { b(x); }\n'
+                             b'function b(y) { c(y); }\n'
+                             b'function c(z) { d(z); }\n'
+                             b'function d(w) { fs.writeFileSync(w); }\n')}
+        facts = ipc.scan_asar(files)
+        self.assertIn('taint_truncated', facts)
+
+
 class SanitizerStateTests(unittest.TestCase):
     """三态：guarded / exposed / unknown。压成两态就是替人下结论。"""
 

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.164.0'
+__version__ = '0.165.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/38'
@@ -2389,6 +2389,12 @@ def channel_taint_map(files, max_files=12):
                 deep = jssem.interproc_taint(tokens, span[0], span[1], dirty, defs,
                                              _truncated=truncated,
                                              _cache=summary_cache)
+                if not deep and truncated:
+                    # 按需加深：浅跑没结果、但确实有链被深度砍断，才为这一条
+                    # 单独重跑一次。代价只落在「本来就要漏」的那些通道上，
+                    # 不是全局把 depth 调大。
+                    deep = jssem.interproc_taint(tokens, span[0], span[1], dirty, defs,
+                                                 depth=6, _cache=summary_cache)
                 if truncated:
                     taint_truncated.extend(truncated)
             except Exception:
