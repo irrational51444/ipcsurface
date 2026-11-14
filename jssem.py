@@ -380,6 +380,58 @@ def resolve_require_member(tokens, modules, exports, index):
     return None
 
 
+def electron_ipc_aliases(tokens):
+    """`const {ipcMain: a} = require("electron")` → `{'a'}`。
+
+    压缩产物把 `ipcMain` 解构重命名之后，文件里再也不会出现 `ipcMain` 这个词，
+    `ipcMain.handle(...)` 的字面匹配一条都认不出来。ACLOS 就是这样：45 个文件
+    含 `ipcMain`，直接扫到 0 条通道，实际有 213 处注册。
+
+    只认「解构里的 `ipcMain: 名字`」且右边是从 electron 拿的。
+    找不到就返回空集合——不猜。
+    """
+    out = set()
+    n = len(tokens)
+    for i in range(2, n - 3):
+        if tokens[i].kind != 'ident' or tokens[i].text != 'ipcMain':
+            continue
+        if tokens[i + 1].text != ':' or tokens[i + 2].kind != 'ident':
+            continue
+        # 往左找这一层解构的 `{`
+        depth = 0
+        open_at = None
+        for j in range(i - 1, max(-1, i - 200), -1):
+            text = tokens[j].text
+            if text == '}':
+                depth += 1
+            elif text == '{':
+                if depth == 0:
+                    open_at = j
+                    break
+                depth -= 1
+        if open_at is None:
+            continue
+        # 往右找这一层解构的 `}`，再看后面一小段有没有 electron
+        depth = 0
+        close_at = None
+        for k in range(i + 1, min(n, i + 200)):
+            text = tokens[k].text
+            if text == '{':
+                depth += 1
+            elif text == '}':
+                if depth == 0:
+                    close_at = k
+                    break
+                depth -= 1
+        if close_at is None:
+            continue
+        if not any(t.kind == 'string' and 'electron' in t.text
+                   for t in tokens[close_at:close_at + 31]):
+            continue
+        out.add(tokens[i + 2].text)
+    return out
+
+
 def _enclosing_call(tokens, idx, start):
     """这个位置落在哪个调用的括号里：`rmSync(F.join(v, C.icon))` 里的 `C.icon`
     落在 `F.join` 的实参里。

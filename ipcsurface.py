@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.135.0'
+__version__ = '0.136.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/34'
@@ -2248,7 +2248,7 @@ def channel_taint_map(files, max_files=12):
             tokens = jsparse.tokenize(text)
             objects = parse_object_literals(text)
             defs = jsparse.function_defs(tokens)
-            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+            regs = [r for r in ipc_registrations_of(tokens, objects) if r['channel']]
         except Exception:
             continue
         for reg in regs:
@@ -2306,7 +2306,7 @@ def channel_path_taint_map(files, max_files=12):
             tokens = jsparse.tokenize(src)
             objects = parse_object_literals(src)
             defs = jsparse.function_defs(tokens)
-            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+            regs = [r for r in ipc_registrations_of(tokens, objects) if r['channel']]
         except Exception:
             continue
         for reg in regs:
@@ -2408,6 +2408,21 @@ def module_graph_map(files, max_files=8):
     return out or None
 
 
+def ipc_registrations_of(tokens, objects, const_strings=None):
+    """统一入口：注册点 = 字面 `ipcMain.xxx` + 解构重命名后的别名。
+
+    `const {ipcMain: a} = require("electron")` 之后文件里没有 `ipcMain` 这个词，
+    只扫字面会漏掉整数量的注册点（ACLOS 就是 45 个文件、213 处全漏）。
+    """
+    try:
+        import jssem
+        aliases = jssem.electron_ipc_aliases(tokens)
+    except Exception:
+        aliases = None
+    import jsparse
+    return jsparse.ipc_registrations(tokens, objects, const_strings, aliases)
+
+
 def code_snippet(text, offset, span=48, limit=None, floor=None):
     """给一个字符偏移，切出可读的一小段源码。
 
@@ -2463,7 +2478,7 @@ def channel_state_writes_map(files, max_files=12):
             tokens = jsparse.tokenize(src)
             objects = parse_object_literals(src)
             defs = jsparse.function_defs(tokens)
-            regs = [r for r in jsparse.ipc_registrations(tokens, objects) if r['channel']]
+            regs = [r for r in ipc_registrations_of(tokens, objects) if r['channel']]
         except Exception:
             continue
         for reg in regs:
@@ -2576,7 +2591,7 @@ def channel_sinks_map(files, main_rel=None, max_files=12, with_paths=False):
             tokens = jsparse.tokenize(text)
             defs = jsparse.function_defs(tokens)
             objects = parse_object_literals(text)
-            regs = [r for r in jsparse.ipc_registrations(tokens, objects, const_strings)
+            regs = [r for r in ipc_registrations_of(tokens, objects, const_strings)
                     if r['channel']]
         except Exception:
             continue

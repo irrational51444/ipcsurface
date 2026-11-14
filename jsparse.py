@@ -623,7 +623,7 @@ def fold_literal_concat(tokens_slice):
     return ''.join(parts) if parts else None
 
 
-def ipc_registrations(tokens, objects=None, const_strings=None):
+def ipc_registrations(tokens, objects=None, const_strings=None, ipc_names=None):
     """找 ipcMain.handle / on / handleOnce 的注册点。
 
     返回 [{channel, target, calls, line}]：
@@ -632,8 +632,14 @@ def ipc_registrations(tokens, objects=None, const_strings=None):
       calls   —— 内联函数体里直接出现的调用名
     """
     found = []
+    # 解构重命名之后，`ipcMain` 这个名字在文件里根本不出现：
+    # `const {ipcMain: a} = require("electron")` 之后全是 `a.handle(...)`。
+    # 别名由调用方解出来传进来，这里只负责「也认它们」。
+    accept = {'ipcMain', 'ipcRenderer'}
+    if ipc_names:
+        accept |= set(ipc_names)
     for i, token in enumerate(tokens):
-        if token.kind != 'ident' or token.text not in ('ipcMain', 'ipcRenderer'):
+        if token.kind != 'ident' or token.text not in accept:
             continue
         j = i + 1
         method = None

@@ -4169,6 +4169,40 @@ class RealShapeCorpusTests(unittest.TestCase):
         self.assertIn('delete', kinds, '`delete C.frame` 要单独算，不能混进读点')
 
 
+class IpcAliasTests(unittest.TestCase):
+    """`const {ipcMain: a} = require("electron")` — after that, `ipcMain` never appears."""
+
+    def analyse(self, src):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        aliases = jssem.electron_ipc_aliases(toks)
+        regs = ipc.ipc_registrations_of(toks, ipc.parse_object_literals(src))
+        return aliases, regs
+
+    def test_destructured_name_is_found(self):
+        aliases, _regs = self.analyse(
+            'const {app, ipcMain: a} = require("electron"); a.handle("x", () => {});')
+        self.assertEqual(aliases, {'a'})
+
+    def test_registration_through_alias_is_counted(self):
+        _aliases, regs = self.analyse(
+            'const {ipcMain: a} = t("electron"); a.handle("open-file", (e, p) => {});')
+        channels = [r['channel'] for r in regs if r['channel']]
+        self.assertEqual(channels, ['open-file'],
+                         '解构重命名之后的注册点，不能因为字面上没有 ipcMain 就丢掉')
+
+    def test_plain_registration_still_works(self):
+        _aliases, regs = self.analyse('ipcMain.on("ping", () => {});')
+        self.assertEqual([r['channel'] for r in regs if r['channel']], ['ping'])
+
+    def test_destructuring_from_another_module_is_not_electron(self):
+        aliases, _regs = self.analyse(
+            'const {ipcMain: a} = require("./my-own-ipc"); a.handle("x", () => {});')
+        self.assertEqual(aliases, set(), '不是从 electron 拿的，不算')
+
+
 class ModuleExportTests(unittest.TestCase):
     """The export table behind `n(8813).CONST` — edges alone say who, not what."""
 
