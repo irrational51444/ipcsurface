@@ -622,3 +622,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.152.0，报告字段没有变化；这次补了同名多候选边的最近候选选取与歧义计数，主链路未切换，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 15:52
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.153.0，报告字段没有变化；这次修掉 function_defs 把控制关键字当函数名的问题，并给同名候选加了形参个数粗筛，主链路未切换，schema 契约没动，golden 里只有 version 和 fingerprint 变。

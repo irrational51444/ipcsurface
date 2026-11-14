@@ -380,6 +380,14 @@ def method_defs(tokens):
     return out
 
 
+_NOT_A_FUNCTION_NAME = frozenset({
+    'if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'new',
+    'delete', 'void', 'in', 'of', 'do', 'else', 'case', 'function', 'class',
+    'var', 'let', 'const', 'try', 'finally', 'throw', 'instanceof', 'with',
+    'yield', 'await', 'import', 'export', 'super', 'this',
+})
+
+
 def function_defs(tokens):
     """找函数定义：function f()、const f = () =>、对象方法简写 f() {。
 
@@ -467,7 +475,10 @@ def function_defs(tokens):
             end = _expression_end(tokens, body)
         found.append({'name': tok.text, 'line': tok.line, 'params': params,
                       'body_start': body, 'body_end': end})
-    return found
+    # 控制关键字不是函数名。`if (x) { ... }`、`for (...) { ... }` 的形状和
+    # 「对象方法简写 `f() {}`」一模一样，以前会被当成 26 个叫 `if` 的函数定义，
+    # 于是「同名多候选」的统计里混进大量假名字，猜边率被抬高到七八成。
+    return [d for d in found if d['name'] not in _NOT_A_FUNCTION_NAME]
 
 
 def _param_names(tokens, open_paren, close_paren):

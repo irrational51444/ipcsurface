@@ -4472,6 +4472,36 @@ class SubgraphQueryTests(unittest.TestCase):
         self.assertTrue(hits, '子图查询没有深度参数，应该能走到第五层')
         self.assertIn('writeFileSync', [h[1] for h in hits])
 
+    def test_control_keywords_are_not_function_names(self):
+        import jsparse
+
+        src = ('if (x) { y(); }\n'
+               'for (let i = 0; i < 3; i++) { z(); }\n'
+               'function real(a) { return a; }\n'
+               'const arrow = (p) => p;\n')
+        names = [d['name'] for d in jsparse.function_defs(jsparse.tokenize(src))]
+        self.assertNotIn('if', names, '`if (x) { }` 的形状像方法简写，但不是函数定义')
+        self.assertNotIn('for', names)
+        self.assertIn('real', names)
+        self.assertIn('arrow', names)
+
+    def test_arity_narrowing_cuts_same_name_candidates(self):
+        import jsparse
+        import jssem
+
+        src = ('function f(a) { return a; }\n'
+               'function f(a, b, c) { fs.unlinkSync(a); }\n'
+               'ipcMain.handle("c", function (e, p, q, r) { f(p, q, r); });\n'
+               'function g(z) { fs.writeFileSync(z); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        stats = {}
+        jssem.subgraph_summaries(toks, defs, [regs[0]['span']], stats_out=stats)
+        self.assertGreaterEqual(stats.get('edges_arity_narrowed', 0), 1,
+                                '三个实参对上一个形参的同名定义，应该被个数筛掉')
+
     def test_ambiguous_name_picks_nearest_and_is_counted(self):
         import jsparse
         import jssem

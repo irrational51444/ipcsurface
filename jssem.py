@@ -2036,6 +2036,38 @@ def _still_has_hop(tokens, start, end, defs, tainted=None):
     return False
 
 
+def _same_arity(candidates, argc):
+    """同名候选里按「形参个数一致」粗筛一轮。
+
+    webpack 产物里同名函数的签名差异明显（有的 `(e,t,n)`、有的 `(a)`），
+    实参个数对不上基本可以排除。筛完一个不剩就退回原候选——
+    宁可承认筛不动，也不能凭个数把一个都没剩的情况当成「不存在」。
+    """
+    if argc is None or len(candidates) < 2:
+        return candidates
+    matched = [d for d in candidates if len(d.get('params') or []) == argc]
+    return matched or candidates
+
+
+def _same_module_only(candidates, modules, at):
+    """同名候选里，只留「和调用点在同一个 webpack 模块内」的那些。
+
+    webpack 把每个源文件包成 `{134:(e,t,n)=>{...}}`，模块内的裸名调用
+    基本都指向本模块的声明；跨模块调用走 `n(8813)` 或 require 传参。
+    所以这条过滤对压缩产物几乎总是对的，错杀率极低。
+
+    没有模块表时（单文件打包、普通脚本）原样返回——不能凭空收窄。
+    """
+    if not modules:
+        return candidates
+    here = module_of(modules, at)
+    if here is None:
+        return candidates
+    same = [d for d in candidates
+            if module_of(modules, d['body_start']) == here]
+    return same or candidates
+
+
 def _pick_nearest(candidates, at):
     """同名多候选里挑一个：先看前面最近的，没有就取后面最近的。
 
@@ -2050,7 +2082,8 @@ def _pick_nearest(candidates, at):
     return after[0] if after else None
 
 
-def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None):
+def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None,
+                        modules=None):
     """只对「从 roots 可达」的函数建摘要——局部子图，不是全量。
 
     全量摘要实测是负优化（obsidian 0.3 秒变 8.4 秒），因为它把几千个函数
@@ -2074,7 +2107,8 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None):
     stats = {'ambiguous_names': 0,
              'edges_skipped': 0,
              'edges_built': 0,
-             'edges_ambiguous': 0}
+             'edges_ambiguous': 0,
+             'edges_arity_narrowed': 0}
     for name, items in name_defs.items():
         if len(items) > 1:
             stats['ambiguous_names'] += 1
@@ -2094,6 +2128,19 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None):
             candidates = name_defs.get(tokens[i].text)
             if not candidates:
                 continue
+            candidates = _same_module_only(candidates, modules, i)
+            if not candidates:
+                continue
+            if len(candidates) > 1:
+                try:
+                    _args, _close = _split_args(tokens, i + 1)
+                except Exception:
+                    _args = None
+                if _args is not None:
+                    narrowed = _same_arity(candidates, len(_args))
+                    if len(narrowed) < len(candidates):
+                        stats['edges_arity_narrowed'] += 1
+                    candidates = narrowed
             # 同名多候选：取「离调用点最近的那个前辈，没有就取最近的后来者」。
             # 这和 handler 按名字找函数体用的是同一条启发式，不是新发明；
             # 但它是**猜**，所以单独计数（edges_ambiguous），报告里能看见。
@@ -2136,6 +2183,18 @@ def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None):
             if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
                 continue
             candidates = name_defs.get(tokens[i].text)
+            if candidates:
+                candidates = _same_module_only(candidates, modules, i)
+            if candidates and len(candidates) > 1:
+                try:
+                    _args, _close = _split_args(tokens, i + 1)
+                except Exception:
+                    _args = None
+                if _args is not None:
+                    narrowed = _same_arity(candidates, len(_args))
+                    if len(narrowed) < len(candidates):
+                        stats['edges_arity_narrowed'] += 1
+                    candidates = narrowed
             if candidates:
                 callee = _pick_nearest(candidates, i)
                 if callee:
