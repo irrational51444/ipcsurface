@@ -712,3 +712,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：facts 多一个 passthrough_ports 键（preload 里把通道变量直接塞进 ipcRenderer 的方法），schema 从 asar/38 升到 asar/39。下游按 asar/38 读不到这个键。
+
+## 2026-11-14 23:49
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.171.0，报告多一节「preload 透传口」并把它接进 scan_asar 的 facts，schema 契约没变但报告内容变长，golden 里 version 和 fingerprint 会变。

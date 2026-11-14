@@ -2,6 +2,46 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.171.0 — 透传口接进报告：这个包有几扇后门，先写清楚
+
+上一版只把透传口存进 `facts`，读者看不见。这一版接到报告里——放在
+「校验拦不拦得住」那节底下，因为它是那节所有结论的前提。
+
+ACLOS 实测输出：
+
+```
+**这个包有 5 个 preload 透传口**（send 3、invoke 2）。
+透传口意味着 renderer 传什么通道就发什么通道——上面这张表里任何一条，
+只要那个窗口加载的页面不可信，都能被调到。
+
+| preload | 暴露名 | 方法 | 操作 |
+| webview-browser-proload.js | webViewApi | sendToMain | send |
+| webview-browser-proload.js | webViewApi | invoke | invoke |
+| career-webview-preload.js | webViewApi | invoke | invoke |
+| web-ipc-preload.js | AclosApi | webviewSend | send |
+| common-browser-preload.js | EAPI | sendToMain | send |
+```
+
+### 措辞守着同一条线
+
+报告只写「透传口存在」，**不写「这条通道能被利用」**。因为中间还差两环：
+哪个窗口加载了这些 preload、那个窗口加载的 URL 可不可信。这两件事静态做不完，
+报告里明写「要跑起来才知道」。
+
+这和「门禁存在只能证明有门」是同一套口径。
+
+### 没有透传口的包
+
+检查过但一个都没找到时，报告写「检查了 N 个 preload，没有发现透传口」——
+不省略这一行，省了读者会以为是没查。
+
+### 顺带
+
+`passthrough_ports` 之前只接在 `analyse_asar` 里，`scan_asar` 没接——测试当场抓出来了。
+现在两层都有；preload 只扫含 `contextBridge` 的文件，便宜。
+
+用例 593 → 594。
+
 ## 0.170.0 — 补上 preload 透传口识别：整张 IPC 表一起暴露的那种
 
 上一版查 ACLOS 的利用链时发现工具缺一层：它能列出 `exposeInMainWorld` 的名字，

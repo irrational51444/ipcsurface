@@ -950,6 +950,32 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('> **没检出校验不等于没有校验。** 校验可能写在 helper 里、跨文件、'
                    '包在 Promise 链里，或者用更绕的写法——这几种一个都不认。')
         out.append('')
+        ports = facts.get('passthrough_ports') or []
+        real = [p for p in ports if p.get('op')]
+        if real:
+            sends = sum(1 for p in real if p['op'] == 'send')
+            invokes = sum(1 for p in real if p['op'] == 'invoke')
+            out.append('**这个包有 %d 个 preload 透传口**（send %d、invoke %d）。'
+                       '透传口意味着 renderer 传什么通道就发什么通道——'
+                       '上面这张表里任何一条，只要那个窗口加载的页面不可信，都能被调到。'
+                       % (len(real), sends, invokes))
+            out.append('')
+            out.append('| preload | 暴露名 | 方法 | 操作 |')
+            out.append('| --- | --- | --- | --- |')
+            for item in real[:12]:
+                out.append('| `%s` | `%s` | `%s` | %s |'
+                           % (item.get('file'), item.get('exposed'),
+                              item.get('method'), item.get('op')))
+            if len(real) > 12:
+                out.append('| … | | | 还有 %d 个 |' % (len(real) - 12))
+            out.append('')
+            out.append('> 静态只能证明「透传口存在」。哪个窗口加载了这些 preload、'
+                       '那个窗口加载的 URL 可不可信，要跑起来才知道——这两件事报告不下结论。')
+            out.append('')
+        elif ports:
+            out.append('检查了 %d 个 preload，没有发现「通道参数直接进 ipcRenderer」的透传口。'
+                       % len(ports))
+            out.append('')
 
     out.append('## 通道')
     out.append('')

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.170.0'
+__version__ = '0.171.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/39'
@@ -1668,6 +1668,8 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         # 这一层不算跨函数深度：`None` 的意思是「没测」，不是「零」。
         # analyse_asar 会把它换成真数字。报告见 None 就不写那一行。
         'taint_truncated': None,
+        # preload 透传口很便宜（只扫含 contextBridge 的文件），这一层直接算。
+        'passthrough_ports': channel_passthrough_map(files),
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'native_imports': native_imports.native_import_surface(files),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),

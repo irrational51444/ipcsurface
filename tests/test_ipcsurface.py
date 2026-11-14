@@ -4590,6 +4590,26 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+class PassthroughReportTests(unittest.TestCase):
+    """报告要写出「这个包有几扇后门」，而不是只存进 JSON。"""
+
+    def test_scan_carries_the_ports(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'ipcMain.handle("c", function (e, p) {\n'
+                        b'  fs.writeFileSync(p);\n'
+                        b'});\n'),
+            'preload.js': (b'contextBridge.exposeInMainWorld("EAPI", {'
+                           b' sendToMain: ({channel, data}) => '
+                           b'ipcRenderer.send(channel, data) });\n'),
+        }
+        facts = ipc.scan_asar(files)
+        ports = facts.get('passthrough_ports') or []
+        self.assertTrue(ports, 'scan_asar 要把透传口放进 facts')
+        self.assertEqual(ports[0].get('op'), 'send')
+        self.assertEqual(ports[0].get('exposed'), 'EAPI')
+
+
 class PassthroughPortTests(unittest.TestCase):
     """preload 的任意通道透传口：这是整张 IPC 表一起暴露，比单条通道更危险。"""
 
