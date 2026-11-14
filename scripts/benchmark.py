@@ -31,13 +31,27 @@ def main():
     agg = {'tp_ch': 0, 'reported_ch': 0, 'verified_ch': 0,
            'tp_api': 0, 'reported_api': 0, 'expected_api': 0}
     for name, spec in gold['packages'].items():
+        verified = spec['verified']
         path = spec['asar']
+        if not verified:
+            # 没有人工标注就等于没测。以前这里会打出一行 0%，
+            # 读的人分不清「工具一条没报」和「我还没核」——那不是数字，是噪音。
+            print(f'{name}: 还没有人工标注，跳过（没测，不是 0 分）')
+            continue
         if not os.path.exists(path):
             print(f'{name}: 本机没有这个包，跳过')
             continue
         facts, _n, _b = t.analyse_asar(path)
-        sinks = facts.get('channel_sinks_ast') or facts.get('channel_sinks') or {}
-        got = {k: set(v) for k, v in sinks.items() if v}
+        # 两路口径要合并，不是二选一。以前写的是 `ast or 名字级`：
+        # ast 那层只要有一条非空，名字级那批就整个被丢掉，
+        # 抖音 / bilibili / vivo / ACLOS 四个包因此算出来全是 0——
+        # 那不是「工具没报」，是尺子把它们扔了。
+        got = {}
+        for source in (facts.get('channel_sinks'),
+                       facts.get('channel_sinks_ast')):
+            for key, apis in (source or {}).items():
+                if apis:
+                    got.setdefault(key, set()).update(apis)
 
         verified = spec['verified']
         known_miss = spec.get('known_miss') or {}

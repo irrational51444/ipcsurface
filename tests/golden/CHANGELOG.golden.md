@@ -582,3 +582,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.144.0，报告字段没有变化；这次补了跨文件常量解析和两跳纯转发，输出随输入变但 schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 13:02
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.145.0，报告字段没有变化；这次修的是 benchmark 脚本合并两路证据、以及未标注包的显示，产品输出没变，golden 里只有 version 和 fingerprint 变。
