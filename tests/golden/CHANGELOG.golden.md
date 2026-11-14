@@ -627,3 +627,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.153.0，报告字段没有变化；这次修掉 function_defs 把控制关键字当函数名的问题，并给同名候选加了形参个数粗筛，主链路未切换，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 16:19
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.154.0，报告字段没有变化；这次把关键字排除做成自检断言、并把 ADR 阈值按包结构分层，schema 契约没动，golden 里只有 version 和 fingerprint 变。

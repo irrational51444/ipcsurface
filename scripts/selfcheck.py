@@ -53,6 +53,33 @@ def run_unittest_summary():
             int(skipped.group(1)) if skipped else 0)
 
 
+def check_keyword_names_excluded(ok):
+    """控制关键字不许出现在函数定义表里。
+
+    这个 bug 在三个分析层各犯过一遍：词法层（0.83.0「关键字不再当调用边」）、
+    语法树层、函数定义层（0.153.0 才发现 `if (x) { ... }` 被当成对象方法简写）。
+    靠真包实测发现太慢，这条改成断言：任何一层把 `if` 当函数名，自检就红。
+    """
+    sys.path.insert(0, ROOT)
+    import jsparse
+
+    probe = ('if (x) { y(); }\n'
+             'for (let i = 0; i < 3; i++) { z(); }\n'
+             'while (a) { b(); }\n'
+             'switch (k) { case 1: break; }\n'
+             'function realFn(p) { return p; }\n')
+    try:
+        defs = jsparse.function_defs(jsparse.tokenize(probe))
+    except Exception as exc:
+        return ok & check('关键字排除', False, 'function_defs 跑不动：%r' % (exc,))
+    names = {d['name'] for d in defs}
+    banned = {'if', 'for', 'while', 'switch', 'catch', 'return', 'try'}
+    leaked = names & banned
+    ok = ok & check('关键字不当函数名', not leaked, '、'.join(sorted(leaked)))
+    ok = ok & check('关键字过滤不误伤', 'realFn' in names, 'realFn 被误删')
+    return ok
+
+
 def check_test_classes(ok):
     """同名测试类会互相覆盖，用例静悄悄不跑——这坑踩过一次，得一直盯着。"""
     names = re.findall(r'^class (\w+)\(unittest\.TestCase\):', read('tests', 'test_ipcsurface.py'),
@@ -559,6 +586,7 @@ def main():
     ok &= check('badge 用例数和实际一致',
                 f'{tests_count} passed' in read('docs', 'badges', 'tests.svg'))
     ok = check_versions_match_tags(ok, version, changelog)
+    ok = check_keyword_names_excluded(ok)
     ok = check_test_classes(ok)
     ok = check_local_links(ok, readme)
     ok = check_referenced_paths(ok, readme)
