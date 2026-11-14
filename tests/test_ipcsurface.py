@@ -4590,6 +4590,37 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+class PreciseAliasTests(unittest.TestCase):
+    """精扫层认三种 ipcMain 形态：裸名、解构别名、命名空间取属性。"""
+
+    def test_namespace_form(self):
+        try:
+            import precise_engine as pe
+        except ImportError:
+            self.skipTest('tree-sitter 没装')
+        src = ('const l = require("electron");\n'
+               'l.ipcMain.handle("demo", (e, o) => { require("fs").writeFileSync(o) });\n')
+        root = pe._parse(src).root_node
+        found = []
+        for n in pe._walk(root):
+            if n.type != 'call_expression':
+                continue
+            fn = n.child_by_field_name('function')
+            if fn is None or fn.type != 'member_expression':
+                continue
+            prop = fn.child_by_field_name('property')
+            obj = fn.child_by_field_name('object')
+            if obj is None or prop is None:
+                continue
+            if pe._text_of(prop, src) not in ('handle', 'on', 'handleOnce'):
+                continue
+            name = pe._text_of(obj, src)
+            if name == 'ipcMain' or name.endswith('.ipcMain'):
+                found.append(pe._channel_of(n, src))
+        self.assertEqual(found, ['demo'],
+                         'obsidian 的 47 条通道全挂在 l.ipcMain 上')
+
+
 class PreloadWiringTests(unittest.TestCase):
     """透传口「挂在谁身上」：静态写死的和运行时拼的都要认。"""
 

@@ -380,11 +380,17 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs')):
                     prop = fn.child_by_field_name('property')
                     if obj is None or prop is None:
                         continue
-                    # 早先只认字面 `ipcMain`。压缩产物里全是别名：
-                    # `const {ipcMain: s} = require("electron")` 之后 `s.handle(...)`。
-                    # 结果在 obsidian / dsh 上一条通道都认不出来（47 条变 0 条）。
-                    if _text_of(obj, text) not in ipc_names:
-                        continue
+                    # 三种形态都要认：
+                    #   `ipcMain.handle(...)`          —— 裸名
+                    #   `s.handle(...)`                —— 解构别名
+                    #   `l.ipcMain.handle(...)`        —— 命名空间取属性
+                    # obsidian 用的正是第三种，47 条通道全挂在 `l.ipcMain` 上；
+                    # 早先只认前两种，于是整个包扫出 0 条通道。
+                    obj_name = _text_of(obj, text)
+                    if obj_name not in ipc_names:
+                        if not (obj.type == 'member_expression'
+                                and obj_name.endswith('.ipcMain')):
+                            continue
                     if _text_of(prop, text) not in ('handle', 'on', 'handleOnce'):
                         continue
                 else:

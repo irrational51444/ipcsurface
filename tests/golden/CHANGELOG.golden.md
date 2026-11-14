@@ -732,3 +732,8 @@
 
 - 变了的字段：fingerprint, schema
 - 理由：facts 里 passthrough_ports 的每条记录多了 windows 字段（这个 preload 被哪个文件的 webPreferences.preload 挂上），schema 从 asar/39 升到 asar/40。下游按 39 读不到这个字段。
+
+## 2026-11-15 01:36
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.175.0，报告字段结构没变；这次修了精扫层的命名空间形态（l.ipcMain.handle），obsidian 上精扫从 0 条通道变 22 条，但精扫默认不开，golden 里只有 version 和 fingerprint 变。
