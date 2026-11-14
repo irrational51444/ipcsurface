@@ -2,6 +2,49 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.172.0 — 通道区分 send/invoke，和透传口对上了
+
+上一版列了 5 个透传口，但没回答「这些口能调到哪些通道」。这一版补上。
+
+### 先分清通道靠什么注册
+
+`ipcMain.handle` 只响应 `invoke`，`ipcMain.on` 只响应 `send`。ACLOS 实测：
+
+| 通道 | 调用方式 |
+| --- | --- |
+| `aiDebug:uploadLogArchive` | **invoke** |
+| `aiDebug:buildLogArchive` | invoke |
+| `deleteCorruptFile` | **send** |
+| `runDiagnose` | send |
+
+270 条通道里 send 178、invoke 92。
+
+第一版只认出 1 条 —— 压缩产物里注册点全是别名（`const {ipcMain: s}` 之后 `s.handle(...)`），
+查了别名表才对。
+
+### 报告里对上了
+
+```
+3 个 send 透传口能调到 178 条 send 通道；
+2 个 invoke 透传口能调到 92 条 invoke 通道。
+```
+
+两条真高危正好各占一边：`deleteCorruptFile` 是 send（`EAPI.sendToMain` 能调），
+`uploadLogArchive` 是 invoke（`webViewApi.invoke` 能调）。
+
+### 顺带修掉一个误导读者的说法
+
+第一版写「能调到 718 条通道」——那是 3×178 + 2×92 累加出来的，比通道总数还大，
+数字本身没意义。改成按 send/invoke 分开报。
+
+### 还有一处要说明
+
+「校验拦不拦得住」那张表和上面「外部输入能不能走到危险参数」**不是同一批通道**。
+一条通道可能这里判「疑似可利用」（本体没校验），但上面那层没算进去
+（外部输入到不了那个参数）。报告里加了这句，两节要一起看。
+
+用例 594 → 595。
+
 ## 0.171.0 — 透传口接进报告：这个包有几扇后门，先写清楚
 
 上一版只把透传口存进 `facts`，读者看不见。这一版接到报告里——放在

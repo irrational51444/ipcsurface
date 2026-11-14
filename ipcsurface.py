@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.171.0'
+__version__ = '0.172.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/39'
@@ -2855,6 +2855,55 @@ def channel_sanitizer_map(files, max_files=12):
     return out
 
 
+def channel_kinds(files, max_files=40):
+    """每条通道是靠 `handle`（invoke）还是 `on`（send）注册的。
+
+    这件事决定「谁能调到它」：`handle` 只响应 invoke，`on` 只响应 send。
+    报告里要和 preload 透传口对上——一个只有 send 透传口的包，
+    调不动任何 handle 通道。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return {}
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
+    if not with_ipc:
+        return {}
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    out = {}
+    for rel in with_ipc[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+        except Exception:
+            continue
+        n = len(tokens)
+        # 压缩产物里注册点是别名：`const {ipcMain: s} = require("electron")`
+        # 之后全是 `s.handle(...)`。不查别名表就只能认出字面写 ipcMain 的那一个。
+        try:
+            aliases = set(jssem.electron_ipc_aliases(tokens)) | {'ipcMain'}
+        except Exception:
+            aliases = {'ipcMain'}
+        for i in range(n - 3):
+            if tokens[i].kind != 'ident' or tokens[i].text not in aliases:
+                continue
+            if tokens[i + 1].text != '.':
+                continue
+            method = tokens[i + 2].text
+            if method not in ('handle', 'handleOnce', 'on', 'once'):
+                continue
+            if tokens[i + 3].text != '(':
+                continue
+            if i + 4 >= n or tokens[i + 4].kind != 'string':
+                continue
+            channel = tokens[i + 4].text.strip('"\'`')
+            kind = 'invoke' if method.startswith('handle') else 'send'
+            out.setdefault(channel, kind)
+    return out
+
+
 def channel_passthrough_map(files, max_files=40):
     """preload 里有没有「任意通道透传口」。
 
@@ -5119,6 +5168,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['taint_truncated'] = taint_truncation_count(files)
         facts['channel_sanitizers'] = channel_sanitizer_map(files)
         facts['passthrough_ports'] = channel_passthrough_map(files)
+        facts['channel_kinds'] = channel_kinds(files)
         facts['module_graph'] = module_graph_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。

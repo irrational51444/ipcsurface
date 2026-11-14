@@ -4590,6 +4590,19 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+class ChannelKindTests(unittest.TestCase):
+    """通道靠 handle 还是 on 注册，决定谁能调它。"""
+
+    def test_handle_is_invoke_and_on_is_send(self):
+        files = {'main.js': (
+            b'const {ipcMain: s} = require("electron");\n'
+            b's.handle("h", function () {});\n'
+            b's.on("o", function () {});\n')}
+        kinds = ipc.channel_kinds(files)
+        self.assertEqual(kinds.get('h'), 'invoke')
+        self.assertEqual(kinds.get('o'), 'send')
+
+
 class PassthroughReportTests(unittest.TestCase):
     """报告要写出「这个包有几扇后门」，而不是只存进 JSON。"""
 

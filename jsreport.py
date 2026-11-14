@@ -935,17 +935,23 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('只有三态，没有「安全」。`guard` 表示条件里有校验但 sink 在块外，'
                    '前置性未定——算进 `unknown`，不算「守住」。')
         out.append('')
-        out.append('| 通道 | 判定 | 检出的校验 | 危险调用 |')
-        out.append('| --- | --- | --- | --- |')
+        out.append('这一节列的是「本体里有危险调用的通道」。它和上面「外部输入能不能走到'
+                   '危险参数」不是同一批：一条通道可能这里判「疑似可利用」（本体没校验），'
+                   '但上面那层没把它算进高危（外部输入到不了那个参数）。两节要一起看。')
+        out.append('')
+        kinds_map = facts.get('channel_kinds') or {}
+        out.append('| 通道 | 判定 | 调用方式 | 检出的校验 | 危险调用 |')
+        out.append('| --- | --- | --- | --- | --- |')
         label = {'guarded': '有校验', 'exposed': '疑似可利用', 'unknown': '无法判定'}
         for name in sorted(san):
             item = san[name]
             checks = '、'.join('%s(%s)' % (f['kind'], f.get('target') or '—')
                                for f in item.get('sanitizers') or []) or '—'
             sinks = '、'.join('`%s`' % s for s in item.get('sinks') or []) or '—'
-            out.append('| `%s` | %s | %s | %s |'
+            kind = kinds_map.get(name) or '—'
+            out.append('| `%s` | %s | %s | %s | %s |'
                        % (name, label.get(item.get('state'), item.get('state')),
-                          checks, sinks))
+                          kind, checks, sinks))
         out.append('')
         out.append('> **没检出校验不等于没有校验。** 校验可能写在 helper 里、跨文件、'
                    '包在 Promise 链里，或者用更绕的写法——这几种一个都不认。')
@@ -955,10 +961,22 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         if real:
             sends = sum(1 for p in real if p['op'] == 'send')
             invokes = sum(1 for p in real if p['op'] == 'invoke')
+            # 透传口和通道对上：send 口只能调 send 通道，invoke 口只能调 invoke 通道
+            kinds_map2 = facts.get('channel_kinds') or {}
+            send_channels = sum(1 for k in kinds_map2.values() if k == 'send')
+            invoke_channels = sum(1 for k in kinds_map2.values() if k == 'invoke')
             out.append('**这个包有 %d 个 preload 透传口**（send %d、invoke %d）。'
-                       '透传口意味着 renderer 传什么通道就发什么通道——'
-                       '上面这张表里任何一条，只要那个窗口加载的页面不可信，都能被调到。'
                        % (len(real), sends, invokes))
+            out.append('')
+            if sends and send_channels:
+                out.append('- %d 个 send 透传口能调到 **%d 条 send 通道**；'
+                           % (sends, send_channels))
+            if invokes and invoke_channels:
+                out.append('- %d 个 invoke 透传口能调到 **%d 条 invoke 通道**。'
+                           % (invokes, invoke_channels))
+            out.append('')
+            out.append('透传口意味着 renderer 传什么通道就发什么通道——'
+                       '上面这张表里任何一条，只要那个窗口加载的页面不可信，都能被调到。')
             out.append('')
             out.append('| preload | 暴露名 | 方法 | 操作 |')
             out.append('| --- | --- | --- | --- |')

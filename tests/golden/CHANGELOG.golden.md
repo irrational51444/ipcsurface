@@ -717,3 +717,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.171.0，报告多一节「preload 透传口」并把它接进 scan_asar 的 facts，schema 契约没变但报告内容变长，golden 里 version 和 fingerprint 会变。
+
+## 2026-11-15 00:41
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.172.0，报告多一列「调用方式」（handle/on）并区分 send/invoke 透传口能调到的通道数，schema 契约没变但报告内容变化，golden 里 version 和 fingerprint 会变。
