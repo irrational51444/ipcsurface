@@ -2136,11 +2136,20 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
                 i += 1
                 continue
             cond = tokens[i + 2:close]
+            body_at = close + 1
+            # 提前 `return` / `throw` 本身就是一道闸——哪怕条件里没有形参、
+            # 也不像校验（`if (!p) return` 里的 p 可能是模块级状态）。
+            # 这种情况记 guard 而不是丢掉：丢掉等于把「有条件判断但不知道
+            # 拦什么」读成「什么都没拦」，那是漏报。
+            early_exit = (body_at < limit
+                          and tokens[body_at].text in ('return', 'throw'))
             if not _looks_like_check(cond, params):
+                if early_exit and cond:
+                    out.append({'at': tok.start, 'kind': 'guard', 'target': None,
+                                'cond': ' '.join(t.text for t in cond)[:120]})
                 i = close + 1
                 continue
             target = _param_in(cond, params)
-            body_at = close + 1
             if (body_at < limit
                     and tokens[body_at].text in ('return', 'throw')):
                 # `return` / `throw` / `return null` / `return false` 都算拒绝：
@@ -2188,6 +2197,34 @@ def find_sanitizers(tokens, start, end, params, danger_words=()):
             i += 1
             continue
         i += 1
+
+    # 短路校验：`COND && sink(...)`。JS 里极常见，sink 只在条件成立时才跑，
+    # 所以条件是它的前置。漏这一类等于把「有校验」当「没校验」——按「漏报
+    # 比错报更坏」的口径，这一类必须认。
+    for i in range(start + 1, limit - 2):
+        if tokens[i].text != '&&':
+            continue
+        j = i - 1
+        depth = 0
+        while j >= start:
+            t = tokens[j].text
+            if t in (')', ']'):
+                depth += 1
+            elif t in ('(', '['):
+                if depth == 0:
+                    break
+                depth -= 1
+            elif t in ('=', ',', ';', '&&', '||', 'return', '{', '?', ':') \
+                    and depth == 0:
+                break
+            j -= 1
+        cond = tokens[j + 1:i]
+        if not cond or not _looks_like_check(cond, params):
+            continue
+        if _has_danger(tokens, i + 1, min(i + 40, limit), danger_words):
+            out.append({'at': tokens[i].start, 'kind': 'and-guard',
+                        'target': _param_in(cond, params),
+                        'cond': ' '.join(t.text for t in cond)[:120]})
 
     # 正则校验：`let d = /re/.exec(p)`、`RE.test(p)`、`p.match(RE)`。
     # 这类在路径处理里很常见：正则不匹配就拿到 null，后面 `d[0]` 直接抛，

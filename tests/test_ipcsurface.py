@@ -4604,6 +4604,32 @@ class SanitizerDetectorTests(unittest.TestCase):
         return jssem.find_sanitizers(toks, d0['body_start'], d0['body_end'],
                                      list(d0.get('params') or []))
 
+    def test_single_param_arrow_handler_has_params(self):
+        """`async o => {...}` 没有括号，以前这里返回空形参。
+
+        形参空 → sanitizer 检测整条跳过 → 「有校验」被读成「没校验」。
+        这是实测抓到的一处漏报（obsidian 的 `register-cli`）。
+        """
+        toks_import = __import__('jsparse')
+        import ipcsurface as ipc_mod
+
+        toks = toks_import.tokenize('const h = async o => { if (!p) return; x(); }')
+        self.assertEqual(ipc_mod.handler_params(toks, 0, len(toks) - 1), ['o'],
+                         '单参箭头函数的形参要能取出来')
+
+    def test_and_guard_form(self):
+        """`COND && sink()`：sink 只在条件成立时跑，条件是它的前置。"""
+        got = self.find('function h(e, p) { typeof p === "string" && '
+                        'fs.writeFileSync(p); }')
+        self.assertIn('and-guard', [g['kind'] for g in got])
+
+    def test_early_exit_on_non_param_condition_is_guard(self):
+        """`if (!p) return` 里的 p 可能是模块级状态——记 guard，不丢。"""
+        got = self.find('function h(e, x) { if (!flag) return; '
+                        'fs.writeFileSync(x); }')
+        self.assertIn('guard', [g['kind'] for g in got],
+                      '提前 return 本身就是一道闸，条件看不懂也不能丢')
+
     def test_regex_guard_form(self):
         """正则校验：`RE.test(p)` / `p.match(RE)` / `let d = /re/.exec(p)`。
 

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.161.0'
+__version__ = '0.162.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/38'
@@ -2311,6 +2311,13 @@ def handler_params(tokens, start, end):
     while i < end and tokens[i].text not in ('(', '{'):
         i += 1
     if i >= end or tokens[i].text != '(':
+        # 单形参箭头函数没有括号：sync o => {...}。以前这里直接返回 [],
+        # 于是所有 async 单参 handler 的形参都是空的——sanitizer 检测因此
+        # 整条跳过，把「有校验」读成「没校验」，是实打实的漏报。
+        for k in range(start, min(end, start + 6)):
+            if (tokens[k].kind == 'ident'
+                    and k + 1 < len(tokens) and tokens[k + 1].text == '=>'):
+                return [tokens[k].text]
         return []
     names = []
     depth = 0

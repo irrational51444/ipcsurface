@@ -667,3 +667,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.161.0，报告字段结构没变，但 sanitizer 检出变多了（自定义谓词、throw、正则校验），三态判定随之变化，golden 里 version/fingerprint/schema 之外还会反映通道判定变化。
+
+## 2026-11-14 20:54
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.162.0，报告字段结构没变；这次修了 async 单参 handler 形参取不到导致的整条漏检、补了 && 短路和提前 return 两类校验，三态判定随之变化，golden 里 version/fingerprint 之外也会反映通道判定变化。
