@@ -2069,6 +2069,138 @@ def _same_module_only(candidates, modules, at):
     return same or candidates
 
 
+def _param_in(segment, params):
+    """这一段里第一个出现的形参名；没有就 None。"""
+    for tok in segment:
+        if tok.kind == 'ident' and tok.text in params:
+            return tok.text
+    return None
+
+
+def _looks_like_check(segment):
+    """条件里有没有「像校验」的东西。
+
+    只认四种最朴素的证据：比较运算、`typeof`、存在性判断、字符串方法。
+    光有 `if (x)` 不算——那可能只是分支，不是校验。
+    """
+    ops = {'===', '!==', '==', '!=', '>', '<', '>=', '<=', 'instanceof', 'in'}
+    words = {'typeof', 'startsWith', 'endsWith', 'includes', 'match', 'test',
+             'isAbsolute', 'normalize', 'resolve', 'realpathSync', 'existsSync',
+             'indexOf'}
+    for tok in segment:
+        if tok.text in ops or tok.text in words:
+            return True
+    return False
+
+
+def find_sanitizers(tokens, start, end, params, danger_words=()):
+    """在函数体里找校验点，只认三种最朴素的形态。
+
+    返回 [{at, kind, target, cond}]：
+
+      - `reject`：`if (COND) return`——校验失败就退出，sink 在块外；
+      - `allow`：`if (COND) { … sink … }`——校验是进入 sink 的前置条件；
+      - `allow-ternary`：`COND ? … sink … : …`——同上，写成三元。
+
+    `target` 是条件里第一个被引用的形参。找不到就记 None——
+    那说明这段校验拦的不是参数（可能是状态），要人判断。
+
+    只认这三种，是因为它们能从 token 流上确定地读出来；更绕的写法（校验在
+    helper 里、跨文件、包在 Promise 里）这里**一律不认**。没检出校验不等于
+    没有校验——这是这个函数的 refutes_if。
+    """
+    out = []
+    if not params:
+        return out
+    limit = min(end, len(tokens) - 1)
+    i = start
+    while i < limit - 2:
+        tok = tokens[i]
+        if tok.text == 'if' and tokens[i + 1].text == '(':
+            close = _close_paren(tokens, i + 1)
+            if close <= i + 2 or close >= limit:
+                i += 1
+                continue
+            cond = tokens[i + 2:close]
+            if not _looks_like_check(cond):
+                i = close + 1
+                continue
+            target = _param_in(cond, params)
+            body_at = close + 1
+            if body_at < limit and tokens[body_at].text == 'return':
+                out.append({'at': tok.start, 'kind': 'reject', 'target': target,
+                            'cond': ' '.join(t.text for t in cond)[:120]})
+                i = body_at + 1
+                continue
+            if body_at < limit and tokens[body_at].text == '{':
+                block_end = _close_paren(tokens, body_at)
+                inside = (block_end > body_at
+                          and _has_danger(tokens, body_at, block_end, danger_words))
+                out.append({'at': tok.start,
+                            'kind': 'allow' if inside else 'guard',
+                            'target': target,
+                            'cond': ' '.join(t.text for t in cond)[:120]})
+                i = max(body_at, block_end) + 1
+                continue
+            i = close + 1
+            continue
+        # 三元：COND ? A : B，A 里碰到 sink 就是放行型
+        if tok.text == '?':
+            j = i - 1
+            depth = 0
+            while j >= start:
+                if tokens[j].text in (')', ']'):
+                    depth += 1
+                elif tokens[j].text in ('(', '['):
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif tokens[j].text == '?' and depth == 0:
+                    break
+                elif tokens[j].text in ('=', ',', ';', 'return') and depth == 0:
+                    break
+                j -= 1
+            cond = tokens[j + 1:i]
+            if cond and _looks_like_check(cond):
+                colon = _ternary_colon(tokens, i, limit)
+                branch = tokens[i + 1:colon] if colon else []
+                if _has_danger(tokens, i + 1, colon or limit, danger_words):
+                    out.append({'at': tok.start, 'kind': 'allow-ternary',
+                                'target': _param_in(cond, params),
+                                'cond': ' '.join(t.text for t in cond)[:120]})
+            i += 1
+            continue
+        i += 1
+    return out
+
+
+def _ternary_colon(tokens, q_at, limit):
+    depth = 0
+    for k in range(q_at + 1, limit):
+        t = tokens[k].text
+        if t in ('(', '[', '{'):
+            depth += 1
+        elif t in (')', ']', '}'):
+            if depth == 0:
+                return None
+            depth -= 1
+        elif t == '?' and depth == 0:
+            depth += 1
+        elif t == ':' and depth == 0:
+            return k
+    return None
+
+
+def _has_danger(tokens, start, end, danger_words):
+    if not danger_words:
+        danger_words = {name for kinds in DANGER_KINDS.values() for name in kinds}
+    limit = min(end, len(tokens) - 1)
+    for i in range(start, limit):
+        if tokens[i].kind == 'ident' and tokens[i].text in danger_words:
+            return True
+    return False
+
+
 def _pick_nearest(candidates, at):
     """同名多候选里挑一个：先看前面最近的，没有就取后面最近的。
 

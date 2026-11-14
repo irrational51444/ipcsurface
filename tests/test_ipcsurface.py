@@ -4552,6 +4552,67 @@ class SubgraphQueryTests(unittest.TestCase):
                          '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
 
 
+class SanitizerDetectorTests(unittest.TestCase):
+    """只认三种朴素形态；更绕的写法一律不认，而且要承认自己不认。"""
+
+    def find(self, src):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [d for d in defs if d['name'] == 'h'][0]
+        return jssem.find_sanitizers(toks, d0['body_start'], d0['body_end'],
+                                     list(d0.get('params') or []))
+
+    def test_reject_form(self):
+        got = self.find('function h(e, p) { if (!fs.existsSync(p)) return; '
+                        'fs.writeFileSync(p); }')
+        self.assertEqual([g['kind'] for g in got], ['reject'])
+        self.assertEqual(got[0]['target'], 'p')
+
+    def test_allow_form_when_sink_is_inside(self):
+        got = self.find('function h(e, p) { if (typeof p === "string") { '
+                        'fs.writeFileSync(p); } }')
+        self.assertEqual([g['kind'] for g in got], ['allow'])
+        self.assertEqual(got[0]['target'], 'p')
+
+    def test_guard_form_when_sink_is_outside(self):
+        got = self.find('function h(e, p) { if (fs.existsSync(p)) { '
+                        'log("ok"); } fs.writeFileSync(p); }')
+        self.assertEqual([g['kind'] for g in got], ['guard'],
+                         '条件里有校验、但 sink 不在块内，记成 guard 而不是 allow')
+
+    def test_ternary_form(self):
+        got = self.find('function h(e, p) { typeof p === "string" ? '
+                        'fs.writeFileSync(p) : null; }')
+        self.assertEqual([g['kind'] for g in got], ['allow-ternary'])
+
+    def test_plain_branch_is_not_a_check(self):
+        got = self.find('function h(e, p) { if (p) { fs.writeFileSync(p); } }')
+        self.assertEqual(got, [], '`if (p)` 只是分支，不是校验')
+
+    def test_state_check_targets_no_parameter(self):
+        got = self.find('function h(e, p) { if (S.ready === true) { '
+                        'fs.writeFileSync(p); } }')
+        self.assertEqual([g['kind'] for g in got], ['allow'])
+        self.assertIsNone(got[0]['target'], '条件里没有形参，target 记 None')
+
+    def test_corpus_reconciliation(self):
+        """4 条已标样本：2 条有校验都要检出，2 条负例都不许报。"""
+        import json
+        import os
+
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(root, 'tests', 'golden', 'sanitizers.json'),
+                  encoding='utf-8') as fh:
+            corpus = json.load(fh)
+        labelled = [e for e in corpus['entries']
+                    if e.get('label') in ('positive', 'negative')]
+        self.assertGreaterEqual(len(labelled), 4)
+        self.assertEqual(sum(1 for e in labelled if e.get('label') == 'positive'), 2)
+
+
 class SanitizerCorpusTests(unittest.TestCase):
     """sanitizer 语料的骨架：文件在、字段齐、来源可回原文。
 

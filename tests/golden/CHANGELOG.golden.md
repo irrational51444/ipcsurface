@@ -652,3 +652,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.158.0，报告字段没有变化；这次给 sanitizer 语料加了 label（positive/negative/unlabelled）并补了两条负例，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 20:34
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.159.0，报告字段没有变化；这次加了 sanitizer 最小实现（reject/allow/guard/allow-ternary 四种形态）和对账文档，主链路未接，schema 契约没动，golden 里只有 version 和 fingerprint 变。
