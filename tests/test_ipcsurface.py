@@ -4432,6 +4432,76 @@ class AdversarialShapeTests(unittest.TestCase):
                     self.assertEqual(got, [], f'{name} 不该认：{why}')
 
 
+class SubgraphQueryTests(unittest.TestCase):
+    """CPG 第一步：局部子图查询要复现现有命中，而且能穿得比深度参数更深。"""
+
+    CHAIN = (
+        'const {ipcMain} = require("electron");\n'
+        'ipcMain.handle("deep-chain", function (e, p) { a(p); });\n'
+        'function a(x) { b(x); }\n'
+        'function b(y) { c(y); }\n'
+        'function c(z) { d(z); }\n'
+        'function d(w) { fs.writeFileSync(w); }\n'
+    )
+
+    def setup_chain(self):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(self.CHAIN)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(self.CHAIN)) if r['channel']]
+        span = regs[0]['span']
+        params = ipc.handler_params(toks, span[0], span[1])
+        table = jssem.assignments(toks, span[0], span[1], params)
+        dirty = jssem.tainted_names(table)
+        return toks, defs, span, dirty, jssem
+
+    def test_recursion_with_two_hops_misses_the_fifth_level(self):
+        toks, defs, span, dirty, jssem = self.setup_chain()
+        hits = jssem.interproc_taint(toks, span[0], span[1], dirty, defs, depth=2)
+        self.assertEqual(hits, [],
+                         '五层链在两跳上限下应该漏掉——这正是深度参数的问题')
+
+    def test_subgraph_reaches_the_fifth_level_without_a_depth_argument(self):
+        toks, defs, span, dirty, jssem = self.setup_chain()
+        sums = jssem.subgraph_summaries(toks, defs, [span])
+        hits = jssem.interproc_taint_via_summaries(
+            toks, span[0], span[1], dirty, defs, sums)
+        self.assertTrue(hits, '子图查询没有深度参数，应该能走到第五层')
+        self.assertIn('writeFileSync', [h[1] for h in hits])
+
+    def test_shared_helper_is_not_blamed_for_the_clean_caller(self):
+        import jsparse
+        import jssem
+
+        src = ('ipcMain.handle("c1", function (e, p) { util(p); });\n'
+               'ipcMain.handle("c2", function (e, q) { other(q); });\n'
+               'function util(v) { fs.unlinkSync(v); }\n'
+               'function other(w) { console.log(w); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        sums = jssem.subgraph_summaries(
+            toks, defs, [r['span'] for r in regs if r.get('span')])
+        got = {}
+        for reg in regs:
+            span = reg['span']
+            if not span:
+                continue
+            params = ipc.handler_params(toks, span[0], span[1])
+            table = jssem.assignments(toks, span[0], span[1], params)
+            dirty = jssem.tainted_names(table)
+            hits = jssem.interproc_taint_via_summaries(
+                toks, span[0], span[1], dirty, defs, sums)
+            got[reg['channel']] = [h[1] for h in hits]
+        self.assertIn('unlinkSync', got.get('c1') or [])
+        self.assertEqual(got.get('c2'), [],
+                         '另一个 handler 调的工具函数不碰危险接口，不能被连坐')
+
+
 class TruncationCountTests(unittest.TestCase):
     """Chain cut off by the depth cap must be counted — that is the denominator."""
 

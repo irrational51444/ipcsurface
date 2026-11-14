@@ -612,3 +612,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.150.0，报告字段没有变化；这次加了函数摘要 API 和函数体分析缓存，主链路结论不变、耗时不变，schema 契约没动，golden 里只有 version 和 fingerprint 变。
+
+## 2026-11-14 15:30
+
+- 变了的字段：fingerprint
+- 理由：只升版本号到 0.151.0，报告字段没有变化；这次加了局部子图摘要与子图可达查询（opt-in，主链路未切换），schema 契约没动，golden 里只有 version 和 fingerprint 变。

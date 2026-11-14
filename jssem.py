@@ -2036,6 +2036,123 @@ def _still_has_hop(tokens, start, end, defs, tainted=None):
     return False
 
 
+def subgraph_summaries(tokens, defs, roots, rounds=4):
+    """只对「从 roots 可达」的函数建摘要——局部子图，不是全量。
+
+    全量摘要实测是负优化（obsidian 0.3 秒变 8.4 秒），因为它把几千个函数
+    每个都扫一遍。这里分两级：
+
+      1. 轻扫：只找每个函数体里的调用点，建边（不跑数据流）；
+      2. 重扫：从 roots 沿边 BFS 拿可达集，只对可达集跑 `flows_into_danger`。
+
+    通道相关的子图通常只有几十个函数，所以重扫的代价和 handler 数量同阶，
+    跟全文件函数数无关。深度不再是参数：BFS 走完就是走完，靠 visited 防环。
+
+    roots 是 [(body_start, body_end)]，一般传 handler 的函数体。
+    """
+    by_name = {}
+    for d in defs:
+        by_name.setdefault(d['name'], d)
+    all_keys = {(d['body_start'], d['body_end']) for d in defs}
+
+    # 轻扫：每个函数体里的调用边。只认「实参正好是形参本身」的传参。
+    edges = {}
+    for d in defs:
+        key = (d['body_start'], d['body_end'])
+        params = list(d.get('params') or [])
+        if not params:
+            continue
+        limit = min(key[1], len(tokens) - 1)
+        out = []
+        for i in range(key[0], limit - 1):
+            if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+                continue
+            callee = by_name.get(tokens[i].text)
+            if not callee:
+                continue
+            ckey = (callee['body_start'], callee['body_end'])
+            if ckey == key:
+                continue
+            cparams = list(callee.get('params') or [])
+            try:
+                args, _close = _split_args(tokens, i + 1)
+            except Exception:
+                continue
+            mapping = {}
+            for pos, arg in enumerate(args):
+                if pos >= len(cparams):
+                    break
+                if len(arg) == 1 and arg[0].kind == 'ident' and arg[0].text in params:
+                    mapping[arg[0].text] = cparams[pos]
+            if mapping:
+                out.append((ckey, mapping))
+        if out:
+            edges[key] = out
+
+    # BFS：从 roots 出发能到哪些函数体。
+    # roots 里的 handler 常常是内联函数，**不是** function_defs 里的条目，
+    # 所以不能拿它自己去 all_keys 里找；要从它体内找调用目标当起点。
+    reachable = set()
+    queue = []
+    for root in roots:
+        if root in all_keys:
+            queue.append(root)
+            continue
+        limit = min(root[1], len(tokens) - 1)
+        for i in range(root[0], limit - 1):
+            if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
+                continue
+            callee = by_name.get(tokens[i].text)
+            if callee:
+                queue.append((callee['body_start'], callee['body_end']))
+    while queue:
+        key = queue.pop()
+        if key in reachable:
+            continue
+        reachable.add(key)
+        for ckey, _mapping in edges.get(key) or []:
+            if ckey not in reachable:
+                queue.append(ckey)
+
+    summaries = {}
+    for d in defs:
+        key = (d['body_start'], d['body_end'])
+        if key not in reachable:
+            continue
+        params = list(d.get('params') or [])
+        if not params:
+            summaries[key] = {'params': [], 'sinks': {}, 'calls': edges.get(key, [])}
+            continue
+        try:
+            flows = flows_into_danger(tokens, key[0], key[1], params)
+        except Exception:
+            flows = []
+        sinks = {}
+        for api, arg, line, _shape in flows:
+            if arg in params:
+                sinks.setdefault(arg, []).append((api, line))
+        summaries[key] = {'params': params, 'sinks': sinks,
+                          'calls': edges.get(key, [])}
+
+    # 组合：只在可达集内部拼接，跑到不动点
+    for _round in range(rounds):
+        changed = False
+        for key, summary in summaries.items():
+            for callee, mapping in summary['calls']:
+                target = summaries.get(callee)
+                if not target:
+                    continue
+                for src_param, dst_param in mapping.items():
+                    for api, line in target['sinks'].get(dst_param) or []:
+                        bucket = summary['sinks'].setdefault(src_param, [])
+                        if (api, line) not in bucket:
+                            bucket.append((api, line))
+                            changed = True
+        if not changed:
+            break
+    return summaries
+
+
 def function_summaries(tokens, defs, rounds=4):
     """函数摘要：每个函数的「副作用签名」，算一次、到处复用。
 
