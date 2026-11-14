@@ -345,7 +345,7 @@ def _literal_array(tokens, body_open, body_close, name):
     return []
 
 
-def module_exports(tokens, modules):
+def module_exports(tokens, modules, external_consts=None):
     """每个模块导出了什么。四种写法都认：
 
       1. `t.X = ...`           exports 形参上挂成员；
@@ -355,6 +355,9 @@ def module_exports(tokens, modules):
 
     外加一层 receiver 别名：`const e = exports; e.X = ...` 里的 `e` 也算导出对象。
     动态属性名（`t[name]`）直接放弃——静态不知道 `name` 是什么。
+
+    `external_consts` 是调用方从别的文件解出来的常量（`const K = require("./c").CH`），
+    并进本地常量表一起用。
 
     返回 {(模块 id, 出口名): (rhs tokens, 字符偏移)}。
     """
@@ -376,7 +379,7 @@ def module_exports(tokens, modules):
 
         # 同模块的字符串常量表：`const K = "x"; exports[K] = ...`。
         # 这类「动态」属性名其实算得出来——它的值就在上面几行。
-        consts = {}
+        consts = dict(external_consts or {})
         k = body_open + 1
         while k < limit:
             if tokens[k].text not in ('const', 'let', 'var'):
@@ -699,13 +702,13 @@ def require_target(rel, tokens, receiver):
             yield candidate
 
 
-def export_body(tokens, modules, rel, name):
+def export_body(tokens, modules, rel, name, external_consts=None):
     """在目标文件的导出表里找 `name`，返回它的函数体区间。
 
     只认 rhs 是函数表达式或箭头函数的情况；rhs 是个标识符（`exports.a = impl`）
     就跟一层，跟不到就返回 None——不猜。
     """
-    exports = module_exports(tokens, modules)
+    exports = module_exports(tokens, modules, external_consts)
     esm = esm_exports(tokens)
     hit = exports.get((None, name)) if False else None
     for (mid, ename), (rhs, _off) in exports.items():

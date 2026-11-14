@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.143.0'
+__version__ = '0.144.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/35'
@@ -2467,15 +2467,16 @@ def ipc_registrations_of(tokens, objects, const_strings=None):
 
 
 def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
-    """跨文件一跳：handler 指向别的文件里导出的函数，跟进去看它调了什么。
+    """跨文件：handler 指向别的文件里导出的函数，跟进去看它调了什么。
 
     两种入口：
 
       - `const h = require("./mod")` 之后 `handle("x", h.save)`；
       - `import { save } from "./mod"` 之后 `handle("x", save)`。
 
-    只做一跳：解析路径、在目标文件的导出表里找名字、拿函数体区间、扫危险调用。
-    跟不到就返回空，不猜。
+    最多两跳：`main.js -> handler.js`，再加一层 `handler.js` 里
+    `exports.save = require("./impl").save` 这种转发。第二跳只认这一种形态，
+    别的（比如 `exports.save = wrap(impl.save)`）不解——那已经不是转发了。
     """
     try:
         import jssem
@@ -2489,17 +2490,23 @@ def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
         candidates = list(jssem.require_target(rel, tokens, receiver))
         wanted = name
     else:
-        # 裸名字：可能是 `import { name } from "./m"` 带进来的。
         imported = jssem.esm_imports(tokens).get(name)
         if not imported:
             return []
-        kind, spec, original = imported
+        _kind, spec, original = imported
         candidates = jssem.resolve_required_path(rel, spec)
         wanted = original or name
     if not candidates:
         return []
     apis = []
-    for candidate in candidates:
+    seen = set()
+    pending = [(rel, candidate, wanted, 2) for candidate in candidates]
+    while pending:
+        base_rel, candidate, wanted, depth = pending.pop(0)
+        key = (candidate, wanted)
+        if key in seen or depth <= 0:
+            continue
+        seen.add(key)
         blob = files.get(candidate) if hasattr(files, 'get') else None
         if not blob:
             continue
@@ -2514,14 +2521,96 @@ def _cross_file_handler_sinks(files, rel, tokens, reg, cache):
         target_tokens, modules = entry
         if not target_tokens:
             continue
-        body = jssem.export_body(target_tokens, modules, candidate, wanted)
-        if not body:
+        extra = cross_file_consts(files, candidate, target_tokens, cache)
+        body = jssem.export_body(target_tokens, modules, candidate, wanted, extra)
+        if body:
+            for i in range(body[0], min(body[1] + 1, len(target_tokens) - 1)):
+                hit = jssem.danger_at(target_tokens, i, body[1] + 1)
+                if hit and hit[0] and hit[0] not in apis:
+                    apis.append(hit[0])
             continue
-        for i in range(body[0], min(body[1] + 1, len(target_tokens) - 1)):
-            hit = jssem.danger_at(target_tokens, i, body[1] + 1)
-            if hit and hit[0] and hit[0] not in apis:
-                apis.append(hit[0])
+        # 第二跳：`exports.save = require("./impl").save` 这种纯转发。
+        forwarded = _forwarded_export(target_tokens, modules, wanted, extra)
+        if forwarded:
+            spec2, name2 = forwarded
+            for cand2 in jssem.resolve_required_path(candidate, spec2):
+                pending.append((candidate, cand2, name2, depth - 1))
     return apis
+
+
+def _forwarded_export(tokens, modules, name, external_consts=None):
+    """导出项的值就是 `require("./x").name` 时，返回 (spec, name)。
+
+    只认这一个形状。夹了调用、三元、拼接的都不算转发——那种得分析表达式。
+    """
+    try:
+        import jssem
+    except ImportError:
+        return None
+    exports = jssem.module_exports(tokens, modules, external_consts)
+    for (_mid, ename), (rhs, _off) in exports.items():
+        if ename != name:
+            continue
+        if (len(rhs) >= 6 and rhs[0].kind == 'ident' and rhs[0].text == 'require'
+                and rhs[1].text == '(' and rhs[2].kind == 'string'
+                and rhs[3].text == ')' and rhs[4].text == '.'
+                and rhs[5].kind == 'ident'):
+            return rhs[2].text.strip('"\'`'), rhs[5].text
+    return None
+
+
+def cross_file_consts(files, rel, tokens, cache):
+    """把 `const K = require("./c").CH_NAME` 解成 K 的值。
+
+    只解一层、只解「目标文件里那个名字是字符串字面量」的情况。
+    多一层调用、或者值是表达式，都返回空——这一层不做传递闭包。
+
+    返回 {本地名: 值}，喂给 `module_exports(external_consts=...)`。
+    """
+    try:
+        import jssem
+    except ImportError:
+        return {}
+    out = {}
+    n = len(tokens)
+    for i in range(n - 9):
+        if tokens[i].text not in ('const', 'let', 'var'):
+            continue
+        if tokens[i + 1].kind != 'ident' or tokens[i + 2].text != '=':
+            continue
+        if tokens[i + 3].kind != 'ident' or tokens[i + 3].text != 'require':
+            continue
+        if tokens[i + 4].text != '(' or tokens[i + 5].kind != 'string':
+            continue
+        if (tokens[i + 6].text != ')' or tokens[i + 7].text != '.'
+                or tokens[i + 8].kind != 'ident'):
+            continue
+        local = tokens[i + 1].text
+        spec = tokens[i + 5].text.strip('"\'`')
+        wanted = tokens[i + 8].text
+        for candidate in jssem.resolve_required_path(rel, spec):
+            blob = files.get(candidate) if hasattr(files, 'get') else None
+            if not blob:
+                continue
+            entry = cache.get(candidate)
+            if entry is None:
+                try:
+                    target_tokens = jssem_tokens_of(candidate, blob)
+                    entry = (target_tokens, jssem.find_modules(target_tokens))
+                except Exception:
+                    entry = (None, None)
+                cache[candidate] = entry
+            target_tokens, modules = entry
+            if not target_tokens:
+                continue
+            exports = jssem.module_exports(target_tokens, modules)
+            for (_mid, ename), (rhs, _off) in exports.items():
+                if ename == wanted and len(rhs) == 1 and rhs[0].kind == 'string':
+                    out[local] = rhs[0].text.strip('"\'`')
+                    break
+            if local in out:
+                break
+    return out
 
 
 def jssem_tokens_of(rel, blob):

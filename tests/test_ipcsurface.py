@@ -4209,6 +4209,58 @@ class CrossFileHandlerTests(unittest.TestCase):
                          '包名在包里没有源文件，硬解析只会猜错')
 
 
+    def test_two_hop_through_pure_forwarding(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'const h = require("./handler");\n'
+                        b'ipcMain.handle("two-hop", h.save);\n'),
+            'handler.js': b'e.exports.save = require("./impl").save;\n',
+            'impl.js': b'e.exports.save = function (p) { fs.writeFileSync(p); };\n',
+        }
+        got = self.sinks(files)
+        apis = [row[0] for row in got.get('two-hop') or []]
+        self.assertIn('writeFileSync', apis,
+                      '纯转发（重新导出）要跟到第二跳')
+
+    def test_wrapped_forwarding_is_not_followed(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'const h = require("./handler");\n'
+                        b'ipcMain.handle("wrapped", h.save);\n'),
+            'handler.js': b'e.exports.save = wrap(require("./impl").save);\n',
+            'impl.js': b'e.exports.save = function (p) { fs.writeFileSync(p); };\n',
+        }
+        got = self.sinks(files)
+        self.assertNotIn('wrapped', got,
+                         '包了一层调用的不是转发，跟进去等于猜')
+
+    def test_cross_file_constant_is_resolved(self):
+        files = {
+            'handler.js': (b'const K = require("./consts").CH_NAME;\n'
+                           b'e.exports[K] = function (p) { fs.writeFileSync(p); };\n'),
+            'consts.js': b'e.exports.CH_NAME = "fileSave";\n',
+        }
+        import jsparse
+
+        toks = jsparse.tokenize(files['handler.js'].decode())
+        got = ipc.cross_file_consts(files, 'handler.js', toks, {})
+        self.assertEqual(got, {'K': 'fileSave'},
+                         '`const K = require("./c").X` 的值要能解出来')
+
+    def test_handler_resolves_through_cross_file_constant(self):
+        files = {
+            'main.js': (b'const {ipcMain} = require("electron");\n'
+                        b'const h = require("./handler");\n'
+                        b'ipcMain.handle("via-const", h.fileSave);\n'),
+            'handler.js': (b'const K = require("./consts").CH_NAME;\n'
+                           b'e.exports[K] = function (p) { fs.writeFileSync(p); };\n'),
+            'consts.js': b'e.exports.CH_NAME = "fileSave";\n',
+        }
+        got = self.sinks(files)
+        apis = [row[0] for row in got.get('via-const') or []]
+        self.assertIn('writeFileSync', apis,
+                      '导出名来自另一个文件的常量时，整条链也要通')
+
     def test_esm_imported_handler_is_followed(self):
         files = {
             'main.js': (b'import { save } from "./handler.js";\n'
