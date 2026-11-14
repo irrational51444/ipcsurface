@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.145.0'
+__version__ = '0.146.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/35'
+SCHEMA_VERSION = 'ipcsurface/asar/36'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2278,6 +2278,7 @@ def channel_taint_map(files, max_files=12):
         return None
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
     out = {}
+    taint_truncated = []   # 深度到顶、但明明还有下一跳的链
     for rel in with_ipc[:max_files]:
         text = files[rel].decode('utf-8', 'ignore')
         try:
@@ -2302,7 +2303,11 @@ def channel_taint_map(files, max_files=12):
                 # L3：同一个包里，干净值经过一次本文件函数调用之后还脏不脏。
                 table = jssem.assignments(tokens, span[0], span[1], params)
                 dirty = jssem.tainted_names(table)
-                deep = jssem.interproc_taint(tokens, span[0], span[1], dirty, defs)
+                truncated = []
+                deep = jssem.interproc_taint(tokens, span[0], span[1], dirty, defs,
+                                             _truncated=truncated)
+                if truncated:
+                    taint_truncated.extend(truncated)
             except Exception:
                 continue
             if flows:
@@ -2617,6 +2622,59 @@ def jssem_tokens_of(rel, blob):
     import jsparse
     text = blob.decode('utf-8', 'ignore')
     return jsparse.tokenize(text)
+
+
+def taint_truncation_count(files, max_files=12):
+    """有多少条链因为深度上限断了。
+
+    这是「看不见的那部分」的分母。报告里没有它，读者就不知道 47 条通道
+    背后还有没有没跟完的——知道停在哪儿，比多走一步有用。
+
+    只数「明明还有下一跳、但深度用完了」的：没有下一跳的不算截断。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return None
+    names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
+    with_ipc = [rel for rel in names if b'electron' in files[rel]]
+    if not with_ipc:
+        return 0
+    with_ipc.sort(key=lambda rel: -len(files[rel] or b''))
+    total = 0
+    for rel in with_ipc[:max_files]:
+        text = files[rel].decode('utf-8', 'ignore')
+        try:
+            tokens = jsparse.tokenize(text)
+            objects = parse_object_literals(text)
+            defs = jsparse.function_defs(tokens)
+            regs = [r for r in ipc_registrations_of(tokens, objects)
+                    if r['channel']]
+        except Exception:
+            continue
+        for reg in regs:
+            span = reg.get('span')
+            if not span and reg.get('target'):
+                for item in defs:
+                    if item['name'] == reg['target']:
+                        span = (item['body_start'], item['body_end'])
+                        break
+            if not span:
+                continue
+            try:
+                params = handler_params(tokens, span[0], span[1])
+                table = jssem.assignments(tokens, span[0], span[1], params)
+                dirty = jssem.tainted_names(table)
+                if not dirty:
+                    continue
+                truncated = []
+                jssem.interproc_taint(tokens, span[0], span[1], dirty, defs,
+                                      _truncated=truncated)
+                total += len(truncated)
+            except Exception:
+                continue
+    return total
 
 
 def code_snippet(text, offset, span=48, limit=None, floor=None):
@@ -4788,6 +4846,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_tainted'] = channel_taint_map(files)
         facts['channel_path_taint'] = channel_path_taint_map(files)
         facts['channel_state_writes'] = channel_state_writes_map(files)
+        facts['taint_truncated'] = taint_truncation_count(files)
         facts['module_graph'] = module_graph_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。

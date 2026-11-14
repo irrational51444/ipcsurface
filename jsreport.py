@@ -1068,6 +1068,15 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('> 判据只有一种：外部输入经赋值、回调、循环变量、catch 变量流到危险参数。'
                    '跨函数传参只跟到形参对应的实参，不做完整的别名分析。')
+        truncated = facts.get('taint_truncated')
+        if truncated:
+            out.append('>')
+            out.append(f'> **深度上限截断了 {truncated} 条链。** 跨函数只跟两跳；'
+                       '这些链在第二跳处明明还有下一跳，但没往下走。'
+                       '它们算「没跟完」，不算「没有」。')
+        elif truncated == 0:
+            out.append('>')
+            out.append('> 深度上限（两跳）没有截断任何链：这个包里没有需要第三跳的。')
         out.append('')
 
     state_writes = facts.get('channel_state_writes') or {}

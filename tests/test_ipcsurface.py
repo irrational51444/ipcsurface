@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/35')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/36')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4377,6 +4377,37 @@ class IpcAliasTests(unittest.TestCase):
         aliases, _regs = self.analyse(
             'const {ipcMain: a} = require("./my-own-ipc"); a.handle("x", () => {});')
         self.assertEqual(aliases, set(), '不是从 electron 拿的，不算')
+
+
+class TruncationCountTests(unittest.TestCase):
+    """Chain cut off by the depth cap must be counted — that is the denominator."""
+
+    def run_taint(self, src, depth=2):
+        import jsparse
+        import jssem
+
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        d0 = [d for d in defs if d['name'] == 'h'][0]
+        truncated = []
+        hits = jssem.interproc_taint(toks, d0['body_start'], d0['body_end'],
+                                     {'p'}, defs, depth=depth,
+                                     _truncated=truncated)
+        return hits, truncated
+
+    def test_hop_beyond_depth_is_counted(self):
+        src = ('function h(e, p) { a(p); }'
+               'function a(x) { b(x); }'
+               'function b(y) { c(y); }'
+               'function c(z) { m.writeFileSync(z); }')
+        _hits, truncated = self.run_taint(src, depth=2)
+        self.assertTrue(truncated, '两跳用完之后还有下一跳，这一条必须记成截断')
+
+    def test_no_hop_left_is_not_truncation(self):
+        src = ('function h(e, p) { a(p); }'
+               'function a(x) { m.writeFileSync(x); }')
+        _hits, truncated = self.run_taint(src, depth=2)
+        self.assertEqual(truncated, [], '到头了不是被砍断，别记成截断')
 
 
 class ModuleExportTests(unittest.TestCase):
