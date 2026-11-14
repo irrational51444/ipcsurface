@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/38')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/39')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4588,6 +4588,43 @@ class OnDemandDepthTests(unittest.TestCase):
                              b'function d(w) { fs.writeFileSync(w); }\n')}
         facts = ipc.scan_asar(files)
         self.assertIn('taint_truncated', facts)
+
+
+class PassthroughPortTests(unittest.TestCase):
+    """preload 的任意通道透传口：这是整张 IPC 表一起暴露，比单条通道更危险。"""
+
+    def ports(self, src):
+        import jsparse
+        import jssem
+
+        return jssem.passthrough_ports(jsparse.tokenize(src))
+
+    def test_variable_channel_is_a_port(self):
+        src = ('contextBridge.exposeInMainWorld("EAPI", {'
+               ' sendToMain: ({channel: e, data: n}) => ipc.send(e, n) })')
+        got = self.ports(src)
+        self.assertEqual([(g['exposed'], g['method'], g['op']) for g in got],
+                         [('EAPI', 'sendToMain', 'send')])
+
+    def test_literal_channel_is_not_a_port(self):
+        src = ('contextBridge.exposeInMainWorld("AclosApi", {'
+               ' call: e => ipc.invoke("WebviewCall", e) })')
+        self.assertEqual(self.ports(src), [],
+                         '通道写死的方法只能传数据，不是透传口')
+
+    def test_namespace_constant_is_not_a_port(self):
+        src = ('contextBridge.exposeInMainWorld("S", {'
+               ' sendScope: () => ipc.send(IPCChannel.SCOPE, {}) })')
+        self.assertEqual(self.ports(src), [],
+                         '`IPCChannel.SCOPE` 是常量引用，通道其实写死了')
+
+    def test_identifier_object_is_resolved(self):
+        src = ('const api = { sendToMain: (e, n) => ipc.send(e, n) };\n'
+               'contextBridge.exposeInMainWorld("EAPI", api)')
+        got = self.ports(src)
+        self.assertEqual([(g['exposed'], g['method']) for g in got],
+                         [('EAPI', 'sendToMain')],
+                         '暴露的是变量时，要跟到同文件里的对象字面量')
 
 
 class RealPackageRegressionTests(unittest.TestCase):

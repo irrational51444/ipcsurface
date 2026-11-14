@@ -1803,6 +1803,120 @@ def module_aliases(tokens):
             j -= 1
     return aliases
 
+def passthrough_ports(tokens):
+    """找 preload 里把**参数直接塞进 ipcRenderer** 的方法——任意通道透传口。
+
+    危险形态长这样：
+
+        sendToMain: ({channel: e, data: n}) => { ipcRenderer.send(e, n) }
+
+    第一个实参是变量而不是字符串字面量，意味着 renderer 传什么通道就发什么通道。
+    对比安全的写法：
+
+        call: e => ipcRenderer.invoke("固定通道", e)
+
+    这里通道写死，renderer 只能传数据。
+
+    返回 [{exposed, method, op, raw, where}]，`op` 是 send / invoke / sendSync。
+    只认 `exposeInMainWorld("X", {...})` 和 `exposeInMainWorld("X", IDENT)`
+    （IDENT 是同文件里的对象字面量）。跟不到对象体的记成 `unresolved`。
+    """
+    out = []
+    n = len(tokens)
+    i = 0
+    while i < n - 4:
+        if tokens[i].text != 'exposeInMainWorld':
+            i += 1
+            continue
+        if tokens[i + 1].text != '(' or tokens[i + 2].kind != 'string':
+            i += 1
+            continue
+        exposed = tokens[i + 2].text.strip('"\'`')
+        j = i + 4
+        if j < n and tokens[j].text == ')':
+            i = j
+            continue
+        body_at = None
+        if tokens[j].text == '{':
+            body_at = j
+        elif tokens[j].kind == 'ident':
+            name = tokens[j].text
+            # 往前找同名对象的字面量定义
+            for k in range(0, i):
+                if (tokens[k].kind == 'ident' and tokens[k].text == name
+                        and k + 1 < n and tokens[k + 1].text == '='
+                        and k + 2 < n and tokens[k + 2].text == '{'):
+                    body_at = k + 2
+                    break
+        if body_at is None:
+            out.append({'exposed': exposed, 'method': None, 'op': None,
+                        'raw': 'unresolved', 'where': tokens[i].start})
+            i += 1
+            continue
+        body_end = _close_paren(tokens, body_at)
+        if body_end <= body_at:
+            i += 1
+            continue
+        # 对象体里每个 `名字 : (…) => …` 或 `名字 : function (…) {…}`
+        k = body_at + 1
+        while k < body_end - 2:
+            if tokens[k].kind not in ('ident', 'string') or tokens[k + 1].text != ':':
+                k += 1
+                continue
+            method = tokens[k].text.strip('"\'`')
+            start = k + 2
+            # 先算出这个字段的结尾，再扫——不先算范围的话，
+            # `call: e => invoke("固定", e)` 会把后面字段里的 `send(变量)`
+            # 也算到自己头上，方法名和形态错配。
+            depth = 0
+            q = start
+            while q < body_end and q < len(tokens):
+                t = tokens[q].text
+                if t in ('(', '[', '{'):
+                    depth += 1
+                elif t in (')', ']', '}'):
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif t == ',' and depth == 0:
+                    break
+                q += 1
+            hit = _scan_for_call(tokens, start, q)
+            if hit:
+                op, arg_is_variable, raw = hit
+                out.append({'exposed': exposed, 'method': method, 'op': op,
+                            'raw': raw,
+                            'where': tokens[k].start,
+                            'channel_is_variable': arg_is_variable})
+            k = q + 1
+        # 必须保证往前走：`_close_paren` 找不到配对时可能返回比 i 小的值，
+        # 直接 `i = body_end + 1` 会退回去，外层 while 变死循环（实测跑超时 10 分钟）。
+        i = max(i + 1, body_end + 1)
+    return out
+
+
+def _scan_for_call(tokens, start, end):
+    """从 start 往后找 ipcRenderer 的那三种调用；返回 (op, 首参是否变量, 原文)。"""
+    limit = min(end, len(tokens) - 3)
+    for k in range(start, limit):
+        if tokens[k].text not in ('send', 'invoke', 'sendSync'):
+            continue
+        if tokens[k + 1].text != '(':
+            continue
+        arg = tokens[k + 2]
+        if arg.kind == 'string':
+            continue          # 通道写死，安全
+        if arg.kind != 'ident':
+            continue
+        # `IPCChannel.RENDERER_START` 这种是常量引用，通道其实写死了；
+        # Sentry 的 preload 就是这么写的，一开始被全报成透传口。
+        if k + 3 < len(tokens) and tokens[k + 3].text == '.':
+            continue
+        raw = ' '.join(t.text for t in tokens[k:k + 6])[:80]
+        return tokens[k].text, True, raw
+    return None
+
+
 def _close_paren(tokens, index):
     """index 指向左括号，返回配对的右括号下标。找不到就返回末尾。"""
     depth = 0

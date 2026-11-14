@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.169.0'
+__version__ = '0.170.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/38'
+SCHEMA_VERSION = 'ipcsurface/asar/39'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -2853,6 +2853,42 @@ def channel_sanitizer_map(files, max_files=12):
     return out
 
 
+def channel_passthrough_map(files, max_files=40):
+    """preload 里有没有「任意通道透传口」。
+
+    `sendToMain: ({channel, data}) => ipcRenderer.send(channel, data)` 这种写法，
+    renderer 传什么通道就发什么通道——它把整张 IPC 表都暴露了，
+    比任何单条通道的危险都大。
+
+    只扫含 `contextBridge` 的文件；返回 [{file, exposed, method, op, raw, where}]。
+    """
+    try:
+        import jsparse
+        import jssem
+    except ImportError:
+        return []
+    names = [rel for rel in files.keys()
+             if rel.endswith('.js') and files[rel] and b'contextBridge' in files[rel]]
+    if not names:
+        return []
+    names.sort(key=lambda rel: -len(files[rel] or b''))
+    out = []
+    for rel in names[:max_files]:
+        try:
+            tokens = jsparse.tokenize(files[rel].decode('utf-8', 'ignore'))
+        except Exception:
+            continue
+        try:
+            ports = jssem.passthrough_ports(tokens)
+        except Exception:
+            continue
+        for item in ports:
+            item = dict(item)
+            item['file'] = rel
+            out.append(item)
+    return out
+
+
 def taint_truncation_count(files, max_files=12):
     """有多少条链因为深度上限断了。
 
@@ -5080,6 +5116,7 @@ def analyse_asar(path, allow_eval=True, max_passes=1, events=None):
         facts['channel_state_writes'] = channel_state_writes_map(files)
         facts['taint_truncated'] = taint_truncation_count(files)
         facts['channel_sanitizers'] = channel_sanitizer_map(files)
+        facts['passthrough_ports'] = channel_passthrough_map(files)
         facts['module_graph'] = module_graph_map(files)
         # 哪条结论的实参是外部给的。键是 (通道, API)，值是脏实参名。
         # 这层叫「零跳污点」：只看实参是不是直接来自 IPC 参数，中间不跟函数调用。

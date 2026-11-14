@@ -707,3 +707,8 @@
 
 - 变了的字段：fingerprint
 - 理由：只升版本号到 0.169.0，报告字段结构没变；这次修了形参列表解析（外层括号 + 箭头函数）和 let 遮蔽两处污点缺陷，ACLOS 高危通道从 4 条变 2 条、与人工核对一致，golden 里 version/fingerprint 之外也反映通道变化。
+
+## 2026-11-14 23:34
+
+- 变了的字段：fingerprint, schema
+- 理由：facts 多一个 passthrough_ports 键（preload 里把通道变量直接塞进 ipcRenderer 的方法），schema 从 asar/38 升到 asar/39。下游按 asar/38 读不到这个键。

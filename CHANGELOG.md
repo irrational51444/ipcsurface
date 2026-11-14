@@ -2,6 +2,52 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.170.0 — 补上 preload 透传口识别：整张 IPC 表一起暴露的那种
+
+上一版查 ACLOS 的利用链时发现工具缺一层：它能列出 `exposeInMainWorld` 的名字，
+但不看这些对象里的方法是不是**任意通道透传**。而那才是最大的口子。
+
+### 判据
+
+```js
+// 透传口：通道是变量，renderer 传什么就发什么
+sendToMain: ({channel, data}) => ipcRenderer.send(channel, data)
+
+// 不是透传口：通道写死
+call: e => ipcRenderer.invoke("WebviewCall", e)
+
+// 也不是：命名空间常量其实是常量
+sendScope: () => ipcRenderer.send(IPCChannel.SCOPE, {})
+```
+
+第三条一开始没认出来，Sentry 的 preload 报了 12 个假透传口。
+`IPCChannel.SCOPE` 是 `ident . ident`，通道写死了，不算。
+
+### ACLOS 实测：5 个真透传口
+
+| preload | 暴露名 | 方法 | 操作 |
+| --- | --- | --- | --- |
+| `webview-browser-proload.js` | `webViewApi` | `sendToMain` | send |
+| `webview-browser-proload.js` | `webViewApi` | **`invoke`** | **invoke** |
+| `career-webview-preload.js` | `webViewApi` | **`invoke`** | **invoke** |
+| `web-ipc-preload.js` | `AclosApi` | `webviewSend` | send |
+| `common-browser-preload.js` | `EAPI` | `sendToMain` | send |
+
+**`invoke` 透传存在** —— 这正好补上了上一版缺的那环：`uploadLogArchive` 是
+`ipcMain.handle`（要 invoke），现在有入口了。
+
+`AclosApi.call`（`invoke("WebviewCall", e)`）正确判成非透传口。
+
+### 两个坑
+
+1. **死循环**：`_close_paren` 找不到配对时返回比 `i` 小的值，`i = body_end + 1`
+   会往回退，外层 `while` 转不停。实测跑满 10 分钟超时。改成 `i = max(i + 1, body_end + 1)`。
+2. **方法名错配**：先扫再算字段范围，`call: e => invoke("固定", e)` 会把后面字段的
+   `send(变量)` 算到自己头上。改成先算字段结尾再扫。
+
+`schema` 升到 `ipcsurface/asar/39`（facts 多一个 `passthrough_ports`）。
+用例 589 → 593。
+
 ## 0.169.0 — 真包 4 报 2 真 2 假，修完 2 报 2 真
 
 爸爸拿 ACLOS 真包人工核了那 4 条高危：**2 条真、2 条假**。两个误报根因都查到位了，
