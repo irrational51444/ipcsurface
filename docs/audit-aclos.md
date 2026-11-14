@@ -167,3 +167,65 @@ Sentry 的常量通道不再误报。
 **还没做的**：把「透传口」和「通道」关联起来——现在报告分两节列，读者得自己连。
 理想形态是「这条通道能被哪些透传口调到」，那需要把 preload 挂到窗口、窗口挂到 URL，
 静态做不完整。
+
+## 八、最后一环：那些页面加载的是固定地址
+
+上一节把 preload 挂到了窗口文件上，但还差一环：那个窗口加载什么 URL。
+
+### `common-browser.js`
+
+```js
+const t = isDev ? "https://aclos.val.qq.com/common_browser.html"
+                : "app://aclos.val.qq.com/common_browser.html"
+new BrowserWindow({ frame: false, ..., webPreferences: {
+  nodeIntegration: false, contextIsolation: true,
+  preload: path.join(__dirname, "../preload/common-browser-preload.js") } })
+// 后面 loadURL(`${t}?moduleId=${e}`)
+```
+
+**地址是写死的**，不来自 IPC 参数。`EAPI.sendToMain` 挂在
+`common_browser.html` 这个固定本地页面上。
+
+所以 `deleteCorruptFile` 那条链的前提是：**那个页面自己出问题**（XSS、或被加载的远程内容污染）。
+
+### 这个包有一份 URL 策略模块
+
+`modules/web-url-policy.js`，质量不差：
+
+```js
+const INTERNAL_WEB_ROOT_DOMAINS = ["qq.com", "tencent.com"]
+
+classifyExternalWebUrl(url):
+  - 非 http/https        → REJECT
+  - 带 username/password → REJECT
+  - https 且 hostname 属于 qq.com / tencent.com → INTERNAL
+  - 其余 → EXTERNAL（交给系统浏览器）
+
+isAllowedLocalAppUrl(url):
+  - 必须 app: 协议
+  - hostname 必须是 aclos.val.qq.com 或 "."
+```
+
+协议白名单、凭据拒绝、内外部域名分类——该有的都有。
+
+### 但 `isAllowedLocalAppUrl` 允许 hostname 为 `"."`
+
+```js
+"app:" !== e.protocol → false
+"aclos.val.qq.com" === e.hostname || "." === e.hostname
+```
+
+`app://./xxx` 的 hostname 就是 `"."`。这一条是为什么留的？如果 `app:` 协议处理器把
+`app://./` 解析到当前目录，那么 `app://./../../任意.js` 这类写法能不能读到包外的东西，
+取决于 `app://` 的注册实现。**这一条值得单独验，我没做。**
+
+### 结论收口
+
+| 问题 | 结论 |
+| --- | --- |
+| `deleteCorruptFile` 本身有没有校验 | **没有**（参数直接 `unlinkSync`） |
+| 谁能调到它 | `EAPI.sendToMain`（send 透传口），挂在 `common_browser.html` |
+| 那个页面从哪来 | **写死的** `app://aclos.val.qq.com/common_browser.html` |
+| 所以能利用吗 | **取决于那个页面有没有 XSS**，静态答不了 |
+
+报告里那句「要跑起来才知道」，指的就是这一格。
