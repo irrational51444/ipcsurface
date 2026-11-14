@@ -4472,6 +4472,26 @@ class SubgraphQueryTests(unittest.TestCase):
         self.assertTrue(hits, '子图查询没有深度参数，应该能走到第五层')
         self.assertIn('writeFileSync', [h[1] for h in hits])
 
+    def test_ambiguous_name_picks_nearest_and_is_counted(self):
+        import jsparse
+        import jssem
+
+        src = ('function f(x) { g(x); }\n'
+               'ipcMain.handle("c", function (e, p) { f(p); });\n'
+               'function f(y) { fs.unlinkSync(y); }\n'
+               'function g(z) { fs.writeFileSync(z); }\n')
+        toks = jsparse.tokenize(src)
+        defs = jsparse.function_defs(toks)
+        regs = [r for r in ipc.ipc_registrations_of(
+            toks, ipc.parse_object_literals(src)) if r['channel']]
+        span = regs[0]['span']
+        stats = {}
+        jssem.subgraph_summaries(toks, defs, [span], stats_out=stats)
+        self.assertEqual(stats.get('ambiguous_names'), 1,
+                         '同名两个 f 要算一对歧义名')
+        self.assertGreaterEqual(stats.get('edges_ambiguous', 0), 1,
+                                '靠「最近候选」建的边必须单独计数，不能混进确定边')
+
     def test_shared_helper_is_not_blamed_for_the_clean_caller(self):
         import jsparse
         import jssem

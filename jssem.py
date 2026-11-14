@@ -2036,7 +2036,21 @@ def _still_has_hop(tokens, start, end, defs, tainted=None):
     return False
 
 
-def subgraph_summaries(tokens, defs, roots, rounds=4):
+def _pick_nearest(candidates, at):
+    """同名多候选里挑一个：先看前面最近的，没有就取后面最近的。
+
+    压缩产物里 `f` 会被复用上百次，这一步一定可能挑错。挑错比不挑更坏还是
+    更不坏，取决于用在哪——这里用，是因为不建边的话跨文件那条链整条断掉，
+    而建了错边最多多一条假阳性，并且会被单独计数。
+    """
+    before = [d for d in candidates if d['body_start'] <= at]
+    if before:
+        return before[-1]
+    after = [d for d in candidates if d['body_start'] > at]
+    return after[0] if after else None
+
+
+def subgraph_summaries(tokens, defs, roots, rounds=4, stats_out=None):
     """只对「从 roots 可达」的函数建摘要——局部子图，不是全量。
 
     全量摘要实测是负优化（obsidian 0.3 秒变 8.4 秒），因为它把几千个函数
@@ -2050,10 +2064,20 @@ def subgraph_summaries(tokens, defs, roots, rounds=4):
 
     roots 是 [(body_start, body_end)]，一般传 handler 的函数体。
     """
-    by_name = {}
+    # 同名多候选：压缩产物里 `f`、`y`、`m` 这些名字会被复用上百次，
+    # `by_name` 只留第一个等于在猜「调用的是哪一个」。按纪律，猜的那条边不建，
+    # 但要记账——「没连」和「连错了」是两件事，后者更坏。
+    name_defs = {}
     for d in defs:
-        by_name.setdefault(d['name'], d)
+        name_defs.setdefault(d['name'], []).append(d)
     all_keys = {(d['body_start'], d['body_end']) for d in defs}
+    stats = {'ambiguous_names': 0,
+             'edges_skipped': 0,
+             'edges_built': 0,
+             'edges_ambiguous': 0}
+    for name, items in name_defs.items():
+        if len(items) > 1:
+            stats['ambiguous_names'] += 1
 
     # 轻扫：每个函数体里的调用边。只认「实参正好是形参本身」的传参。
     edges = {}
@@ -2067,9 +2091,17 @@ def subgraph_summaries(tokens, defs, roots, rounds=4):
         for i in range(key[0], limit - 1):
             if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
                 continue
-            callee = by_name.get(tokens[i].text)
-            if not callee:
+            candidates = name_defs.get(tokens[i].text)
+            if not candidates:
                 continue
+            # 同名多候选：取「离调用点最近的那个前辈，没有就取最近的后来者」。
+            # 这和 handler 按名字找函数体用的是同一条启发式，不是新发明；
+            # 但它是**猜**，所以单独计数（edges_ambiguous），报告里能看见。
+            callee = _pick_nearest(candidates, i)
+            if callee is None:
+                continue
+            if len(candidates) > 1:
+                stats['edges_ambiguous'] += 1
             ckey = (callee['body_start'], callee['body_end'])
             if ckey == key:
                 continue
@@ -2086,6 +2118,7 @@ def subgraph_summaries(tokens, defs, roots, rounds=4):
                     mapping[arg[0].text] = cparams[pos]
             if mapping:
                 out.append((ckey, mapping))
+                stats['edges_built'] += 1
         if out:
             edges[key] = out
 
@@ -2102,9 +2135,14 @@ def subgraph_summaries(tokens, defs, roots, rounds=4):
         for i in range(root[0], limit - 1):
             if tokens[i].kind != 'ident' or tokens[i + 1].text != '(':
                 continue
-            callee = by_name.get(tokens[i].text)
-            if callee:
-                queue.append((callee['body_start'], callee['body_end']))
+            candidates = name_defs.get(tokens[i].text)
+            if candidates:
+                callee = _pick_nearest(candidates, i)
+                if callee:
+                    if len(candidates) > 1:
+                        # handler 体内的调用也算：这里同样是在猜候选。
+                        stats['edges_ambiguous'] += 1
+                    queue.append((callee['body_start'], callee['body_end']))
     while queue:
         key = queue.pop()
         if key in reachable:
@@ -2135,6 +2173,8 @@ def subgraph_summaries(tokens, defs, roots, rounds=4):
                           'calls': edges.get(key, [])}
 
     # 组合：只在可达集内部拼接，跑到不动点
+    if stats_out is not None:
+        stats_out.update(stats)
     for _round in range(rounds):
         changed = False
         for key, summary in summaries.items():
