@@ -958,7 +958,7 @@ class ConfidenceTests(unittest.TestCase):
                 except OSError:
                     pass
         # 人看得见的那几节，机器也得看得见
-        self.assertEqual(data['schema'], 'ipcsurface/asar/36')
+        self.assertEqual(data['schema'], 'ipcsurface/asar/37')
         self.assertIn('limits', data)
         # empty-allowed: 两侧都为空时也算一致，这条比的是集合相等不是数量
         self.assertTrue(any('未知' in line for line in data['limits']))
@@ -4461,6 +4461,23 @@ class TruncationCountTests(unittest.TestCase):
                'function a(x) { m.writeFileSync(x); }')
         _hits, truncated = self.run_taint(src, depth=2)
         self.assertEqual(truncated, [], '到头了不是被砍断，别记成截断')
+
+    def test_hop_without_dirty_argument_is_not_truncation(self):
+        src = ('function h(e, p) { a(p); }'
+               'function a(x) { b(); }'
+               'function b(y) { m.writeFileSync(y); }')
+        _hits, truncated = self.run_taint(src, depth=1)
+        self.assertEqual(truncated, [],
+                         '调用了但没把脏值传进去，不算被深度砍断')
+
+    def test_facts_carry_the_truncation_count(self):
+        files = {'main.js': (b'const {ipcMain} = require("electron");\n'
+                             b'ipcMain.handle("x", function (e, p) {'
+                             b' a(p); });\n'
+                             b'function a(x) { m.writeFileSync(x); }\n')}
+        facts = ipc.scan_asar(files)
+        self.assertIn('taint_truncated', facts,
+                      '报告要读这个键，缺了就是 KeyError 或者整行消失')
 
 
 class ModuleExportTests(unittest.TestCase):

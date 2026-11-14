@@ -36,10 +36,10 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.148.0'
+__version__ = '0.149.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
-SCHEMA_VERSION = 'ipcsurface/asar/36'
+SCHEMA_VERSION = 'ipcsurface/asar/37'
 
 from jslabels import (DANGER_KIND_MAP, HARVEST_GRADES,  # noqa: E402
                       danger_kind_of)
@@ -1663,6 +1663,9 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
         'prefs': prefs,
         'attack_surface': attack_surface,
         'obfuscation': sorted(set(obfuscation))[:200],
+        # 这一层不算跨函数深度：`None` 的意思是「没测」，不是「零」。
+        # analyse_asar 会把它换成真数字。报告见 None 就不写那一行。
+        'taint_truncated': None,
         'native_files': sorted(rel for rel in files if rel.endswith(('.node', '.dll'))),
         'native_imports': native_imports.native_import_surface(files),
         'nested_asar': sorted(rel for rel in files if rel.endswith('.asar')),
@@ -2755,7 +2758,10 @@ def taint_truncation_count(files, max_files=12):
     except ImportError:
         return None
     names = [rel for rel in files.keys() if rel.endswith('.js') and files[rel]]
-    with_ipc = [rel for rel in names if b'electron' in files[rel]]
+    # 和 channel_taint_map 用同一个筛子：那边是看 `ipcMain` 才算候选文件。
+    # 这里以前写成 `electron`，扫的文件多出好几倍，报出来的截断数就不是
+    # 「这些通道里有几条被砍断」，而是「另一次扫描里砍断了几条」——两个数字对不上。
+    with_ipc = [rel for rel in names if b'ipcMain' in files[rel]]
     if not with_ipc:
         return 0
     with_ipc.sort(key=lambda rel: -len(files[rel] or b''))

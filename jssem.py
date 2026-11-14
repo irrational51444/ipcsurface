@@ -155,7 +155,8 @@ def state_writes_interproc(tokens, start, end, tainted, defs, depth=2):
     if depth <= 0:
         # 深度到顶。这里不是「没找到」，是「没往下找」——两件事必须分开记。
         # 只在真的还有得跟时才记一笔：体内还有对同文件函数的调用、且实参里有脏值。
-        if _truncated is not None and _still_has_hop(tokens, start, end, defs):
+        if _truncated is not None and _still_has_hop(tokens, start, end, defs,
+                                                    tainted):
             _truncated.append((start, end))
         return []
     by_name = {}
@@ -2007,20 +2008,31 @@ def _split_args(tokens, open_at):
     return args, close
 
 
-def _still_has_hop(tokens, start, end, defs):
-    """这一段里还有没有「调用同文件函数」的下一跳。
+def _still_has_hop(tokens, start, end, defs, tainted=None):
+    """这一段里还有没有「脏值能接着往下传」的下一跳。
 
-    用来区分「深度用完了」和「本来就没有下一跳」。只有前者算截断——
-    后者报成截断，等于把「到头了」说成「被砍断了」。
+    光看到「调用同文件函数」不够：`b()` 一个实参没给，脏值根本没进去，
+    那不算被砍断。给了 `tainted` 就要求至少一个实参是脏名；
+    不给就退化成「有没有调用」，只用于不知道脏值集合的场合。
     """
     names = {d['name'] for d in defs}
     if not names:
         return False
     limit = min(end, len(tokens) - 1)
     for i in range(start, limit):
-        if (tokens[i].kind == 'ident' and tokens[i].text in names
+        if not (tokens[i].kind == 'ident' and tokens[i].text in names
                 and tokens[i + 1].text == '('):
+            continue
+        if tainted is None:
             return True
+        try:
+            args, _close = _split_args(tokens, i + 1)
+        except Exception:
+            return True
+        for arg in args:
+            if (len(arg) == 1 and arg[0].kind == 'ident'
+                    and arg[0].text in tainted):
+                return True
     return False
 
 
@@ -2080,7 +2092,8 @@ def interproc_taint(tokens, start, end, tainted, defs, depth=2, _seen=None,
         elif _truncated is not None:
             # 不往下走了。如果这个函数体里还有「调用同文件函数」的下一跳，
             # 那就是被深度上限砍断的一跳——记下来，别当成「到头了」。
-            if _still_has_hop(tokens, target['body_start'], target['body_end'], defs):
+            if _still_has_hop(tokens, target['body_start'], target['body_end'],
+                              defs, set(dirty_params)):
                 _truncated.append((target['body_start'], target['body_end']))
     return hits
 
