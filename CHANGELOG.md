@@ -2,6 +2,102 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.177.0 — 「查无此项」不再等于「安全」：精扫改成三态
+
+爸爸指出一句话：`if apis:` 的语义是错的。它的意思是「这一条我没查到危险 API」，
+但在安全工具里，「查无此项」不能被当成「安全」。
+
+这一版把精扫的产出从「有危险的通道列表」改成**每个通道都有判决**。
+
+### 一、三态：with_sink / no_sink / unresolved
+
+```python
+record(channel, handler)   # 内部记 status ∈ {with_sink, no_sink, unresolved}
+```
+
+- `with_sink` —— 追到了危险 API，带文件名和偏移
+- `no_sink` —— handler 走完，里面确实没有危险调用
+- `unresolved` —— handler 是 `handlers.save` 这种成员访问，这一层解不出来
+
+`unresolved` 以前和 `no_sink` 一样：都是「不出现在结果里」。现在它单独出现、
+单独计数，既不算危险也不算干净。
+
+修完第一件事就是打脸旧的结论：
+
+| 包 | 粗扫 | 精扫（旧） | 精扫（新） | 有证据 | 确认没有 | 未判定 |
+|---|---|---|---|---|---|---|
+| obsidian | 47 | 22 | 47 | 22 | 25 | 0 |
+| dsh | 41 | 36 | 41 | 4 | 37 | 0 |
+| ACLOS | 286 | 17 | 283 | 7 | 276 | 0 |
+| bilibili | 1 | 0 | 1 | 0 | 1 | 0 |
+
+「精扫报得少」这个说法整个是假的：它一直看得见全部通道，只是把没证据的那些
+在最后一步丢掉了。bilibili 那条「精扫 0 条」现在看是「1 条，干净」。
+
+### 二、`existsSync` 不是 sink
+
+它在粗扫的危险表里，但它只回答「这个路径在不在」，不读不写不执行。
+算进去的结果是 ACLOS 一片纯查询型通道全被标成危险（17 条里 10 条只有它）。
+剔掉之后 ACLOS 从 17 条降到 7 条 —— 少掉的 `runDiagnose` 正是校验语料里
+早就记为误报的那条。
+
+粗扫那份表不动：那是历史口径，动它会把一堆基准数字全打乱。精扫单列
+`NOT_A_SINK`，这是有意为之的偏离，记在 `docs/known-wrong.md`。
+
+### 三、`obj.f()` 不再借用同名的顶层函数
+
+`browserGuests.acquire()` 里的 `acquire` 只是方法名。早先把它当成本文件里
+那个顶层 `acquire` 去追，追出来一堆 `existsSync`、`writeFileSync`，
+dsh 41 条通道里 32 条因此被判「有危险调用」。
+
+现在只认两种成员调用：接收者是 `this`/`super`，或者接收者是
+`new X()` 出来的实例、且方法真长在 `X` 上。dsh 36 → 4。
+
+剩下 4 条全部有据可查：`clipboard-image-read` 直接 `fetch`，
+`file-drag-prepare` 经同文件函数到 `createReadStream`/`truncate`，
+`boot-failed` 到 `mkdir`/`writeFile`，`locale-changed` 到 `mkdirSync`/`writeFileSync`。
+
+### 四、通道名走常量表
+
+```js
+const DESKTOP_IPC = { fileSave: "dsh-desktop:file-save" };
+ipcMain.handle(DESKTOP_IPC.fileSave, ...);
+```
+
+早先只拿到属性名 `fileSave`，粗扫拿到的是 `dsh-desktop:file-save`，
+两边永远对不上 —— 这就是那句「dsh 通道名少个前缀」的真相，不是漏扫，
+是两边读的不是同一个字符串。
+
+现在同文件的 `const X = {k: '真名'}` 会被收集成表，成员访问查表还原。
+查不到表就只能拿属性名当通道名 —— 那种情况标 `heuristic`，报告里写
+「通道名是猜的，未查表」。证据分三档：`literal` / `const-table` / `heuristic`。
+
+修完 dsh 41 条全部对上，一个不差。
+
+### 五、报告多了「每个通道的证据」一节
+
+```
+| 通道 | 状态 | 证据 |
+|---|---|---|
+| `dsh-desktop:file-save` | 确定有风险 | 直接调用 existsSync 之外…；`lib/main.js` @ 55958；通道名由常量表还原 |
+| `vault-move` | 确定有风险 | 直接调用 renameSync；`lib/app.js` @ 192073 |
+| `version` | 确定没有 | handler 走到末尾，没有危险调用；`lib/main.js` @ ... |
+```
+
+未判定的行排在最前面。每一条都能追问「危险 API 在第几行」——
+这才精扫真正卖的东西，不是「报得少」。
+
+### 六、覆盖率和切换门槛
+
+`coverage = (with_sink + no_sink) / 总数`，四个包都是 100%：
+handler 全部解出来了。条数（22 对 47）没有决策价值，覆盖率才有。
+
+### 用例
+
+603 → 611。新增 8 条，专盯这一版的规矩：干净通道要出现、未判定不许消失、
+常量表要还原、查不到表要标 heuristic、方法调用不许借用同名顶层函数、
+实例方法要追得动、`existsSync` 不算 sink、直接和间接要分开。
+
 ## 0.176.0 — 精扫漏报的两个根因：中文注释把偏移切错、handler 外面套括号
 
 爸爸说漏报是第一大错。这一版把精扫层在真包上扫不出东西的两个根因挖出来了。

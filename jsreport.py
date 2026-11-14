@@ -1339,23 +1339,76 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                 out.append(f"  - `{hit['where']}`{tag}：{hit['snippet']}")
         out.append('')
 
-    # precise 第三列：tree-sitter 精查层，opt-in。这是「更强一档证据」，不是确认。
-    if 'precise_sinks' in facts:
-        out.append('## precise 第三列（tree-sitter 精查）')
+    # precise：三态。with_sink / no_sink / unresolved。
+    # 这段的规矩只有一条：一条通道都不许无声消失。
+    # 「handler 里没有危险调用」和「handler 根本没解出来」是两件事，
+    # 早先它们都不出现，报告因此永远比真相干净。
+    if 'precise_detail' in facts:
+        out.append('## 每个通道的证据（tree-sitter 精查）')
         out.append('')
-        out.append('跨文件 / 类方法才连得上的那条链，粗扫看不见；这里是更强一档证据，'
-                   '不是「确认」。')
-        out.append('')
-        ps = facts.get('precise_sinks')
-        if ps is None:
-            out.append('- precise 没跑成（tree-sitter 没装或报错），这一列空着。'
+        pd = facts.get('precise_detail')
+        if pd is None:
+            out.append('- precise 没跑成（tree-sitter 没装或报错），这一节空着。'
                        '`pip install ipcsurface[precise]`')
-        elif not ps:
-            out.append('- precise 跑完了，没多认出任何粗扫漏掉的危险 API。')
+            out.append('')
         else:
-            for ch, apis in list(ps.items())[:20]:
-                out.append(f'- `{ch}`：{"、".join(apis)}')
-        out.append('')
+            rank = {'unresolved': 0, 'with_sink': 1, 'no_sink': 2}
+            items = sorted(pd.items(),
+                           key=lambda kv: (rank.get(kv[1].get('status'), 9), kv[0]))
+            n_sink = sum(1 for _, v in items if v.get('status') == 'with_sink')
+            n_clean = sum(1 for _, v in items if v.get('status') == 'no_sink')
+            n_unk = sum(1 for _, v in items if v.get('status') == 'unresolved')
+            confirmed = n_sink + n_clean
+            cov = confirmed / (confirmed + n_unk) if (confirmed + n_unk) else 0.0
+            out.append(f'覆盖 {cov * 100:.1f}%：{len(items)} 条通道里 {confirmed} 条'
+                       f'追到了 handler。{n_sink} 条有危险调用，{n_clean} 条追完确认没有，'
+                       f'{n_unk} 条未判定。')
+            out.append('')
+            if n_unk:
+                out.append('> 「未判定」不是安全。它表示 handler 是跨模块引用、'
+                           '算出来的名字之类，这一层解不出来。'
+                           '漏报的危害大于错报，所以这类既不算干净也不算危险，'
+                           '单独列在最前面。')
+                out.append('')
+            out.append('| 通道 | 状态 | 证据 |')
+            out.append('|---|---|---|')
+            shown = 0
+            for ch, v in items:
+                if shown >= 40:
+                    break
+                st = v.get('status')
+                loc = f"`{v.get('file')}`" + (f" @ {v['offset']}" if v.get('offset') else '')
+                via = v.get('via')
+                if st == 'unresolved':
+                    label = '**未判定**'
+                    why = 'handler 没解出来，这一层到不了它'
+                elif st == 'with_sink':
+                    label = '确定有风险'
+                    direct = v.get('direct') or []
+                    if direct:
+                        why = '直接调用 ' + '、'.join(direct)
+                        extra = [a for a in (v.get('apis') or []) if a not in direct]
+                        if extra:
+                            why += '（另有间接可达 ' + '、'.join(extra) + '）'
+                    else:
+                        why = '间接可达 ' + '、'.join(v.get('apis') or []) + '，同文件函数里'
+                    why += '；' + loc
+                    if via == 'heuristic':
+                        why += '；通道名是猜的，未查表'
+                    elif via == 'const-table':
+                        why += '；通道名由常量表还原'
+                else:
+                    label = '确定没有'
+                    why = 'handler 走到末尾，没有危险调用；' + loc
+                out.append(f'| `{ch}` | {label} | {why} |')
+                shown += 1
+            if len(items) > shown:
+                out.append('')
+                out.append(f'只列了前 {shown} 条，剩下 {len(items) - shown} 条在 json 里。')
+            out.append('')
+            out.append('粗扫看着条数更多，但那不是本事：它给的每条都答不出'
+                       '「危险 API 在哪一行」。这里的每一条都能追问。')
+            out.append('')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:
             out.append(f'- 名字是算出来的不是写死的：`{what}`  `{where}`')

@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.176.0'
+__version__ = '0.177.0'
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/40'
@@ -5639,10 +5639,19 @@ def main(argv=None):
         if args.precise:
             try:
                 import precise_engine
-                facts['precise_sinks'] = precise_engine.analyse_asar_precise(args.input)
+                # 要全量三态，不只是「有危险 API」那一撮。
+                # 早先这里拿的是「有证据的通道」，于是「handler 里没有危险调用」
+                # 和「handler 根本没解出来」在输出里长得一模一样——
+                # 都是不出现。报告因此永远比真相干净。
+                detail = precise_engine.analyse_asar_precise(args.input, detailed=True)
+                facts['precise_detail'] = detail
+                facts['precise_sinks'] = {ch: v['apis'] for ch, v in detail.items()
+                                          if v['apis']}
             except SystemExit:
+                facts['precise_detail'] = None
                 facts['precise_sinks'] = None
             except Exception:
+                facts['precise_detail'] = None
                 facts['precise_sinks'] = None
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
