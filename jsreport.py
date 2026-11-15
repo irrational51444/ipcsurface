@@ -683,11 +683,15 @@ def fingerprint_of(target, channel_names, params=None):
     return payload
 
 
-def sink_table(facts, hit):
-    """把「每条 API 的凭据」渲染成一张表。
+def sink_table(facts, hit, compact=False):
+    """把「每条 API 的凭据」渲染出来。
 
     每一行都是人能直接核的：档位说这条有多硬，位置说去哪看，跳数和经过说
     它是怎么爬过来的。报告里承诺的「跳到那一行」，靠的就是 at 这一列。
+
+    compact=True 时按通道聚成一行，不再画十列表。
+    十列在 80 列的终端里会被折成三四行，横竖线全错位，比不给还难读。
+    明细仍然完整——只是留给 `-o report.md` 那种场合。
     """
     ev = facts.get('channel_sink_evidence') or {}
     rows = []
@@ -713,6 +717,25 @@ def sink_table(facts, hit):
             rows.append('| `%s` | `%s` | %s | %s | %s | %s | %s | %s | %s | %s |'
                         % (name, api, danger_kind_of(api), tier, seen, argcell,
                            depth, at, '—' if hops is None else hops, via))
+    if compact:
+        # 一条通道一行：`- 通道：API（档位）…`
+        out = []
+        for name in sorted(hit):
+            items = []
+            for api in sorted(hit[name]):
+                item = (ev.get(name) or {}).get(api) or {}
+                tier = item.get('tier') or '—'
+                at = item.get('at')
+                bits = '`%s`（%s）' % (api, tier)
+                if at and at != '—':
+                    bits += ' @ `%s`' % at
+                items.append(bits)
+            out.append('- `%s`：%s' % (name, '、'.join(items)))
+        out.append('')
+        out.append('> 这是一条通道一行的简版。每处证据的见证、实参、跳数、'
+                   '经过路径要看全，用 `-o report.md` 写到文件里。')
+        return out
+
     out = ['| 通道 | API | 类别 | 档位 | 见证 | 实参 | 证据 | 位置 | 跳数 | 经过 |',
            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
     out.extend(rows)
@@ -856,7 +879,7 @@ def render_summary(facts, version, file_count, total_bytes):
 
 
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
-                probe=None, poke=None, baseline=None):
+                probe=None, poke=None, baseline=None, compact=False):
     eng = facts.get('engine') or {}
     precise_main = eng.get('used') == 'precise'
     out = ['# Electron 能力面清单（%s）' % ('语法树精查' if precise_main else '粗扫'), '']
@@ -1144,7 +1167,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append(f'顺着处理函数往下走（含同文件调用链和跨文件一跳、两跳），{len(hit)} 条通道能碰到危险 API。')
         out.append('')
         if hit:
-            out.extend(sink_table(facts, hit))
+            out.extend(sink_table(facts, hit, compact))
             out.append('')
             out.extend(sink_table_legend())
         else:
@@ -1164,7 +1187,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                    f'别名、回调传参都算一条边。{len(hit)} 条通道能碰到危险 API。')
         out.append('')
         if hit:
-            out.extend(sink_table(facts, hit))
+            out.extend(sink_table(facts, hit, compact))
         else:
             out.append('  - 一条都没有。只说明这个包里没连到，不是确认没有。')
         out.append('')

@@ -2139,6 +2139,23 @@ class ReadabilityTests(unittest.TestCase):
                     f'章节 `{line}` 前面缺空行，排下去会粘在上一段末尾')
 
 
+    def test_terminal_gets_compact_sink_list(self):
+        """十列的表在终端里会被折成三四行，横竖线全错位，比不给还难读。
+
+        打到终端用一条通道一行的简版；写文件才给全表。
+        """
+        facts = {'channel_sink_evidence': {
+            'a:b': {'writeFileSync': {'tier': 'direct', 'at': 'main.js:1'}}}}
+        hit = {'a:b': ['writeFileSync']}
+        import jsreport as _jsr
+        compact = _jsr.sink_table(facts, hit, compact=True)
+        full = _jsr.sink_table(facts, hit, compact=False)
+        self.assertIn('- `a:b`：', '\n'.join(compact))
+        self.assertNotIn('| 通道 | API | 类别 |', '\n'.join(compact))
+        self.assertIn('| 通道 | API | 类别 |', '\n'.join(full),
+                      '写文件时全表不许丢')
+
+
 class LibraryVersusIntentTests(unittest.TestCase):
     """判断「可疑」时，库的行为和应用的意图必须分开。
 

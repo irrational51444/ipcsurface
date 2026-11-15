@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.183.0'
+__version__ = '0.184.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
@@ -5814,6 +5814,9 @@ def main(argv=None):
             text = render_asar(args.input, facts, count, total,
                                show_all=args.all, findings=findings,
                                probe=probe_data, poke=poke_data,
+                               # 打到终端用简版：十列的表会被折成三四行、横竖线全错位。
+                               # 写文件的时候才给全表。
+                               compact=not args.out,
                                baseline=load_baseline(args.baseline) if args.baseline else None)
         if args.write_baseline:
             save_baseline(args.write_baseline, findings, facts['channels'])

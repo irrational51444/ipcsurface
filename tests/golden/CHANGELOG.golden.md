@@ -777,3 +777,8 @@
 
 - 变了的字段：fingerprint
 - 理由：fingerprint.version 从 0.182.0 变成 0.183.0。版本号参与 digest 是指纹的设计，发版必然变；这一版改的是 md 报告排版（preload 过滤、混渝分组、章节空行），json 里的 preloads 会少掉一批垃圾值，属于有意变更，靠 preloads 字段取值的下游会看到条目变少。
+
+## 2026-11-15 17:50
+
+- 变了的字段：fingerprint
+- 理由：fingerprint.version 从 0.183.0 变成 0.184.0。版本号参与 digest 是指纹的设计，发版必然变；这一版只改终端输出形态（简版列表），写文件的 md 和 json 契约没动。
