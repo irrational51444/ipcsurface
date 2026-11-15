@@ -159,26 +159,91 @@ def _ipc_main_names(root, text):
     return names
 
 
+def _method_body(node, text, funcs):
+    """`this.onUWPEvent` / `app.load` 这种成员引用，解析成方法体节点。
+
+    ASUS 的三个通道就是这么注册的：`ipcMain.on("uwp", this.onUWPEvent)`。
+    早先只认 arrow/function，遇到成员引用一律判 unresolved ——
+    其实函数体就在同一个文件里，只是要先认出它是谁的方法。
+    """
+    if node is None or node.type != 'member_expression':
+        return None
+    prop = node.child_by_field_name('property')
+    obj = node.child_by_field_name('object')
+    if prop is None:
+        return None
+    mname = _text_of(prop, text)
+    classes = funcs.get('#classes') or {}
+    insts = funcs.get('#vars') or {}
+    if obj is None:
+        return None
+    oname = _text_of(obj, text)
+    if oname in ('this', 'super'):
+        for cls in classes.values():
+            if mname in cls:
+                return cls[mname]
+        return None
+    if oname in insts:
+        return classes[insts[oname]].get(mname)
+    return None
+
+
 def _collect_classes(root, text):
-    """{类名: {方法名: 方法体}}。"""
+    """{类名: {方法名: 方法体}}。
+
+    两种写法都要收：
+        class X { m() {} }                  —— ES6
+        X.prototype.m = function () {}      —— ES5，webpack 打老代码全是这个
+
+    ASUS 那三条通道就是这么挂的：`ipcMain.on("uwp", this.onUWPEvent)`，
+    方法体在 `e.prototype.onUWPEvent = function (e) {...}` 里。只收 ES6 的话
+    这三条只能判「未判定」——其实函数体就在同一个文件里。
+    """
     classes = {}
     for n in _walk(root):
-        if n.type != 'class_declaration':
-            continue
-        name = n.child_by_field_name('name')
-        body = n.child_by_field_name('body')
-        if name is None or body is None:
-            continue
-        methods = {}
-        for m in body.named_children:
-            if m.type != 'method_definition':
+        if n.type == 'class_declaration':
+            name = n.child_by_field_name('name')
+            body = n.child_by_field_name('body')
+            if name is None or body is None:
                 continue
-            mn = m.child_by_field_name('name')
-            mb = m.child_by_field_name('body')
-            if mn is not None and mb is not None:
-                methods[_text_of(mn, text)] = mb
-        if methods:
-            classes[_text_of(name, text)] = methods
+            methods = {}
+            for m in body.named_children:
+                if m.type != 'method_definition':
+                    continue
+                mn = m.child_by_field_name('name')
+                mb = m.child_by_field_name('body')
+                if mn is not None and mb is not None:
+                    methods[_text_of(mn, text)] = mb
+            if methods:
+                classes.setdefault(_text_of(name, text), {}).update(methods)
+            continue
+
+        # ES5 原型：X.prototype.m = function () {...}
+        if n.type != 'assignment_expression':
+            continue
+        left = n.child_by_field_name('left')
+        right = n.child_by_field_name('right')
+        if left is None or right is None:
+            continue
+        if right.type not in ('function_expression', 'arrow_function'):
+            continue
+        if left.type != 'member_expression':
+            continue
+        inner = left.child_by_field_name('object')
+        mname = left.child_by_field_name('property')
+        if inner is None or mname is None:
+            continue
+        if inner.type != 'member_expression':
+            continue
+        if _text_of(inner.child_by_field_name('property'), text) != 'prototype':
+            continue
+        owner = inner.child_by_field_name('object')
+        if owner is None:
+            continue
+        body = right.child_by_field_name('body')
+        if body is None:
+            continue
+        classes.setdefault(_text_of(owner, text), {})[_text_of(mname, text)] = body
     return classes
 
 
@@ -599,11 +664,16 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
                     apis |= _follow(handler, text, funcs, 0)
                     status = 'with_sink' if apis else 'no_sink'
                 else:
-                    # `handlers.save` 这种「成员访问当 handler」：函数体解不出来。
-                    # 「没查到危险 API」不等于「干净」，只能标未判定。
-                    # 跨文件能接上的话，_cross_file 会补进 apis。
-                    apis |= _follow(handler, text, funcs, 0)
-                    status = 'with_sink' if apis else 'unresolved'
+                    # `handlers.save` 这种「成员访问当 handler」。
+                    # 先在同一个文件里找它到底是哪个方法（`this.onUWPEvent` 这种
+                    # 函数体就在本地）；找不到才算真解不出来，标未判定。
+                    ref = _method_body(handler, text, funcs)
+                    apis |= _follow(ref if ref is not None else handler,
+                                    text, funcs, 0)
+                    if ref is not None:
+                        status = 'with_sink' if apis else 'no_sink'
+                    else:
+                        status = 'with_sink' if apis else 'unresolved'
                 # 跨文件：handler 里 require 进来的模块函数，再跟一层
                 if handler is not None:
                     body = handler

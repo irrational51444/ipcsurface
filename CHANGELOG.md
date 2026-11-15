@@ -2,6 +2,60 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.179.0 — 十二个真包跑过一遍，补上 ES5 原型方法的漏
+
+语料从 4 个包扩到 12 个（本机能找到的 Electron 应用全跑了）。完整表在
+`docs/corpus-2026-11-15.md`。
+
+### 一、ASUS 那三条：handler 是 `this.onUWPEvent`
+
+```js
+function e() { ipcMain.on("uwp", this.onUWPEvent); }
+e.prototype.onUWPEvent = function (ev) { ... }
+```
+
+ES5 原型写法。早先 `_collect_classes` 只收 `class X { m() {} }`，
+`this.onUWPEvent` 解析不到方法体，三条通道一律判 `unresolved`。
+
+补了两处：收集 `X.prototype.m = function () {}`；`record()` 遇到成员引用当 handler 时
+先试着解析成本地方法，解析得到就按「有函数体」判，解析不到才是真未判定。
+
+ASUS 覆盖率 0% → 100%，三条 `unresolved` → `no_sink`。
+
+### 二、粗扫多出来的 22 条，全是它自己的假阳性
+
+逐条查过，三个来源：
+
+- **二进制里的字符串**（抖音 10 条）。粗扫把 asar 里所有文件当文本扫，包括
+  `.node` / `.exe` / `.dll`。`cancel-to-update` 确实在文件里，但躺在二进制资源段，
+  不在任何 JS 注册点上。**粗扫通道数偏大不是因为它看得多。**
+- **渲染层调用点**（ASUS `devicePage`、vivo `online`）。粗扫的 `channels` 是
+  handler ∪ invoke 的并集，精扫只数注册点。口径不同。
+- **ACLOS 9 条**：`did-finish-load` 是 webContents 事件名，不是 ipc 通道；
+  还混了一条 shell 命令串和一个字面量 `undefined`。
+
+**没有一个包是「精扫看见了而粗扫没看见」。**
+
+### 三、十二个包的结果
+
+| 包 | 粗扫 | 精扫 | 有证据 | 干净 | 未判定 |
+|---|---|---|---|---|---|
+| obsidian | 47 | 47 | 22 | 25 | 0 |
+| dsh | 41 | 41 | 4 | 37 | 0 |
+| ACLOS | 286 | 283 | 7 | 276 | 0 |
+| bilibili | 1 | 1 | 0 | 1 | 0 |
+| 抖音 | 23 | 13 | 0 | 13 | 0 |
+| vivo 手机助手 | 24 | 23 | 0 | 23 | 0 |
+| ASUS ArmouryDevice | 5 | 3 | 0 | 3 | 0 |
+| QQNT / 抖音 tray / 抖音 widget / VS Code nm / daziya | 0 | 0 | 0 | 0 | 0 |
+
+五个 0 通道的包，粗扫也是 0——不是精扫看不见，是两条路都没走到。
+`--engine auto` 遇到这种会退回名称级并写明原因。
+
+### 用例
+
+618 → 619。新增一条：ES5 原型方法当 handler 时要追到方法体里的危险 API。
+
 ## 0.178.0 — 主引擎换成语法树精查，通道名不再靠猜
 
 上一版把三态做出来了，但精查还是 opt-in 的补充层。这一版把默认值翻过来。

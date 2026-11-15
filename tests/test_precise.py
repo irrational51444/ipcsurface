@@ -187,6 +187,26 @@ class ThreeStateTests(unittest.TestCase):
             os.unlink(path)
 
 
+    def test_es5_prototype_method_as_handler(self):
+        # ASUS 的写法：ipcMain.on("uwp", this.onUWPEvent)，
+        # 方法体在 e.prototype.onUWPEvent = function () {} 里。
+        # 只收 ES6 class 的话这三条只能判未判定，其实函数体就在同文件里。
+        main = ('const {ipcMain} = require("electron");\n'
+                'const fs = require("fs");\n'
+                'var V = function () {\n'
+                '  function e() { ipcMain.on("uwp", this.onUWPEvent); }\n'
+                '  return e.prototype.onUWPEvent = function (ev) {\n'
+                '    fs.writeFileSync("/tmp/x", "y");\n'
+                '  }, e;\n'
+                '}();\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            detail = pe.analyse_asar_precise(path, detailed=True)
+            self.assertEqual(detail['uwp']['status'], 'with_sink')
+            self.assertIn('writeFileSync', detail['uwp']['apis'])
+        finally:
+            os.unlink(path)
+
     def test_channel_name_resolved_through_ts_enum(self):
         # TypeScript 编译出来的 enum：OBJ["KEY"] = "真名"。
         # ACLOS 那 6 条通道名（ADD_METRIC 之类）就栽在这里：
