@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.181.0'
+__version__ = '0.182.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
@@ -1658,6 +1658,10 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
     dynamic = [item for item in dynamic if item[1] not in enumerated_sites]
 
     facts = {
+        # 文件总数。审计层要用它算「强指纹占了多少文件」——
+        # 没有这个数，混淆指纹就只能按「有没有」判，而那个判法在
+        # 一堆依赖库的包上会把 105 处常态写法全标成 high。
+        'file_count': len(files),
         'scanned': scanned,
         'exposes': sorted(set(exposes)),
         'handlers': sorted(set(handlers)),
@@ -5004,6 +5008,32 @@ def scan_sourcemaps(files):
 CHANNELISH = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{1,24}:[A-Za-z][A-Za-z0-9_.-]{1,48}$')
 NOISE_PREFIX = {'http', 'https', 'file', 'data', 'mailto', 'chrome', 'ws', 'wss',
                 'node', 'blob', 'about', 'javascript', 'utf', 'iso'}
+
+# 打包进去的 CSS 也长得像通道名：`font-weight:bold`、`color:red`。
+# 单看前缀会误杀（`position:xxx` 可能真是通道），单看后缀也会，
+# 所以两个都命中才丢——`color:theme` 这种后缀不在值表里的还留着。
+CSS_PROPS = {
+    'color', 'background', 'background-color', 'font', 'font-family', 'font-size',
+    'font-weight', 'font-style', 'line-height', 'letter-spacing', 'text-align',
+    'text-decoration', 'text-transform', 'text-overflow', 'white-space',
+    'margin', 'margin-top', 'margin-left', 'padding', 'padding-top', 'border',
+    'border-radius', 'border-color', 'border-width', 'box-shadow', 'box-sizing',
+    'display', 'position', 'overflow', 'overflow-x', 'overflow-y', 'z-index',
+    'width', 'height', 'min-width', 'max-width', 'cursor', 'opacity', 'content',
+    'flex', 'flex-direction', 'justify-content', 'align-items', 'grid-template',
+    'transition', 'transform', 'animation', 'outline', 'visibility',
+    'vertical-align',
+}
+CSS_VALUES = {
+    'bold', 'normal', 'italic', 'inherit', 'initial', 'none', 'auto', 'block',
+    'inline', 'inline-block', 'flex', 'grid', 'absolute', 'relative', 'fixed',
+    'static', 'sticky', 'hidden', 'visible', 'scroll', 'solid', 'dashed',
+    'dotted', 'center', 'left', 'right', 'top', 'bottom', 'middle', 'pointer',
+    'default', 'nowrap', 'ellipsis', 'wrap', 'red', 'blue', 'green', 'white',
+    'black', 'gray', 'grey', 'transparent', 'currentcolor', 'sans-serif',
+    'serif', 'monospace', 'uppercase', 'lowercase', 'capitalize', 'underline',
+    'line-through', 'column', 'row', 'space-between', 'space-around',
+}
 STRING_LIT = re.compile(r"'([^'\\\n]{4,80})'" r'|"([^"\\\n]{4,80})"')
 # 同一个模式，吃字节。整包转成字符串再找太贵，能不解码就不解码。
 STRING_LIT_B = re.compile(STRING_LIT.pattern.encode('ascii'))
@@ -5055,8 +5085,11 @@ def harvest_strings(files):
             if prev.isalnum() or prev in (b"'", b'"', b'`'):
                 continue
             value = match.group(1).decode('ascii')
-            prefix = value.split(':', 1)[0]
-            if prefix.lower() in NOISE_PREFIX:
+            prefix, _, suffix = value.partition(':')
+            low = prefix.lower()
+            if low in NOISE_PREFIX:
+                continue
+            if low in CSS_PROPS and suffix.lower() in CSS_VALUES:
                 continue
             # A1:A13 这种是 Excel 单元格，不是通道
             if re.fullmatch(r'[A-Za-z]{1,3}\d{1,5}', prefix):

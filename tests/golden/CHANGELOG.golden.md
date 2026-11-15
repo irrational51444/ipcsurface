@@ -767,3 +767,8 @@
 
 - 变了的字段：fingerprint
 - 理由：fingerprint.version 从 0.180.0 变成 0.181.0。版本号参与 digest 是指纹的设计，发版必然变；这一版只改 md 报告里混渝判语、覆盖率分母为 0 时的句子、文件层覆盖的表述，json 契约不变。
+
+## 2026-11-15 11:51
+
+- 变了的字段：fingerprint
+- 理由：fingerprint.version 从 0.181.0 变成 0.182.0。版本号参与 digest 是指纹的设计，发版必然变；这一版改了可疑项里混渝指纹的定级（按密度）和 harvest 的 CSS 过滤，json 的 findings 级别会变（低密度不再出 high），属于有意变更，下游如果靠 --fail-on high 卡构建会变宽松，需要知道。

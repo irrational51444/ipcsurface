@@ -2091,6 +2091,45 @@ class GoldenScriptTests(unittest.TestCase):
         self.assertIn('不足以说明整个包被加固过', text)
 
 
+
+class LibraryVersusIntentTests(unittest.TestCase):
+    """判断「可疑」时，库的行为和应用的意图必须分开。
+
+    这条来自三次同一个毛病：@electron/remote 的库内部事件名被当成应用通道、
+    抖音 .node/.exe 二进制串被当成通道、VS Code 依赖包里的 eval 被标成 high。
+    共同点：把「第三方库自带的写法」读成了「这个应用干了什么」。
+    """
+
+    def test_obfuscation_high_needs_density_not_presence(self):
+        # 40 个文件里 1 个带 eval：那是依赖库的常态写法，不是整包被加固
+        entries = {'lib/m%d.js' % i: b'var a = 1;\n' for i in range(39)}
+        entries['lib/vendor.js'] = b'eval("x");\n'
+        facts = ipc.scan_asar(entries)
+        findings = ipc.audit_asar(facts)
+        levels = [lvl for lvl, _t, _w in findings if '混淆' in _t]
+        self.assertNotIn('high', levels,
+                         '低密度指纹不许标 high：--fail-on high 会直接打爆构建')
+        self.assertTrue(any(lvl == 'note' for lvl in levels),
+                        '要留一条 note 说明这件事，不能默默丢掉')
+
+    def test_obfuscation_high_still_fires_when_dense(self):
+        # 1 个文件 1 处强指纹 = 100% 密度：这确实是整包被处理过
+        facts = ipc.scan_asar({'a.js': b'eval(x)'})
+        findings = ipc.audit_asar(facts)
+        self.assertIn('high', [lvl for lvl, _t, _w in findings])
+
+    def test_css_strings_are_not_channel_candidates(self):
+        # xterm 这类库把样式字符串打进了包里，harvest 层不该把它们当通道
+        files = {'a.js': (b'var s="font-weight:bold", t="color:red", '
+                          b'u="vault:move", v="color:theme"')}
+        got = set(ipc.harvest_strings(files))
+        self.assertNotIn('font-weight:bold', got)
+        self.assertNotIn('color:red', got)
+        self.assertIn('vault:move', got, '真通道不许被 CSS 过滤误杀')
+        self.assertIn('color:theme', got,
+                      '前缀像 CSS、后缀不在值表里的，留着——宁可多看一条')
+
+
 class ChannelSinkTests(unittest.TestCase):
     """报告里「每条通道能碰到什么」这一栏的契约。"""
 

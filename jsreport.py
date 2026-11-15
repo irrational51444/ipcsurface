@@ -37,9 +37,27 @@ def stamp(version=None):
 def audit_asar(facts):
     """粗扫也有可疑项。不然挂在 CI 上的 --fail-on 在这条路上等于没用。"""
     findings = []
-    for name, where, level in facts['obfuscation']:
-        if level == 'strong':
+    # 混淆指纹要按**密度**进可疑项，不能按「有没有」。
+    # VS Code 的 node_modules.asar：5636 个文件里 105 处强指纹，全是
+    # playwright / zod / xterm 打包产物的常态写法。以前逐条标 high，
+    # `--fail-on high` 直接打爆构建——而正文里我自己还写着「那不是混淆」。
+    #
+    # 判据不能靠路径里有 node_modules：那个包本身就是 node_modules，
+    # 路径前缀里根本没有这三个字。只能看密度。
+    strong = [h for h in facts['obfuscation'] if h[2] == 'strong']
+    total_files = facts.get('file_count') or 0
+    hit_files = {(h[1] or '').split(':')[0] for h in strong}
+    dense = (not total_files) or (len(hit_files) * 100.0 / total_files >= 5)
+    if strong and dense:
+        for name, where, level in strong:
             findings.append(('high', f'强混淆指纹：{name}', where))
+    elif strong:
+        findings.append((
+            'note',
+            f'{len(strong)} 处强混淆指纹集中在 {len(hit_files)} 个文件里'
+            f'（占全包 {len(hit_files) * 100.0 / total_files:.1f}%），'
+            '更像依赖库的打包产物，不作为高危项；逐条列表见报告正文',
+            'whole-package'))
     for name, where in facts['handlers']:
         low = name.lower()
         if any(hint in low for hint in HIGH_RISK_HINTS):
