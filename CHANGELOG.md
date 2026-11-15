@@ -2,6 +2,50 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.185.0 — CI 红了一天，是一条漏掉的 skip 闸
+
+从昨天下午开始 CI 一直红，`check` 和 `windows` 都挂在「三道闸」。
+本地怎么都复现不出来——因为本地装了 tree-sitter。
+
+### 一、真正的红因
+
+```
+ERROR: test_namespace_form
+ERROR: test_non_ascii_text_does_not_shift_offsets
+ERROR: test_parenthesized_handler_is_unwrapped
+```
+
+`PreciseMissTests` / `PreciseAliasTests` 直接调 `precise_engine._parse`，
+但 `pe` 是在方法体里 import 的。装饰器在**类定义那一刻**就求值，
+那时模块级还没有 `pe` 这个名字 → `NameError: name 'pe' is not defined`。
+
+CI 没装 `ipcsurface[precise]`，所以整个测试模块 import 失败，报 3 个 error。
+本地装了，跑得好好的，于是一直以为是别的毛病。
+
+修法：加模块级 `_precise_available()`，装饰器用它判断；两个类补上 skip 闸。
+
+### 二、下次红了能看见细节
+
+`verify.sh` 原来只报「退出码 1，完整输出在 /tmp/verify-unit.log」——CI 上没有那个
+文件可看。现在失败时直接把 ERROR/FAIL 行、异常尾巴、最后 50 行打到 job log 里。
+
+这次就是靠它才看见那三行的。
+
+### 三、README 换掉 0.107 时代的数字和截图
+
+- 「441 MB、22,102 个文件、5.0 秒」是名称级时代的；现在是 obsidian 369 个文件
+  26.8 MB、精查 40 秒、名称级 4 秒。
+- 「47 条通道、116 条危险 API、硬档 25 条」这种按 API 计数的口径不用了，
+  改成三态：22 条 handler 连到危险 API、25 条追完没连到、0 条未判定。
+- 新增「十二个包跑下来，谁在说真话」一节，两个引擎的通道集合逐条对比。
+- 四张截图由 `scripts/make_shots.py` 从当前版本的真实输出渲染，不是截屏——
+  这样图上和文字不会对不上。中文渲染踩过一次坑：PowerShell 重定向写的文件不是
+  UTF-8，读回来全是方块；现在一律用 `-o` 让工具自己写。
+
+### CI
+
+六个 job 全绿（check / windows / e2e / fuzz / probe / signal）。
+
 ## 0.184.0 — 打到终端用简版：十列的表在 80 列里没法看
 
 爸爸拍了张截图：`每条通道能碰到什么` 那张 10 列的表，在 PowerShell 里被折成

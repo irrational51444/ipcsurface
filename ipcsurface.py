@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.184.0'
+__version__ = '0.185.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
