@@ -4762,6 +4762,20 @@ class OnDemandDepthTests(unittest.TestCase):
         self.assertIn('taint_truncated', facts)
 
 
+def _precise_available():
+    """tree-sitter 装没装。
+
+    装饰器在类定义那一刻就求值，所以这里不能直接写 pe.AVAILABLE——
+    那些测试类里的 pe 是方法内部 import 的，模块级没有这个名字。
+    """
+    try:
+        import precise_engine
+    except Exception:
+        return False
+    return bool(getattr(precise_engine, 'AVAILABLE', False))
+
+
+@unittest.skipUnless(_precise_available(), 'tree-sitter 没装，跳过 precise 用例')
 class PreciseMissTests(unittest.TestCase):
     """精扫层在真包上漏报的两个根因（漏报第一大错）。"""
 
@@ -4818,6 +4832,7 @@ class PreciseMissTests(unittest.TestCase):
                              'ACLOS 的 286 条通道全卡在这一层')
 
 
+@unittest.skipUnless(_precise_available(), 'tree-sitter 没装，跳过 precise 用例')
 class PreciseAliasTests(unittest.TestCase):
     """精扫层认三种 ipcMain 形态：裸名、解构别名、命名空间取属性。"""
 
