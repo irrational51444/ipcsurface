@@ -305,7 +305,7 @@ obsidian 实测：`app.js` 导出项从 22 条涨到 **60 条**，`quicklook.js`
 
 ## 版本锁
 
-版本：0.177.0
+版本：0.178.0
 
 这张表和版本一起走：`scripts/selfcheck.py` 会核对这里的版本号与当前版本一致，
 并对每类的最少条数、表格列名做断言。改版本号时如果没回来动这张表，自检会红——
@@ -361,12 +361,27 @@ obsidian 实测：`app.js` 导出项从 22 条涨到 **60 条**，`quicklook.js`
   的 handler 全是内联箭头函数，没有 `ipcMain.handle('x', h.save)` 这种
   成员访问形态。这个分支由用例守着（`test_precise.py::ThreeStateTests`），
   真包上没被触发过。
-- **`heuristic` 通道名**：ACLOS 有 6 条（`ADD_METRIC`、`ENVELOPE`、`EVENT`、
-  `RENDERER_START`、`SCOPE`、`STATUS`）。查不到常量表，只能拿属性名当通道名，
-  这 6 条**很可能是错的**。报告里标「通道名是猜的，未查表」，不混进确定项。
+- **`heuristic` 通道名**：四个包上已经归零。ACLOS 那 6 条（`ADD_METRIC`、`ENVELOPE`、
+  `EVENT`、`RENDERER_START`、`SCOPE`、`STATUS`）不是通道名，是 `@sentry/electron` 的
+  TypeScript enum：真名是 `sentry-electron.add-metric` 这种。它们靠
+  `OBJ["KEY"] = "真值"` 的枚举表还原，表还能跨文件用（定义在 types 里、注册在
+  main/ipc.js 里）。这条留着是因为机制还在：查不到表的时候仍然会标 `heuristic`，
+  报告里明说「通道名是猜的」，不混进确定项。
 - **`obj.f()` 只认 `this`/`super` 和 `new X()` 出来的实例**。接收者是别的对象时
   一律不追。这会造成漏报（比如工厂函数返回的对象上的方法），但先前的做法是
   「按方法名撞顶层函数」，dsh 41 条里 32 条是这么被误判成危险的，两边权衡后
   选了不追。
 - **粗扫多出来的 9 条 ACLOS 通道是垃圾**：`did-finish-load` 那类是 webContents
   事件不是 ipc 通道，还有一条是 shell 命令串、一条是字面量 `undefined`。
+
+### 默认引擎换成精查之后，新出现的东西（2026-11-15）
+
+`--engine auto` 成为默认：装了 tree-sitter 就用精查，覆盖率低于 90% 退回名称级，
+退回的理由写在报告第一屏。这意味着：
+
+- **默认跑得慢了**。同一个 dsh，名称级 75 秒，精查 150 秒。要快就 `--engine coarse`。
+- **`--precise` 变成 `--engine precise` 的别名**，语义变了：以前是「额外加一列」，
+  现在是「主引擎就是它，跑不成就报错」。老脚本如果依赖「跑不成也不报错」，
+  要改成 `--engine auto`。
+- 覆盖率门槛 0.9 是我拍的，没有实验依据。四个真包都是 100%，
+  所以这条线从没被真正踩到过——它不是实测出来的，是先验。

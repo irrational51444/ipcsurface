@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.177.0**。
+**把一个 Electron 应用的能力面压成一页纸。** 零依赖，只装 Python。当前 **0.178.0**。
 
 `ipcsurface` 读一个 `.asar` 包（或 REA 的 Evidence JSON、一个 dll/exe），输出报告：
 有几条 IPC 通道、哪些名字是写死的、哪些是还原出来的、哪些只是长得像——以及
@@ -153,10 +153,26 @@ obsidian 实测：`app.js` 导出项 **73** 条，`quicklook.js` **51** 条。
 
 ---
 
-## 精扫：每个通道都有一条判决
+## 主引擎：语法树精查
 
-`--precise` 用 tree-sitter 走语法树，比默认那层慢得多（obsidian 30 秒，dsh 100 秒），
-但出来的东西不一样：**不是「找到了哪些危险通道」，而是每个通道的判决。**
+装了 tree-sitter 就走语法树，没装就退回名称级粗扫——**零依赖底线没变**，缺件不会让你跑不起来。
+
+```bash
+python ipcsurface.py app.asar                 # auto：装了就用精查，覆盖不够退回粗扫
+python ipcsurface.py app.asar --engine coarse # 强制名称级，快（dsh 75 秒 vs 150 秒）
+python ipcsurface.py app.asar --engine precise# 强制精查，跑不成就报错，不偷偷退
+```
+
+报告第一屏写着这次用的是哪个引擎、为什么：
+
+```
+- 主引擎：precise（精查认下 41 条通道，覆盖率 100%）
+```
+
+覆盖率低于 90% 就退回粗扫，理由一并写出来。**降级不静默**——和「查无此项」是同一类毛病，
+不说的东西最容易被读成好消息。
+
+精查出来的东西和粗扫不一样：**不是「找到了哪些危险通道」，而是每个通道的判决。**
 
 三态，没有第四种：
 
@@ -194,6 +210,10 @@ ACLOS 少掉的 3 条之外，默认层还多认出 6 条精扫没认的——�
 | `literal` | 调用点写的就是字符串 | 最高 |
 | `const-table` | `ipcMain.handle(IPC.fileSave, ...)`，同文件有 `const IPC = {fileSave: "dsh-desktop:file-save"}` | 高，还原出来的是真字符串 |
 | `heuristic` | 查不到表，只能拿属性名当通道名 | **会错**，报告里明说「通道名是猜的」 |
+
+四种包上 `heuristic` 现在是 0 条。ACLOS 那 6 条（`ADD_METRIC` / `EVENT` / `SCOPE` 之类）
+看着像通道名，实际是 `@sentry/electron` 的 TypeScript enum，真名是 `sentry-electron.event`
+这种。现在能读 `OBJ["KEY"] = "真值"` 的枚举写法，而且常量表跨文件共享。
 
 dsh 41 条全是 `const-table`。不查表的话会读到 `fileSave`，而实际通道是
 `dsh-desktop:file-save`——两边读的不是同一个字符串，怎么对都对不上。
@@ -367,7 +387,7 @@ python ipcsurface.py --recover out.md
 
 ## 质量怎么保证的
 
-- **611 个用例**，只跑标准库：`python -m unittest discover -s tests`
+- **618 个用例**，只跑标准库：`python -m unittest discover -s tests`
 - **性能门禁**：`python scripts/perf_check.py`，固定种子造包测吞吐，低于下限 CI 红
 - **分支覆盖率 67%**，只许涨不许跌：`python scripts/coverage_check.py`
 - **冒烟 15 项**：真跑一遍 CLI 的所有入口，跳过也出声，汇总行由脚本自己算

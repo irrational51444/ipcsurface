@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.177.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.178.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -122,11 +122,27 @@ by 8 synthetic cases. The real packages are still waiting.
 `custom-protocol`, `deep-link`, `webview`. Each carries an argument strength tier —
 literal value vs live value that could come from outside.
 
-### Dual-engine precise scan (opt-in)
+### Dual-engine scan: the syntax tree is the default
 
-`--precise` redoes the walk with tree-sitter: cross-file `require`, class-method
-following, loop enumeration (`for (const x of [...]) ipcMain.on(x)` expands). The
-zero-dependency default is unchanged; install the extra to enable it:
+Install tree-sitter and the walk goes through the syntax tree: cross-file `require`,
+class-method following, loop enumeration (`for (const x of [...]) ipcMain.on(x)`
+expands). Without it, the name-level default runs — **the zero-dependency floor is
+unchanged**, a missing extra never stops the tool from working.
+
+```bash
+python ipcsurface.py app.asar                 # auto: precise if installed, fall back if coverage is low
+python ipcsurface.py app.asar --engine coarse # force name level, faster
+python ipcsurface.py app.asar --engine precise# force precise, fail loudly if unavailable
+```
+
+The first screen says which engine ran and why:
+
+```
+- 主引擎：precise（精查认下 41 条通道，覆盖率 100%）
+```
+
+Below 90% coverage it falls back to name level and prints the reason. **Falling back
+is never silent** — same class of bug as "nothing found" being read as "nothing there".
 
 ```bash
 pip install 'ipcsurface[precise]'
@@ -340,7 +356,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **611 test cases**
+- **618 test cases**
 - **67% branch coverage**, only up, never down: python scripts/coverage_check.py, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **Input parser fuzz**: `python scripts/fuzz_smoke.py` byte-level mutation of asar headers / PE imports; CI also runs 30 s of real atheris fuzz

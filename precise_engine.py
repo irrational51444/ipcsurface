@@ -302,9 +302,13 @@ def _channel_ex(node, text, tables=None):
         if not propname:
             return None
         if tables and obj is not None:
-            hit = tables.get(_text_of(obj, text), {}).get(propname)
-            if hit:
-                return hit, 'const-table'
+            # `IPCChannel.X` 和 `ipc.IPCChannel.X` 都要能查：后者是命名空间导入。
+            # 只试最后一段，而且只有表里真有这个名字才算——不能瞎猜。
+            oname = _text_of(obj, text)
+            for cand in (oname, oname.rsplit('.', 1)[-1]):
+                hit = tables.get(cand, {}).get(propname)
+                if hit:
+                    return hit, 'const-table'
         return propname, 'heuristic'
     if first.type == 'subscript_expression':
         for c in _walk(first):
@@ -315,13 +319,43 @@ def _channel_ex(node, text, tables=None):
 
 
 def _object_const_strings(root, text):
-    """`const X = {k: '真名'}` → {X: {k: '真名'}}。
+    """把「属性名 → 真字符串」的表收集出来，两种写法：
 
-    只为把 `ipcMain.handle(DESKTOP_IPC.fileSave, ...)` 还原成真通道名。
+        const DESKTOP_IPC = { fileSave: "dsh-desktop:file-save" };
+        IPCChannel["RENDERER_START"] = "sentry-electron.renderer-start";
+
+    第二种是 TypeScript 编译出来的 enum，满街都是。ACLOS 那 6 条通道名
+    （ADD_METRIC / ENVELOPE / EVENT / RENDERER_START / SCOPE / STATUS）
+    早先只能拿属性名顶上，全是错的——真名是 sentry-electron.*。
+
+    只为把 `ipcMain.handle(X.y, ...)` 还原成真通道名。
     不收 value 不是字符串的项：那种还原不出来，就该老实标 heuristic。
     """
     tables = {}
+
+    def put(obj, key, value):
+        if not obj or not key:
+            return
+        tables.setdefault(obj, {})[key] = value
+
     for n in _walk(root):
+        # 形态二：OBJ["KEY"] = "value"
+        if n.type == 'assignment_expression':
+            left = n.child_by_field_name('left')
+            right = n.child_by_field_name('right')
+            if left is None or right is None or right.type != 'string':
+                continue
+            if left.type != 'subscript_expression':
+                continue
+            obj = left.child_by_field_name('object')
+            idx = left.child_by_field_name('index')
+            if obj is None or idx is None or idx.type != 'string':
+                continue
+            put(_text_of(obj, text), _text_of(idx, text)[1:-1],
+                _text_of(right, text)[1:-1])
+            continue
+
+        # 形态一：const X = { k: "value" }
         if n.type not in ('lexical_declaration', 'variable_declaration'):
             continue
         for d in n.named_children:
@@ -506,12 +540,18 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
 
     # 先把每个文件的（函数表, require 表, 文本）准备好
     modules = {}
+    # 常量表跨文件合并：TypeScript 编译出来的 enum 常常定义在 a.ts，
+    # 用的是 b.ts。`ipc.IPCChannel.ADD_METRIC` 只在本文件查就查不到。
+    # 常量名基本全局唯一，同名冲突时先收集到的赢。
+    all_tables = {}
     try:
         for rel in list(files.keys()):
             if not rel.endswith(text_ext):
                 continue
             text = files[rel].decode('utf-8', 'ignore')
             root = _parse(text).root_node
+            for _obj, _mapping in _object_const_strings(root, text).items():
+                all_tables.setdefault(_obj, {}).update(_mapping)
             funcs = _collect_functions(root, text)
             classes = _collect_classes(root, text)
             if classes:
@@ -531,7 +571,7 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
         for rel, mod in modules.items():
             text, root, funcs, req = mod['text'], mod['root'], mod['funcs'], mod['requires']
             arrays = _array_consts(root, text)
-            tables = _object_const_strings(root, text)
+            tables = all_tables
 
             def record(channel, handler, via='literal'):
                 if channel is None:

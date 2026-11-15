@@ -3662,6 +3662,57 @@ class SinkEvidenceTests(unittest.TestCase):
                 pass
 
 
+class EngineChoiceTests(unittest.TestCase):
+    """主引擎怎么选。降级不许静默：用了哪个、为什么不用那个，报告里得写。"""
+
+    SRC = ("const {ipcMain} = require('electron');\n"
+           "ipcMain.handle('a:b', (e, p) => 1);\n")
+
+    def run_report(self, *args):
+        import subprocess
+        import tempfile
+        blob = make_asar({'main.js': self.SRC.encode('utf-8')})
+        with tempfile.NamedTemporaryFile(suffix='.asar', delete=False) as fh:
+            fh.write(blob)
+            path = fh.name
+        try:
+            return subprocess.run([sys.executable, os.path.join(ROOT, 'ipcsurface.py'),
+                                   path, *args],
+                                  capture_output=True, text=True, encoding='utf-8',
+                                  errors='replace', timeout=180)
+        finally:
+            os.unlink(path)
+
+    def test_coarse_engine_says_so(self):
+        proc = self.run_report('--engine', 'coarse')
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertIn('粗扫', proc.stdout.splitlines()[0])
+        self.assertIn('主引擎：coarse', proc.stdout)
+
+    def test_precise_engine_when_available(self):
+        import precise_engine
+        if not precise_engine.AVAILABLE:
+            self.skipTest('没装 tree-sitter')
+        proc = self.run_report('--engine', 'precise')
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertIn('主引擎：precise', proc.stdout)
+        self.assertIn('覆盖率', proc.stdout)
+
+    def test_auto_picks_an_engine_and_says_which(self):
+        proc = self.run_report('--engine', 'auto')
+        self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
+        self.assertIn('主引擎：', proc.stdout)
+
+    def test_engine_precise_without_tree_sitter_is_loud(self):
+        # 明确要精查但跑不了，不许悄悄退成粗扫
+        import precise_engine
+        if precise_engine.AVAILABLE:
+            self.skipTest('装了 tree-sitter，这条只在缺件时适用')
+        proc = self.run_report('--engine', 'precise')
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn('precise', proc.stderr)
+
+
 class DynamicRegistrationTests(unittest.TestCase):
     """名字是变量的注册，看得见门、读不出名字——不能当没看见。
 

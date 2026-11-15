@@ -36,7 +36,11 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.177.0'
+__version__ = '0.178.0'
+
+# 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
+# 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
+ENGINE_MIN_COVERAGE = 0.9
 
 # 报告 schema 的唯一出处。build_asar_report 和指纹都用它，别再散着写。
 SCHEMA_VERSION = 'ipcsurface/asar/40'
@@ -5501,8 +5505,12 @@ def main(argv=None):
                         help='还原多转几趟。默认一趟：实测多转在这批样本上没多认出东西，还慢')
     parser.add_argument('--poke', metavar='POKE_JSON',
                         help='probe/poke.js 的输出，把真敲一遍的结果并进报告')
+    parser.add_argument('--engine', choices=('auto', 'coarse', 'precise'),
+                        default='auto',
+                        help='主引擎。auto=装了 tree-sitter 就用精查、覆盖不够就退回粗扫；'
+                             'coarse=只用名称级；precise=强制精查，跑不成直接报错')
     parser.add_argument('--precise', action='store_true',
-                        help='用 tree-sitter 精查层补一列（跨文件/类方法）。需要 pip install ipcsurface[precise]')
+                        help='等同 --engine precise（兼容旧写法）')
     parser.add_argument('--events-out', metavar='JSONL',
                         help='把扫描过程录成事件流（JSONL，append-only）。不给就不发事件，行为和以前完全一致')
     parser.add_argument('--live', action='store_true',
@@ -5635,8 +5643,15 @@ def main(argv=None):
             if renderer is not None:
                 # 最后一面留在屏幕上，接着就是报告本身
                 renderer.paint()
-        # precise：tree-sitter 精查层，opt-in，装不上就降级不硬撑
+        # 主引擎怎么选：装了 tree-sitter 就走精查，覆盖不够就退回粗扫。
+        # 零依赖底线不变——没装那层就是粗扫，不会因为缺件而失败。
+        # 回退的原因写进报告，不静默降级：降级本身也该被看见。
+        engine = 'coarse'
+        engine_why = '没装 tree-sitter，用名称级粗扫'
         if args.precise:
+            args.engine = 'precise'
+        want_precise = args.engine in ('auto', 'precise')
+        if want_precise:
             try:
                 import precise_engine
                 # 要全量三态，不只是「有危险 API」那一撮。
@@ -5647,12 +5662,38 @@ def main(argv=None):
                 facts['precise_detail'] = detail
                 facts['precise_sinks'] = {ch: v['apis'] for ch, v in detail.items()
                                           if v['apis']}
+                n_sink = sum(1 for v in detail.values() if v['status'] == 'with_sink')
+                n_clean = sum(1 for v in detail.values() if v['status'] == 'no_sink')
+                n_unk = sum(1 for v in detail.values() if v['status'] == 'unresolved')
+                confirmed = n_sink + n_clean
+                coverage = confirmed / (confirmed + n_unk) if (confirmed + n_unk) else 0.0
+                if not detail:
+                    engine_why = '精查一条通道都没认出，退回名称级'
+                elif coverage < ENGINE_MIN_COVERAGE:
+                    engine_why = ('精查覆盖率只有 %.0f%%（门槛 %.0f%%），退回名称级'
+                                  % (coverage * 100, ENGINE_MIN_COVERAGE * 100))
+                else:
+                    engine = 'precise'
+                    engine_why = ('精查认下 %d 条通道，覆盖率 %.0f%%'
+                                  % (len(detail), coverage * 100))
+                facts['engine_stats'] = {'coverage': round(coverage, 4),
+                                         'channels': len(detail),
+                                         'with_sink': n_sink, 'no_sink': n_clean,
+                                         'unresolved': n_unk}
             except SystemExit:
                 facts['precise_detail'] = None
                 facts['precise_sinks'] = None
-            except Exception:
+                engine_why = '没装 tree-sitter，用名称级粗扫'
+                if args.engine == 'precise':
+                    raise SystemExit('--engine precise 需要 pip install ipcsurface[precise]')
+            except Exception as exc:
                 facts['precise_detail'] = None
                 facts['precise_sinks'] = None
+                engine_why = '精查跑挂了（%s），退回名称级' % type(exc).__name__
+                if args.engine == 'precise':
+                    raise SystemExit('--engine precise 跑挂了：%s' % exc)
+        facts['engine'] = {'used': engine, 'reason': engine_why,
+                           'requested': args.engine}
         findings = audit_asar(facts)
         names = {n for n, _ in facts['handlers']} | {n for n, _ in facts['invokes']}
         probe_data = load_probe(args.runtime) if args.runtime else None

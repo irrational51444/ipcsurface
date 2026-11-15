@@ -753,6 +753,7 @@ def render_summary(facts, version, file_count, total_bytes):
     重算一遍等于给自己另开一个真相，那种漂移今天已经被打脸两次了。
     """
     from collections import Counter
+    eng = facts.get('engine') or {}
     out = []
     out.append('# ipcsurface · 一页纸')
     out.append('')
@@ -828,10 +829,16 @@ def render_summary(facts, version, file_count, total_bytes):
 
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
                 probe=None, poke=None, baseline=None):
-    out = ['# Electron 能力面清单（粗扫）', '']
+    eng = facts.get('engine') or {}
+    precise_main = eng.get('used') == 'precise'
+    out = ['# Electron 能力面清单（%s）' % ('语法树精查' if precise_main else '粗扫'), '']
     out.append(f'- 目标：`{os.path.abspath(target)}`')
     out.append(f'- {file_count} 个文件，{total_bytes / 1024 / 1024:.1f} MB，其中 {facts["scanned"]} 个提到 IPC')
     out.append(f'- {stamp()}')
+    if eng:
+        # 用的哪个引擎、为什么用它，写在最前面。
+        # 静默降级和「查无此项」是同一类毛病：不说的东西最容易被读成好消息。
+        out.append(f'- 主引擎：{eng.get("used")}（{eng.get("reason")}）')
     fp = fingerprint_of(target, [n for n, _ in facts['handlers'] + facts['invokes']
                                  + facts['exposes']])
     out.append(f"- 复算指纹：`{fp['digest']}`（输入 {fp['input_sha256'][:16] if fp['input_sha256'] else '读不到'}…，"
@@ -839,7 +846,11 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
     out.append('')
     out.append('## 这份报告能信多少')
     out.append('')
-    out.append('这是字符串级粗扫：只认写死在源码里的名字，不建语法树，跟着代码走不通。')
+    if precise_main:
+        out.append('主引擎是语法树精查：每个通道的 handler 都追到了末，'
+                   '追不到的单列「未判定」，不当成干净。')
+    else:
+        out.append('这是字符串级粗扫：只认写死在源码里的名字，不建语法树，跟着代码走不通。')
     out.append('要准的，先跑 `rea analyze-javascript-application`，再把 Evidence 喂给本工具。')
     strong = [h for h in facts['obfuscation'] if h[2] == 'strong']
     weak = [h for h in facts['obfuscation'] if h[2] == 'weak']

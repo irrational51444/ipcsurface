@@ -186,6 +186,53 @@ class ThreeStateTests(unittest.TestCase):
         finally:
             os.unlink(path)
 
+
+    def test_channel_name_resolved_through_ts_enum(self):
+        # TypeScript 编译出来的 enum：OBJ["KEY"] = "真名"。
+        # ACLOS 那 6 条通道名（ADD_METRIC 之类）就栽在这里：
+        # 真名是 sentry-electron.add-metric，只拿属性名是全错的。
+        main = ('const {ipcMain} = require("electron");\n'
+                'var IPCChannel = {};\n'
+                '(function (IPCChannel) { IPCChannel["ADD_METRIC"] = "sentry-electron.add-metric"; })(IPCChannel || (IPCChannel = {}));\n'
+                'ipcMain.on(IPCChannel.ADD_METRIC, (e, m) => 1);\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            detail = pe.analyse_asar_precise(path, detailed=True)
+            self.assertIn('sentry-electron.add-metric', detail)
+            self.assertEqual(detail['sentry-electron.add-metric']['via'], 'const-table')
+            self.assertNotIn('ADD_METRIC', detail, '属性名不能当通道名')
+        finally:
+            os.unlink(path)
+
+    def test_channel_name_resolved_through_namespaced_enum(self):
+        # `ipc.IPCChannel.X` 这种命名空间导入，查表要试最后一段
+        main = ('const {ipcMain} = require("electron");\n'
+                'var IPCChannel = {};\n'
+                'IPCChannel["EVENT"] = "sentry-electron.event";\n'
+                'ipcMain.on(ipc.IPCChannel.EVENT, (e, m) => 1);\n')
+        path = _make_asar([('main.js', main.encode()), ('package.json', b'{}')])
+        try:
+            detail = pe.analyse_asar_precise(path, detailed=True)
+            self.assertIn('sentry-electron.event', detail)
+        finally:
+            os.unlink(path)
+
+    def test_const_table_is_shared_across_files(self):
+        # 定义在 constants.js，用在 main.js。只查本文件就漏了。
+        consts = 'const IPC = { save: "app:save" };\nmodule.exports = { IPC };\n'
+        main = ('const {ipcMain} = require("electron");\n'
+                'const { IPC } = require("./constants");\n'
+                'ipcMain.handle(IPC.save, (e, p) => 1);\n')
+        path = _make_asar([('main.js', main.encode()),
+                           ('constants.js', consts.encode()),
+                           ('package.json', b'{}')])
+        try:
+            detail = pe.analyse_asar_precise(path, detailed=True)
+            self.assertIn('app:save', detail)
+            self.assertEqual(detail['app:save']['via'], 'const-table')
+        finally:
+            os.unlink(path)
+
     def test_method_call_does_not_borrow_a_top_level_function(self):
         # `guests.acquire()` 的 acquire 只是方法名。早先把同文件里的顶层
         # 函数 acquire 当成它去追，dsh 41 条通道里 32 条因此被误判成危险。

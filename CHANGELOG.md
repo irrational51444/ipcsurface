@@ -2,6 +2,63 @@
 
 只记改了人看得见的行为，不记重构。
 
+## 0.178.0 — 主引擎换成语法树精查，通道名不再靠猜
+
+上一版把三态做出来了，但精查还是 opt-in 的补充层。这一版把默认值翻过来。
+
+### 一、`--engine auto` 成为默认
+
+```
+auto     装了 tree-sitter 就走精查，覆盖率低于 90% 退回名称级
+coarse   强制名称级（快：dsh 75 秒 vs 150 秒）
+precise  强制精查，跑不成就报错，不偷偷退
+```
+
+零依赖底线没变：没装那层就是粗扫，不会因为缺件跑不起来。
+**降级不静默**——报告第一屏写清这次用哪个引擎、为什么：
+
+```
+- 主引擎：precise（精查认下 41 条通道，覆盖率 100%）
+```
+
+`--precise` 保留成 `--engine precise` 的别名，但语义变了：以前是「额外加一列」，
+现在是「主引擎就是它」。老脚本依赖「跑不成也不报错」的要改成 `--engine auto`。
+
+### 二、通道名：TypeScript enum 也能读
+
+```js
+IPCChannel["RENDERER_START"] = "sentry-electron.renderer-start";
+ipcMain.on(ipc.IPCChannel.RENDERER_START, ...)
+```
+
+这是 tsc 编出来的 enum，满街都是。以前只能拿属性名顶上，ACLOS 那 6 条
+（`ADD_METRIC` / `EVENT` / `SCOPE` / `STATUS` / `ENVELOPE` / `RENDERER_START`）
+全是错的——真名是 `sentry-electron.*`。
+
+两处一起改：能读 `OBJ["KEY"] = "真值"` 这种枚举赋值；常量表跨文件合并
+（定义在 types 里、注册在 main/ipc.js 里，只查本文件永远查不到）；
+`ipc.IPCChannel.X` 这种命名空间导入，查表时试最后一段。
+
+修完 ACLOS 的 `heuristic` 从 6 条降到 0，全部变成 `const-table`，
+6 条状态都是 `no_sink`（第三方 SDK 的遥测通道，handler 里确实没有危险调用）。
+
+### 三、四个包现在的样子
+
+| 包 | 通道 | 有证据 | 确认没有 | 未判定 | 证据档位 |
+|---|---|---|---|---|---|
+| obsidian | 47 | 22 | 25 | 0 | literal 47 |
+| dsh | 41 | 4 | 37 | 0 | const-table 41 |
+| ACLOS | 283 | 7 | 276 | 0 | literal 277 / const-table 6 |
+| bilibili | 1 | 0 | 1 | 0 | literal 1 |
+
+覆盖率四个包全是 100%。**猜测归零**：没有一条通道名是「拿属性名顶上」的。
+
+### 用例
+
+611 → 618。新增 7 条：TS enum 还原、命名空间导入查表、常量表跨文件共享、
+以及四条引擎选择（coarse 要说自己粗扫、precise 要报覆盖率、auto 要选一个并说明、
+明确要精查却缺件时不许悄悄退）。
+
 ## 0.177.0 — 「查无此项」不再等于「安全」：精扫改成三态
 
 爸爸指出一句话：`if apis:` 的语义是错的。它的意思是「这一条我没查到危险 API」，
