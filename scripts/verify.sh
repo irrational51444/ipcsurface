@@ -21,6 +21,14 @@ if [ "$unit" -eq 0 ]; then
   echo "   通过"
 else
   echo "   没过（退出码 $unit，完整输出在 /tmp/verify-unit.log）"
+  # 只报「退出码 1」等于让人去猜。CI 上没有那个文件可看，
+  # 所以这里把失败项和异常尾巴直接打出来。
+  echo "   --- 失败的用例 ---"
+  grep -E "^(ERROR|FAIL):" /tmp/verify-unit.log | head -20
+  echo "   --- 异常尾巴 ---"
+  grep -A 6 -E "^(ERROR|FAIL):" /tmp/verify-unit.log | tail -60
+  echo "   --- 最后 50 行 ---"
+  tail -50 /tmp/verify-unit.log
   fail=1
 fi
 
