@@ -855,8 +855,27 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
     strong = [h for h in facts['obfuscation'] if h[2] == 'strong']
     weak = [h for h in facts['obfuscation'] if h[2] == 'weak']
     if strong:
+        # 有强指纹 ≠ 这个包被加固过。VS Code 那种两万文件的包，
+        # playwright / zod / xterm 的打包产物里 eval 和超长单行一堆，
+        # 一句「这包动过手脚」就把它冤枉了。
+        # 判据分开看：指纹是不是集中在依赖库目录，以及涉及多少文件。
         out.append('')
-        out.append('这包动过手脚。下面的名字可能只是一部分，别拿它当完整清单。')
+        files_hit = {(h[1] or '').split(':')[0] for h in strong}
+        total_files = file_count or 0
+        share = ('，占全包 %.1f%% 的文件' % (len(files_hit) * 100.0 / total_files)
+                 if total_files else '')
+        out.append(f'{len(strong)} 处强指纹，落在 {len(files_hit)} 个文件里'
+                   f'{share}。')
+        out.append('')
+        if total_files and len(files_hit) * 100.0 / total_files >= 5:
+            out.append('这个密度更像是整包被处理过。下面的名字可能只是一部分，'
+                       '别拿它当完整清单。')
+        else:
+            # 两万文件的包里，playwright / zod / xterm 的打包产物自带一堆
+            # eval 和超长单行。看到指纹就断言「动过手脚」，是全篇最容易冤枉人的一句。
+            out.append('这个密度更像个别依赖库的压缩产物（`eval`、超长单行、'
+                       'hex 标识符都是打包常态），**不足以说明整个包被加固过**。'
+                       '要看的是这些指纹落在哪些文件上——列表就在下面。')
     out.append('')
     out.extend(confidence_ladder(facts, probe=probe, poke=poke))
     if baseline is not None:
@@ -1370,20 +1389,31 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             n_clean = sum(1 for _, v in items if v.get('status') == 'no_sink')
             n_unk = sum(1 for _, v in items if v.get('status') == 'unresolved')
             confirmed = n_sink + n_clean
-            cov = confirmed / (confirmed + n_unk) if (confirmed + n_unk) else 0.0
-            out.append(f'handler 覆盖 {cov * 100:.1f}%：{len(items)} 条通道里 '
-                       f'{confirmed} 条追到了 handler。{n_sink} 条连到危险 API，'
-                       f'{n_clean} 条追完没连到，{n_unk} 条未判定。')
+            denom = confirmed + n_unk
+            if denom:
+                out.append(f'handler 覆盖 {denom and confirmed / denom * 100:.1f}%：'
+                           f'{len(items)} 条通道里 {confirmed} 条追到了 handler。'
+                           f'{n_sink} 条连到危险 API，{n_clean} 条追完没连到，'
+                           f'{n_unk} 条未判定。')
+            else:
+                # 分母为 0 是「一条通道都没认出来」，不是「追了 0 条」。
+                # 印成 0.0% 会被读成后者——那正好是这个工具最不该犯的错。
+                out.append('这一层一条通道都没认出来，没有可判的 handler。'
+                           '这不是「追完了都是干净的」，是这一层什么都没拿到。')
             # 文件层覆盖单独说。只报 handler 覆盖率会虚高：
             # 一个文件根本没解析，它的通道压根不进分母。
             st = facts.get('engine_stats') or {}
             if st:
                 out.append('')
-                out.append(f"文件层：{st.get('files_total', '?')} 个文件里 "
-                           f"{st.get('files_parsed', '?')} 个解析了，"
-                           f"{st.get('files_skipped_ext', '?')} 个不是 js/mjs/cjs 没看，"
-                           f"{st.get('files_failed', '?')} 个解析失败"
-                           f"（文件覆盖 {st.get('file_coverage', 0) * 100:.0f}%）。")
+                _denom = (st.get('files_total', 0) or 0) - (st.get('files_skipped_ext', 0) or 0)
+                if _denom:
+                    out.append(f"文件层：{st.get('files_total', '?')} 个文件里，"
+                               f"{st.get('files_skipped_ext', '?')} 个不是 js/mjs/cjs "
+                               f"**这一层根本没看**；剩下 {_denom} 个 js 文件里 "
+                               f"{st.get('files_parsed', '?')} 个解析了、"
+                               f"{st.get('files_failed', '?')} 个失败。")
+                else:
+                    out.append('文件层：这个包里没有 js/mjs/cjs 文件，这一层无从下手。')
                 if st.get('files_failed'):
                     sample = '、'.join('`%s`' % n
                                        for n in (st.get('parse_failed_sample') or []))

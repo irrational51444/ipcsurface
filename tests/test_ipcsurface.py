@@ -298,7 +298,7 @@ class ObfuscationTests(unittest.TestCase):
         # new Function 是库的常规写法，不该被说成动过手脚
         facts = ipc.scan_asar({'a.js': b'var f = new Function("return 1")'})
         report = ipc.render_asar('demo.asar', facts, 1, 100)
-        self.assertNotIn('这包动过手脚', report)
+        self.assertNotIn('更像是整包被处理过', report)
         self.assertIn('[弱]', report)
 
     def test_main_process_obfuscation_is_flagged_first(self):
@@ -319,7 +319,7 @@ class ObfuscationTests(unittest.TestCase):
     def test_report_warns_when_obfuscated(self):
         facts = ipc.scan_asar({'a.js': b'eval(x)'})
         report = ipc.render_asar('demo.asar', facts, 1, 100)
-        self.assertIn('这包动过手脚', report)
+        self.assertIn('更像是整包被处理过', report)
         self.assertIn('## 混淆痕迹', report)
 
     def test_zero_channels_says_i_dont_know(self):
@@ -2072,6 +2072,23 @@ class GoldenScriptTests(unittest.TestCase):
                           '内容没变时必须说明 reason 未记录，否则「想改但没生效」会消失')
         finally:
             shutil.rmtree(folder, ignore_errors=True)
+
+
+    def test_sparse_fingerprints_do_not_condemn_the_whole_package(self):
+        """两万文件的包里，几个依赖库带 eval 是常态。
+
+        看到强指纹就断言「这包动过手脚」，是全篇最容易冤枉人的一句——
+        判据只能是密度，不是「有没有」。
+        """
+        entries = {}
+        for i in range(40):
+            entries['lib/m%d.js' % i] = b'var a = 1;\n'
+        entries['lib/vendor.js'] = b'eval("x");\n'
+        facts = ipc.scan_asar(entries)
+        text = ipc.render_asar('demo.asar', facts, len(entries), 400)
+        self.assertNotIn('更像是整包被处理过', text,
+                         '41 个文件里 1 个带 eval，不能断言整包被处理过')
+        self.assertIn('不足以说明整个包被加固过', text)
 
 
 class ChannelSinkTests(unittest.TestCase):

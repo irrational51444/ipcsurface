@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.180.0'
+__version__ = '0.181.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
@@ -5690,20 +5690,24 @@ def main(argv=None):
                 # 退回不是「扔掉精查的结果」，只是「报告主标题换成名称级」。
                 # 已经解析出来的通道判决留在 precise_detail 里，报告照常列，
                 # 上面写清这一层覆盖了多少。
+                skipped = pstats['files_skipped_ext']
                 if not detail:
-                    engine_why = ('精查一条通道都没认出（文件覆盖 %.0f%%），'
-                                  '主结论用名称级；精查这一层什么都没产出'
-                                  % (file_cov * 100))
+                    # 「文件覆盖 100%」单独拿出来很误导：分母只算了 js 文件，
+                    # 那些非 js 文件这一层压根没看。要说就一起说。
+                    engine_why = ('精查一条通道都没认出来'
+                                  '（js 文件覆盖 %.0f%%，另有 %d 个非 js 文件这一层不看），'
+                                  '主结论用名称级'
+                                  % (file_cov * 100, skipped))
                 elif (handler_cov < ENGINE_MIN_COVERAGE
                         or file_cov < ENGINE_MIN_COVERAGE):
-                    engine_why = ('精查覆盖不全（文件 %.0f%% / handler %.0f%%，'
+                    engine_why = ('精查覆盖不全（js 文件 %.0f%% / handler %.0f%%，'
                                   '门槛 %.0f%%），主结论用名称级；'
                                   '精查已解析的部分照常列出'
                                   % (file_cov * 100, handler_cov * 100,
                                      ENGINE_MIN_COVERAGE * 100))
                 else:
                     engine = 'precise'
-                    engine_why = ('精查认下 %d 条通道，文件覆盖 %.0f%%、'
+                    engine_why = ('精查认下 %d 条通道，js 文件覆盖 %.0f%%、'
                                   'handler 覆盖 %.0f%%'
                                   % (len(detail), file_cov * 100, handler_cov * 100))
             except SystemExit:
