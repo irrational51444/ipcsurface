@@ -15,7 +15,8 @@ Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a 
 
 ## One real run
 
-A real Electron app on this machine: 441 MB, 22,102 files, 5.0 s.
+A real Electron app on this machine: 369 files, 26.8 MB. The default engine is the
+syntax-tree pass — 40 s; `--engine coarse` switches to name level, 4 s.
 
 ![Real app scan](docs/img/case-real-scan.png)
 
@@ -36,11 +37,15 @@ The report is layered. Each layer answers one question and states what it cannot
 
 ### 1. How many doors does this building have? -> channel list
 
-Obsidian: **47 channels**. Recovered 47, literal 0, enumerated 0, harvested candidates 221.
+Obsidian: **47 channels**, and every one carries a verdict — 22 handlers reach a
+dangerous API, 25 walk to the end without reaching one, 0 unresolved. All 47 names are
+string literals; none is a guess. Harvested candidates: 217.
 
 ### 2. What is behind each door? -> dangerous APIs
 
-**116 dangerous APIs**, each with a provenance tier. Only **25 are hard findings**;
+**22 handlers reach a dangerous API**, each with evidence — direct call or reached
+through a same-file function, with file and byte offset. Absence of a hit means this
+layer did not reach one;
 the rest you neither trust nor need to verify.
 
 ### 3. Can an outside hand reach behind the door? -> three taint layers
@@ -254,12 +259,12 @@ Statements in one report do not carry the same weight. From that real report:
 | Literal names | 11 | Written verbatim; `file:line` lets you check the source | Only covers literal spellings |
 | Recovered names | 84 | Pulled out of string pools / constant tables, provenance is in source | Found ≠ actually a channel |
 | Computed names | 0 | There is a call here, the name is not literal | What the name is |
-| Harvested candidates | 221 (51 written by the app) | These strings look like channel names | Looking like one is not being one |
+| Harvested candidates | 217 (51 written by the app) | These strings look like channel names | Looking like one is not being one |
 | Unseen | unknown | Nothing | This path cannot see it |
 
 **Never sum the tiers.** One name can be both recovered and seen at runtime; both rows count it. The report is a map, not a verdict.
 
-**How good are those 221 candidates?** Grade first, then talk about precision. Grading uses only checkable facts (is it a channel name, does it live in an IPC-mentioning file, how many share its prefix) — no semantic guessing:
+**How good are those 217 candidates?** Grade first, then talk about precision. Grading uses only checkable facts (is it a channel name, does it live in an IPC-mentioning file, how many share its prefix) — no semantic guessing:
 
 | Grade | Real app | Meaning |
 | --- | --- | --- |
@@ -268,10 +273,10 @@ Statements in one report do not carry the same weight. From that real report:
 | clustered | 89 | looks like a name table (`tool`, `js` are the biggest prefixes) |
 | stray | 81 | appears only elsewhere; most likely noise |
 
-**Manual triage drops from 221 to 51** (top two grades); the other 170 are counted but collapsed until `--all`. Then precision:
+**Manual triage drops from 217 to 51** (top two grades); the other 170 are counted but collapsed until `--all`. Then precision:
 
 - **Fixtures** (python scripts/harvest_precision.py): 17 candidates, 17 are real channel names, precision **1.00** — but the fixtures are mine and tiny.
-- **The real app**: of 221 candidates, 41 are also statically seen channel names (same thing, two paths); the remaining **180 are lone**. Of those, only 12 appear in files that mention IPC, **0** sit next to a call (they live in name tables), 168 appear only elsewhere; 96 cluster by prefix (`tool=16`, `js=15`), 84 are scattered.
+- **The real app**: of 217 candidates, 41 are also statically seen channel names (same thing, two paths); the remaining **180 are lone**. Of those, only 12 appear in files that mention IPC, **0** sit next to a call (they live in name tables), 168 appear only elsewhere; 96 cluster by prefix (`tool=16`, `js=15`), 84 are scattered.
 - **Precision: unknown.** Those 180 have not been hand-checked, and inventing a number would be worse than leaving it out.
 
 One tier is missing from that table because **this app has none**: enumerated names (`enumerated`). When the value set is a literal array and the assembly is literals plus parameters, `for (const op of OPS) ipcMain.handle(makeChannel(op))` collapses into three concrete names. The `dyn` fixture has exactly those three; real apps rarely write it this way.
