@@ -664,7 +664,11 @@ def main():
         ok &= check('真包通道 41 条', channels == 41, str(channels))
         ok &= check('算不出来的名字是 0', len(facts['dynamic']) == 0,
                     str(len(facts['dynamic'])))
-        ok &= check('打捞候选 221 个', len(facts['harvested']) == 221,
+        # 221 → 217：0.182 起 harvest 会排除 CSS 样式串
+        # （`font-weight:bold` 这种，打包进去的库样式页），
+        # 这个真包里正好被滤掉 4 条。数字变了要让 selfcheck 跟着变，
+        # 不然它会红——但红的原因得写在这儿，别让人以为又漂了。
+        ok &= check('打捞候选 217 个', len(facts['harvested']) == 217,
                     str(len(facts['harvested'])))
         ok &= check('README 里的 41 条对得上', '41 条' in readme, str(channels))
 
