@@ -787,3 +787,8 @@
 
 - 变了的字段：fingerprint
 - 理由：fingerprint.version 从 0.184.0 变成 0.185.0。版本号参与 digest 是指纹的设计，发版必然变；这一版没动报告内容（只改测试的 skip 闸、README、截图和 verify.sh），json 契约不变。
+
+## 2026-11-15 22:12
+
+- 变了的字段：fingerprint
+- 理由：fingerprint.version 从 0.185.0 变成 0.186.0。版本号参与 digest 是指纹的设计，发版必然变；这一版只改 md 报告的排版（表格对齐、终端缩进），json 契约不变。

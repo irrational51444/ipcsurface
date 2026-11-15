@@ -2125,7 +2125,10 @@ class ReadabilityTests(unittest.TestCase):
         lines = [b'eval(x)', b'new Function("a")', b'eval(y)', b'eval(z)']
         facts = ipc.scan_asar({'a%d.js' % i: ln for i, ln in enumerate(lines)})
         text = ipc.render_asar('demo.asar', facts, len(lines), 100)
-        self.assertIn('| 强度 | 指纹 | 处数 | 样本 |', text)
+        header = [c.strip() for c in
+                  next(ln for ln in text.splitlines()
+                       if ln.startswith('| 强度')).split('|') if c.strip()]
+        self.assertEqual(header, ['强度', '指纹', '处数', '样本'])
         self.assertIn('合计', text)
 
     def test_headings_are_separated_by_blank_line(self):
@@ -2150,10 +2153,17 @@ class ReadabilityTests(unittest.TestCase):
         import jsreport as _jsr
         compact = _jsr.sink_table(facts, hit, compact=True)
         full = _jsr.sink_table(facts, hit, compact=False)
-        self.assertIn('- `a:b`：', '\n'.join(compact))
+        self.assertIn('- `a:b`', '\n'.join(compact))
+        self.assertTrue(any(ln.startswith('    ') and 'writeFileSync' in ln
+                            for ln in compact),
+                        'API 要缩进在通道下面')
         self.assertNotIn('| 通道 | API | 类别 |', '\n'.join(compact))
-        self.assertIn('| 通道 | API | 类别 |', '\n'.join(full),
-                      '写文件时全表不许丢')
+        head = [c.strip() for c in
+                next(ln for ln in full if ln.startswith('| 通道')).split('|')
+                if c.strip()]
+        self.assertEqual(head, ['通道', 'API', '类别', '档位', '见证', '实参',
+                                '证据', '位置', '跳数', '经过'],
+                         '写文件时全表不许丢')
 
 
 class LibraryVersusIntentTests(unittest.TestCase):
@@ -3739,7 +3749,14 @@ class SinkEvidenceTests(unittest.TestCase):
             self.skipTest('靶场没构建')
         facts, count, total = ipc.analyse_asar(asar)
         md = ipc.render_asar(asar, facts, count, total)
-        self.assertIn('| 通道 | API | 类别 | 档位 | 见证 | 实参 | 证据 | 位置 | 跳数 | 经过 |', md)
+        # 报告里不止一张以「| 通道」开头的表（校验那张也是），
+        # 要挑带 API 列的这张，不然比对的是别的表。
+        line = next(ln for ln in md.splitlines()
+                    if ln.startswith('| 通道') and '| API' in ln)
+        head = [c.strip() for c in line.split('|') if c.strip()][:10]
+        self.assertEqual(head, ['通道', 'API', '类别', '档位', '见证', '实参',
+                                '证据', '位置', '跳数', '经过'],
+                         '这张表必须带档位和位置两列')
         self.assertGreater(jsreport.count_sink_rows(md), 0, 'md 的 sink 表格是空的')
 
     def test_md_rows_match_json_evidence(self):

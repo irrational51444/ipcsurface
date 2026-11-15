@@ -9,6 +9,7 @@
 - 报告只摆证据、不下结论。
 """
 import hashlib
+import unicodedata
 import json
 import os
 import re
@@ -34,6 +35,67 @@ def stamp(version=None):
     return jslabels.stamp(version or VERSION)
 
 
+def _split_row(line):
+    """`| a | b |` → ['a', 'b']。单元格里如果出现转义竖线，这里不管——
+    报告里没有那种写法，真出现了也就是多切一格。"""
+    body = line.strip()
+    if body.startswith('|'):
+        body = body[1:]
+    if body.endswith('|'):
+        body = body[:-1]
+    return [c.strip() for c in body.split('|')]
+
+
+def _is_sep(cells):
+    return all(c and set(c) <= set('-: ') for c in cells)
+
+
+def _realign_table(block):
+    """把一块 Markdown 表格按显示宽度重新补空格。
+
+    手写 `| --- | --- |` 的表格，源码里竖线是对不齐的——终端和纯文本编辑器
+    里看就是一团。表格只在渲染器里好看，那是骗自己：报告第一读者是终端。
+    """
+    rows = [_split_row(ln) for ln in block]
+    if not rows:
+        return block
+    ncol = max(len(r) for r in rows)
+    rows = [r + [''] * (ncol - len(r)) for r in rows]
+    widths = [3] * ncol
+    for r in rows:
+        if _is_sep(r):
+            continue
+        for i, c in enumerate(r):
+            widths[i] = max(widths[i], _disp_width(c))
+
+    out = []
+    for r in rows:
+        if _is_sep(r):
+            out.append('| ' + ' | '.join('-' * widths[i] for i in range(ncol)) + ' |')
+        else:
+            out.append('| ' + ' | '.join(_pad(c, widths[i])
+                                         for i, c in enumerate(r)) + ' |')
+    return out
+
+
+def _align_tables(text):
+    """全文过一遍：连续的 `|` 行当成一张表，重新对齐。"""
+    lines = text.split('\n')
+    out = []
+    i = 0
+    while i < len(lines):
+        if lines[i].startswith('|'):
+            j = i
+            while j < len(lines) and lines[j].startswith('|'):
+                j += 1
+            out.extend(_realign_table(lines[i:j]))
+            i = j
+        else:
+            out.append(lines[i])
+            i += 1
+    return '\n'.join(out)
+
+
 def _tidy_markdown(text):
     """排版收尾：章节之间留空行，别让 `##` 紧贴着上一段的最后一行。
 
@@ -41,6 +103,7 @@ def _tidy_markdown(text):
     """
     text = re.sub(r'(?<!\n)\n(#{2,3} )', r'\n\n\1', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
+    text = _align_tables(text)
     return text.rstrip() + '\n'
 
 
@@ -683,6 +746,54 @@ def fingerprint_of(target, channel_names, params=None):
     return payload
 
 
+def _argcell(item):
+    """「实参」那一格：脏不脏、经没经过处理。"""
+    dirty = item.get('arg_tainted') or []
+    through = item.get('path_taint') or []
+    parts = []
+    if dirty:
+        parts.append('**%s**' % ','.join(dirty))
+    if through:
+        parts.append('经' + '/'.join(through))
+    return ' '.join(parts) if parts else '—'
+
+
+def _disp_width(text):
+    """显示宽度：中文占两格，英文占一格。对齐要按这个算，不能按 len()。"""
+    width = 0
+    for ch in text:
+        width += 2 if unicodedata.east_asian_width(ch) in ('W', 'F') else 1
+    return width
+
+
+def _pad(text, width):
+    return text + ' ' * max(0, width - _disp_width(text))
+
+
+def md_table(headers, rows):
+    """渲染 Markdown 表格，按显示宽度补齐空格。
+
+    只按 `|` 分隔、不补空格的话，源码里竖线对不齐——在终端和纯文本编辑器里
+    看就是一团。中文占两格，所以补齐必须按显示宽度算，不能按 len()。
+
+    headers/rows 里的每一格都可以带反引号，宽度按去不去掉反引号算都行，
+    这里按原样算（反引号本身也是可见字符）。
+    """
+    cells = [[_disp_width(str(c)) for c in headers]]
+    for row in rows:
+        cells.append([_disp_width(str(c)) for c in row])
+    widths = [max(col) for col in zip(*cells)]
+
+    def line(values):
+        padded = [_pad(str(v), widths[i]) for i, v in enumerate(values)]
+        return '| ' + ' | '.join(padded) + ' |'
+
+    out = [line(headers),
+           '| ' + ' | '.join('-' * w for w in widths) + ' |']
+    out.extend(line(row) for row in rows)
+    return out
+
+
 def sink_table(facts, hit, compact=False):
     """把「每条 API 的凭据」渲染出来。
 
@@ -718,28 +829,48 @@ def sink_table(facts, hit, compact=False):
                         % (name, api, danger_kind_of(api), tier, seen, argcell,
                            depth, at, '—' if hops is None else hops, via))
     if compact:
-        # 一条通道一行：`- 通道：API（档位）…`
+        # 一条通道一块，块里一行一个 API，栏位按显示宽度对齐。
+        # 「通道：API（档位）@位置、API（档位）@位置」那种写法，
+        # 第一列是对齐的，后面全糊在一起——人眼找不到栏。
         out = []
         for name in sorted(hit):
-            items = []
+            out.append('- `%s`' % name)
+            rows = []
             for api in sorted(hit[name]):
                 item = (ev.get(name) or {}).get(api) or {}
-                tier = item.get('tier') or '—'
-                at = item.get('at')
-                bits = '`%s`（%s）' % (api, tier)
-                if at and at != '—':
-                    bits += ' @ `%s`' % at
-                items.append(bits)
-            out.append('- `%s`：%s' % (name, '、'.join(items)))
+                rows.append((
+                    '`%s`' % api,
+                    item.get('tier') or '—',
+                    item.get('at') or '—',
+                ))
+            w_api = max(_disp_width(r[0]) for r in rows)
+            w_tier = max(_disp_width(r[1]) for r in rows)
+            for api, tier, at in rows:
+                out.append('    %s  %s  %s' % (
+                    _pad(api, w_api), _pad(tier, w_tier), at))
         out.append('')
-        out.append('> 这是一条通道一行的简版。每处证据的见证、实参、跳数、'
-                   '经过路径要看全，用 `-o report.md` 写到文件里。')
+        out.append('> 每处证据的见证、实参、跳数、经过路径要看全，'
+                   '用 `-o report.md` 写到文件里。')
         return out
 
-    out = ['| 通道 | API | 类别 | 档位 | 见证 | 实参 | 证据 | 位置 | 跳数 | 经过 |',
-           '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |']
-    out.extend(rows)
-    return out
+    raw = []
+    for name in sorted(hit):
+        for api in sorted(hit[name]):
+            item = (ev.get(name) or {}).get(api) or {}
+            raw.append([
+                '`%s`' % name,
+                '`%s`' % api,
+                danger_kind_of(api),
+                item.get('tier') or '—',
+                '+'.join(item.get('seen_by') or []) or '—',
+                _argcell(item),
+                item.get('depth') or '—',
+                item.get('at') or '—',
+                '—' if item.get('hops') is None else item.get('hops'),
+                item.get('via') or '—',
+            ])
+    return md_table(['通道', 'API', '类别', '档位', '见证', '实参', '证据',
+                     '位置', '跳数', '经过'], raw)
 
 
 def sink_table_legend():
@@ -791,7 +922,7 @@ def count_sink_rows(md_text, section='## 按语法树再走一遍'):
             continue
         # 只数 7 列的主表（通道/API/类别/档位/位置/跳数/经过）。
         # 同一节后面还有个 5 列的「借来的 API」小表，那不是主结论，别混进来。
-        if inside and re.match(r'^\| `[^`]+` \| `[^`]+` \|', line):
+        if inside and re.match(r'^\|\s+`[^`]+`\s+\|\s+`[^`]+`\s+\|', line):
             if len(line.split('|')) == 12:
                 total += 1
     return total
