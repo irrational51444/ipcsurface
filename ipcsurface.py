@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.179.0'
+__version__ = '0.180.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
@@ -5658,7 +5658,8 @@ def main(argv=None):
                 # 早先这里拿的是「有证据的通道」，于是「handler 里没有危险调用」
                 # 和「handler 根本没解出来」在输出里长得一模一样——
                 # 都是不出现。报告因此永远比真相干净。
-                detail = precise_engine.analyse_asar_precise(args.input, detailed=True)
+                detail, pstats = precise_engine.analyse_asar_precise(
+                    args.input, detailed=True, want_stats=True)
                 facts['precise_detail'] = detail
                 facts['precise_sinks'] = {ch: v['apis'] for ch, v in detail.items()
                                           if v['apis']}
@@ -5666,20 +5667,45 @@ def main(argv=None):
                 n_clean = sum(1 for v in detail.values() if v['status'] == 'no_sink')
                 n_unk = sum(1 for v in detail.values() if v['status'] == 'unresolved')
                 confirmed = n_sink + n_clean
-                coverage = confirmed / (confirmed + n_unk) if (confirmed + n_unk) else 0.0
+                # 两个覆盖率，别再混成一个数：
+                #   handler 率 = 认出来的通道里有多少把 handler 走完了
+                #   文件率     = js/mjs/cjs 文件里有多少真解析了
+                # 只看前者会虚高：一个文件解析失败，它的通道压根不进分母。
+                handler_cov = (confirmed / (confirmed + n_unk)
+                               if (confirmed + n_unk) else 0.0)
+                denom = pstats['files_total'] - pstats['files_skipped_ext']
+                file_cov = pstats['files_parsed'] / denom if denom else 0.0
+                facts['engine_stats'] = {
+                    'handler_coverage': round(handler_cov, 4),
+                    'file_coverage': round(file_cov, 4),
+                    'channels': len(detail),
+                    'with_sink': n_sink, 'no_sink': n_clean,
+                    'unresolved': n_unk,
+                    'files_total': pstats['files_total'],
+                    'files_skipped_ext': pstats['files_skipped_ext'],
+                    'files_parsed': pstats['files_parsed'],
+                    'files_failed': pstats['files_failed'],
+                    'parse_failed_sample': pstats['parse_failed_sample'],
+                }
+                # 退回不是「扔掉精查的结果」，只是「报告主标题换成名称级」。
+                # 已经解析出来的通道判决留在 precise_detail 里，报告照常列，
+                # 上面写清这一层覆盖了多少。
                 if not detail:
-                    engine_why = '精查一条通道都没认出，退回名称级'
-                elif coverage < ENGINE_MIN_COVERAGE:
-                    engine_why = ('精查覆盖率只有 %.0f%%（门槛 %.0f%%），退回名称级'
-                                  % (coverage * 100, ENGINE_MIN_COVERAGE * 100))
+                    engine_why = ('精查一条通道都没认出（文件覆盖 %.0f%%），'
+                                  '主结论用名称级；精查这一层什么都没产出'
+                                  % (file_cov * 100))
+                elif (handler_cov < ENGINE_MIN_COVERAGE
+                        or file_cov < ENGINE_MIN_COVERAGE):
+                    engine_why = ('精查覆盖不全（文件 %.0f%% / handler %.0f%%，'
+                                  '门槛 %.0f%%），主结论用名称级；'
+                                  '精查已解析的部分照常列出'
+                                  % (file_cov * 100, handler_cov * 100,
+                                     ENGINE_MIN_COVERAGE * 100))
                 else:
                     engine = 'precise'
-                    engine_why = ('精查认下 %d 条通道，覆盖率 %.0f%%'
-                                  % (len(detail), coverage * 100))
-                facts['engine_stats'] = {'coverage': round(coverage, 4),
-                                         'channels': len(detail),
-                                         'with_sink': n_sink, 'no_sink': n_clean,
-                                         'unresolved': n_unk}
+                    engine_why = ('精查认下 %d 条通道，文件覆盖 %.0f%%、'
+                                  'handler 覆盖 %.0f%%'
+                                  % (len(detail), file_cov * 100, handler_cov * 100))
             except SystemExit:
                 facts['precise_detail'] = None
                 facts['precise_sinks'] = None

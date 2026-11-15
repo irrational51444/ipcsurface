@@ -1371,10 +1371,32 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
             n_unk = sum(1 for _, v in items if v.get('status') == 'unresolved')
             confirmed = n_sink + n_clean
             cov = confirmed / (confirmed + n_unk) if (confirmed + n_unk) else 0.0
-            out.append(f'覆盖 {cov * 100:.1f}%：{len(items)} 条通道里 {confirmed} 条'
-                       f'追到了 handler。{n_sink} 条有危险调用，{n_clean} 条追完确认没有，'
-                       f'{n_unk} 条未判定。')
+            out.append(f'handler 覆盖 {cov * 100:.1f}%：{len(items)} 条通道里 '
+                       f'{confirmed} 条追到了 handler。{n_sink} 条连到危险 API，'
+                       f'{n_clean} 条追完没连到，{n_unk} 条未判定。')
+            # 文件层覆盖单独说。只报 handler 覆盖率会虚高：
+            # 一个文件根本没解析，它的通道压根不进分母。
+            st = facts.get('engine_stats') or {}
+            if st:
+                out.append('')
+                out.append(f"文件层：{st.get('files_total', '?')} 个文件里 "
+                           f"{st.get('files_parsed', '?')} 个解析了，"
+                           f"{st.get('files_skipped_ext', '?')} 个不是 js/mjs/cjs 没看，"
+                           f"{st.get('files_failed', '?')} 个解析失败"
+                           f"（文件覆盖 {st.get('file_coverage', 0) * 100:.0f}%）。")
+                if st.get('files_failed'):
+                    sample = '、'.join('`%s`' % n
+                                       for n in (st.get('parse_failed_sample') or []))
+                    out.append(f'解析失败的文件：{sample} —— 这些文件里的通道这一层看不见。')
             out.append('')
+            # 这一层覆盖不全时，必须自己先声明。不声明的话，
+            # 下面这张表会被读成「这个包的全部通道」。
+            eng = facts.get('engine') or {}
+            if eng.get('used') != 'precise':
+                out.append('> **这一层覆盖不全，下面只是已解析部分的结果。**'
+                           '这张表里没有的通道，不代表它不存在——'
+                           '只代表这一层没走到它。')
+                out.append('')
             if n_unk:
                 out.append('> 「未判定」不是安全。它表示 handler 是跨模块引用、'
                            '算出来的名字之类，这一层解不出来。'
@@ -1394,7 +1416,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                     label = '**未判定**'
                     why = 'handler 没解出来，这一层到不了它'
                 elif st == 'with_sink':
-                    label = '确定有风险'
+                    label = 'handler 连到危险 API'
                     direct = v.get('direct') or []
                     if direct:
                         why = '直接调用 ' + '、'.join(direct)
@@ -1409,7 +1431,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                     elif via == 'const-table':
                         why += '；通道名由常量表还原'
                 else:
-                    label = '确定没有'
+                    label = 'handler 里没连到'
                     why = 'handler 走到末尾，没有危险调用；' + loc
                 out.append(f'| `{ch}` | {label} | {why} |')
                 shown += 1
@@ -1417,8 +1439,10 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
                 out.append('')
                 out.append(f'只列了前 {shown} 条，剩下 {len(items) - shown} 条在 json 里。')
             out.append('')
-            out.append('粗扫看着条数更多，但那不是本事：它给的每条都答不出'
-                       '「危险 API 在哪一行」。这里的每一条都能追问。')
+            out.append('这几种状态说的是**这一层看到了什么**，不是「这个通道安不安全」。'
+                       '连到危险 API 只说明 handler 里走到了那些调用；'
+                       '没连到只说明这一层没看见，不等于没有——'
+                       '参数可不可控、上游拦没拦，这一层都不判。')
             out.append('')
     if facts['dynamic']:
         for what, where in facts['dynamic'][:20]:

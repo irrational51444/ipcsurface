@@ -3696,7 +3696,8 @@ class EngineChoiceTests(unittest.TestCase):
         proc = self.run_report('--engine', 'precise')
         self.assertEqual(proc.returncode, 0, proc.stderr[-400:])
         self.assertIn('主引擎：precise', proc.stdout)
-        self.assertIn('覆盖率', proc.stdout)
+        self.assertIn('handler 覆盖', proc.stdout)
+        self.assertIn('文件层：', proc.stdout)
 
     def test_auto_picks_an_engine_and_says_which(self):
         proc = self.run_report('--engine', 'auto')

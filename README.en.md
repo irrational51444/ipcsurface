@@ -5,7 +5,7 @@
 [![python](docs/badges/python.svg)](pyproject.toml)
 [![license](docs/badges/license.svg)](LICENSE)
 
-**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.179.0**.
+**Squash an Electron app's capability surface onto one page.** Zero dependencies beyond Python. Current **0.180.0**.
 
 Point it at an `.asar` archive (or a REA Evidence JSON, or a dll/exe) and get a report: how many IPC channels exist, which names are literal, which were recovered by deobfuscation, which only look like channels — plus **how far you can trust it, and how to check it yourself**.
 
@@ -144,6 +144,19 @@ The first screen says which engine ran and why:
 Below 90% coverage it falls back to name level and prints the reason. **Falling back
 is never silent** — same class of bug as "nothing found" being read as "nothing there".
 
+**Falling back only changes the headline, it does not throw away what was already
+computed.** Files the precise layer parsed and channels it judged are still listed,
+with the scope stated above the table:
+
+```
+handler 覆盖 100.0%：3 条通道里 3 条追到了 handler。0 条有危险调用，3 条追完没连到，0 条未判定。
+文件层：650 个文件里 487 个解析了，163 个不是 js/mjs/cjs 没看，0 个解析失败（文件覆盖 100%）。
+```
+
+Coverage is two numbers, never one: **handler rate** (judged handlers / channels found)
+and **file rate** (js files actually parsed / js files). Handler rate alone inflates —
+a file that was never parsed contributes no channels to the denominator at all.
+
 ```bash
 pip install 'ipcsurface[precise]'
 python ipcsurface.py app.asar --precise -o report.md
@@ -154,12 +167,22 @@ no fourth:
 
 | State | Meaning | Usable as evidence |
 | --- | --- | --- |
-| `with_sink` | a dangerous API was reached | yes, with file and offset |
-| `no_sink` | the handler was walked to the end, nothing dangerous inside | yes |
+| `with_sink` | a dangerous API was reached inside the handler | yes, with file and offset |
+| `no_sink` | handler walked to the end, this layer reached nothing | proves "this layer saw nothing", not safety |
 | `unresolved` | handler is `handlers.save`, a member access that cannot be resolved | **no, and it is not clean either** |
 
 The third row is the point. These three used to look identical in the output: none
-of them appeared. So the report was always cleaner than the truth — "no dangerous
+of them appeared.
+
+**These states describe what this layer saw, not whether the channel is safe.** A
+`sink` means the handler walks into those calls; the absence of one means this layer
+did not reach it. Argument controllability and upstream guards are not judged here.
+
+**Nor do the two static views corroborate each other.** Name-level and syntax-tree
+share the same tokenizer, the same dangerous-API list and the same static blind spots
+(dynamic registration, runtime-built names, encrypted payloads, code inside `eval`).
+The second pass brings no independent information — it is not double confirmation.
+For that you need a runtime probe. So the report was always cleaner than the truth — "no dangerous
 API found" was read as "nothing dangerous". On four real packages the channels
 counted by both layers are nearly the same (obsidian 47/47, dsh 41/41,
 bilibili 1/1, ACLOS 286/283); what differs is that each one now carries a sentence
@@ -356,7 +379,7 @@ Output: `disk_full`, `permission_denied`, `short_write`, `replace_failed`, `syml
 
 ## How quality is held
 
-- **619 test cases**
+- **621 test cases**
 - **67% branch coverage**, only up, never down: python scripts/coverage_check.py, standard library only
 - **15 smoke items**, every CLI entry point executed; skips are announced and the summary line is computed by the script
 - **Input parser fuzz**: `python scripts/fuzz_smoke.py` byte-level mutation of asar headers / PE imports; CI also runs 30 s of real atheris fuzz

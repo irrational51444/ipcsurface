@@ -595,8 +595,13 @@ def _require_map(root, text):
 
 
 def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
-                          detailed=False):
-    """precise 口径的 {channel: [危险 API]}。比粗扫多一层跨文件。"""
+                          detailed=False, want_stats=False):
+    """precise 口径的 {channel: [危险 API]}。比粗扫多一层跨文件。
+
+    想连「这一层到底覆盖了多少」一起拿，传 want_stats=True，返回 (结果, stats)。
+    stats 里的数字是退不退回名称级的依据，也是报告里那句「只覆盖了 X%」的来源——
+    没有它，覆盖率就只能靠 handler 判决自己算，看不出有多少文件根本没解析。
+    """
     if not AVAILABLE:
         raise SystemExit('tree-sitter 没装：pip install ipcsurface[precise]')
 
@@ -609,12 +614,24 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
     # 用的是 b.ts。`ipc.IPCChannel.ADD_METRIC` 只在本文件查就查不到。
     # 常量名基本全局唯一，同名冲突时先收集到的赢。
     all_tables = {}
+    parse_failed = []
+    skipped_ext = 0
     try:
         for rel in list(files.keys()):
             if not rel.endswith(text_ext):
+                # 扩展名不在名单里的文件这一层根本没看。粗扫是全都看的，
+                # 这个差值要显式记下来，不能让它变成「精扫更干净」。
+                skipped_ext += 1
                 continue
             text = files[rel].decode('utf-8', 'ignore')
-            root = _parse(text).root_node
+            try:
+                root = _parse(text).root_node
+            except Exception:
+                # 一个文件解析不了不许拖垮整包：记下来，继续。
+                # 以前这里没 try，单个文件抛异常会让整个精扫失败，
+                # 然后 auto 退回名称级——其他文件已经解析出来的东西全白干。
+                parse_failed.append(rel)
+                continue
             for _obj, _mapping in _object_const_strings(root, text).items():
                 all_tables.setdefault(_obj, {}).update(_mapping)
             funcs = _collect_functions(root, text)
@@ -752,10 +769,17 @@ def analyse_asar_precise(asar_path, text_ext=('.js', '.mjs', '.cjs'),
                 channel, via = got
                 handler = _handler_of(n)
                 record(channel, handler, via)
-        if detailed:
-            return detail
-        # 默认接口只返回「有证据」的那部分，老调用方不受影响。
-        return {k: sorted(v) for k, v in out.items()}
+        stats = {
+            'files_total': len(files),
+            'files_skipped_ext': skipped_ext,
+            'files_parsed': len(modules),
+            'files_failed': len(parse_failed),
+            'parse_failed_sample': parse_failed[:5],
+        }
+        result = detail if detailed else {k: sorted(v) for k, v in out.items()}
+        if want_stats:
+            return result, stats
+        return result
     finally:
         files.close()
 

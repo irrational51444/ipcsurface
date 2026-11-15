@@ -187,6 +187,41 @@ class ThreeStateTests(unittest.TestCase):
             os.unlink(path)
 
 
+    def test_one_bad_file_does_not_kill_the_whole_scan(self):
+        # 以前 _parse 裸调用：一个文件炸掉，整包精扫失败，
+        # auto 退回名称级——其他文件已经解析出来的通道全白干。
+        main = ('const {ipcMain} = require("electron");\n'
+                'ipcMain.handle("ok", (e, p) => 1);\n')
+        broken = 'function ((( <<< this is not javascript\n'
+        path = _make_asar([('main.js', main.encode()),
+                           ('broken.js', broken.encode()),
+                           ('package.json', b'{}')])
+        try:
+            detail, stats = pe.analyse_asar_precise(path, detailed=True,
+                                                    want_stats=True)
+            self.assertIn('ok', detail, '坏文件不能把好文件的结论一起带走')
+            # tree-sitter 是容错解析：语法错不抛异常，它给出带 ERROR 节点的树。
+            # 所以 files_failed 一般是 0，那个分支是给「真抛了」兜底的。
+            # 这条断言守的是「一个文件出问题不许拖垮整包」，不是「必须失败」。
+            self.assertEqual(stats['files_parsed'], 2)
+            self.assertEqual(stats['files_failed'], 0)
+        finally:
+            os.unlink(path)
+
+    def test_stats_count_files_this_layer_never_looked_at(self):
+        # 粗扫扫所有文件，精扫只扫 js/mjs/cjs。这个差值要显式记下来，
+        # 不能让它变成「精扫更干净」。
+        main = 'const {ipcMain} = require("electron");\nipcMain.handle("a", (e) => 1);\n'
+        path = _make_asar([('main.js', main.encode()),
+                           ('notes.txt', b'ipcMain.handle("fake", f)'),
+                           ('package.json', b'{}')])
+        try:
+            _, stats = pe.analyse_asar_precise(path, detailed=True, want_stats=True)
+            self.assertEqual(stats['files_parsed'], 1)
+            self.assertEqual(stats['files_skipped_ext'], 2, 'txt 和 json 都不在这一层')
+        finally:
+            os.unlink(path)
+
     def test_es5_prototype_method_as_handler(self):
         # ASUS 的写法：ipcMain.on("uwp", this.onUWPEvent)，
         # 方法体在 e.prototype.onUWPEvent = function () {} 里。
