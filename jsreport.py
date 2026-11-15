@@ -34,6 +34,16 @@ def stamp(version=None):
     return jslabels.stamp(version or VERSION)
 
 
+def _tidy_markdown(text):
+    """排版收尾：章节之间留空行，别让 `##` 紧贴着上一段的最后一行。
+
+    内容一个字不动，只调空行。报告是给人读的，糊成一团等于没写。
+    """
+    text = re.sub(r'(?<!\n)\n(#{2,3} )', r'\n\n\1', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.rstrip() + '\n'
+
+
 def audit_asar(facts):
     """粗扫也有可疑项。不然挂在 CI 上的 --fail-on 在这条路上等于没用。"""
     findings = []
@@ -842,7 +852,7 @@ def render_summary(facts, version, file_count, total_bytes):
     out.append('')
     out.append('要逐条看证据，跑 `python ipcsurface.py <包> -o full.md`。')
     out.append('')
-    return '\n'.join(out)
+    return _tidy_markdown('\n'.join(out))
 
 
 def render_asar(target, facts, file_count, total_bytes, show_all=False, findings=None,
@@ -932,15 +942,31 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
         out.append('')
         out.append('解不开，但认得出。强的那几条说明代码被处理过；弱的多半只是库的写法。')
         out.append('')
-        shown = (strong + weak) if show_all else (strong + weak)[:8]
-        for name, where, level in shown:
+        # 一条条平铺是读不下去的：105 处摊成 105 行，人一眼就弃了。
+        # 按「哪一类指纹」聚起来，每类给条数和两个样本，要全的加 --all。
+        groups = {}
+        for name, where, level in facts['obfuscation']:
+            groups.setdefault((level, name), []).append(where)
+        order = {'strong': 0, 'weak': 1}
+        rows = sorted(groups.items(),
+                      key=lambda kv: (order.get(kv[0][0], 9), -len(kv[1]), kv[0][1]))
+        out.append('| 强度 | 指纹 | 处数 | 样本 |')
+        out.append('| --- | --- | --- | --- |')
+        for (level, name), wheres in rows:
             tag = '强' if level == 'strong' else '弱'
-            out.append(f'- [{tag}] {name}  `{where}`')
-        rest = len(facts['obfuscation']) - len(shown)
-        if rest > 0:
-            out.append(f'- 还有 {rest} 处没列，加 `--all` 看全')
+            if show_all:
+                sample = '、'.join('`%s`' % w for w in wheres[:3])
+            else:
+                sample = '`%s`' % wheres[0]
+            more = f'…等 {len(wheres)} 处' if len(wheres) > 1 else ''
+            out.append(f'| [{tag}] | {name} | {len(wheres)} | {sample}{more} |')
         out.append('')
-        out.append('> 一个两万文件的包里 `new Function` 出现几十次是常态，那不是混淆。')
+        out.append(f'合计 {len(facts["obfuscation"])} 处，'
+                   f'分布在 {len({w.split(":")[0] for _n, w, _l in facts["obfuscation"]})} 个文件里。'
+                   '逐条清单加 `--all` 看全。')
+        out.append('')
+        out.append('> 一个两万文件的包里 `new Function` 出现几十次是常态，那不是混淆。'
+                   '看的是密度和落在哪些文件上，不是有没有。')
 
     if facts.get('recovered'):
         out.append('## 从 sourcemap 翻回来的')
@@ -1504,7 +1530,7 @@ def render_asar(target, facts, file_count, total_bytes, show_all=False, findings
     if findings:
         out.append('')
         out.append('## 可疑项')
-        order = {'high': 0, 'medium': 1}
+        order = {'high': 0, 'medium': 1, 'note': 2}
         for level, text, where in sorted(findings, key=lambda f: order.get(f[0], 9))[:10]:
             out.append(f'- [{level}] {text}  `{where}`')
-    return '\n'.join(out)
+    return _tidy_markdown('\n'.join(out))

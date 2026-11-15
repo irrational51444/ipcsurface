@@ -36,7 +36,7 @@ def stamp():
     return jsreport.stamp(__version__)
 
 
-__version__ = '0.182.0'
+__version__ = '0.183.0'
 
 # 精查覆盖率到多少才敢当主引擎。低于这个数就退回名称级——
 # 「大部分 handler 都解出来了」和「大部分解不出来还硬报」是两件事。
@@ -1474,6 +1474,40 @@ def restore_all(text, allow_eval=True, extra=None, members=None, original_size=N
     return text, passes, unstable
 
 
+def _normalize_preload(value):
+    """`preload` 后面那一段，取成一个看得懂的路径；认不出就返回 None。
+
+    压缩过的代码里 `webPreferences` 这个词出现在各种奇怪的地方：
+    `e.preload`、`!0`、`[`、`null`——正则一视同仁，全塞进 preloads。
+    dsh 那个包 12 条里 10 条是这种，报告第一屏就没法看了。
+
+    还有 `fileURLToPath(new URL("./preload-welcome.cjs"))` 这种：
+    整串摆出来没有意义，人要看的是 `./preload-welcome.cjs`。
+    """
+    if not value:
+        return None
+    # 抓的时候正则在源码上跑，字符串里的引号可能带着反斜杠（\"cssom\"）。
+    # 不先还原，切出来的就是 `cssom\` 这种东西。
+    raw = value.strip().replace('\\"', '"').replace("\\'", "'")
+    # 1) 串里有引号包着的路径，就取那一段
+    for m in re.finditer(r'''["'`]([^"'`]{3,120})["'`]''', raw):
+        cand = m.group(1).strip().rstrip('\\')
+        if any(ch in cand for ch in ('.', '/')):
+            return cand
+    # 2) 整串本身就只由路径字符组成
+    cand = raw.strip('"\'`')
+    if len(cand) < 4:
+        return None
+    if not re.fullmatch(r'[A-Za-z0-9_./\\@~:-]+', cand):
+        return None
+    if not any(ch in cand for ch in ('.', '/', '\\')):
+        return None
+    # 3) `this.preload` / `e.preloads`：读属性，不是配置
+    if re.fullmatch(r'[A-Za-z_$][\w$]*\.(preload|preloads)', cand):
+        return None
+    return cand
+
+
 def scan_asar(files, allow_eval=True, max_passes=1, events=None):
     """按字符串扫一遍源码。粗，但不用装任何东西。
 
@@ -1613,7 +1647,9 @@ def scan_asar(files, allow_eval=True, max_passes=1, events=None):
                     if not value.startswith(("'", '"')):
                         dynamic.append((f'{kind.split("_")[1]}: {value}', where))
                 elif kind == 'preload':
-                    preloads.append((value, where))
+                    path = _normalize_preload(value)
+                    if path:
+                        preloads.append((path, where))
                 elif kind in ('contextIsolation', 'nodeIntegration', 'sandbox'):
                     # 这三个字段只该出现在 `webPreferences: {...}` 里。
                     # obsidian 的 app.js 里有个 HTML 布尔属性字典写着 `sandbox:u`

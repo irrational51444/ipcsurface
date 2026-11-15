@@ -2092,6 +2092,53 @@ class GoldenScriptTests(unittest.TestCase):
 
 
 
+
+class ReadabilityTests(unittest.TestCase):
+    """报告是给人读的。糊成一团、塞满噪音，等于没写。"""
+
+    def test_preload_only_keeps_paths(self):
+        # 压缩代码里 `webPreferences` 这个词到处冒：e.preload / !0 / [ / null。
+        # dsh 那个包 12 条里 10 条是垃圾，第一屏就没法看。
+        src = (b'webPreferences:{preload:"./preload-app.cjs"},'
+               b'a=e.preload,b=!0,c=null')
+        facts = ipc.scan_asar({'main.js': src})
+        got = [v for v, _w in facts['preloads']]
+        self.assertIn('./preload-app.cjs', got)
+        for junk in ('!0', 'null', 'e.preload'):
+            self.assertNotIn(junk, got, f'{junk} 不是路径，不该进 preloads')
+
+    def test_preload_expression_is_reduced_to_the_path(self):
+        # 抓到的常常是表达式的一截：人要看的是里面那个路径，不是整串。
+        cases = [
+            ('fileURLToPath(new URL("./preload-welcome.cjs"', './preload-welcome.cjs'),
+            ('"./preload-app.cjs"', './preload-app.cjs'),
+            ('!.\\0', None),
+            ('e.preload', None),
+            ('Object.freeze({assets:["cssom"]', None),
+        ]
+        got = {raw: ipc._normalize_preload(raw) for raw, _want in cases}
+        want = dict(cases)
+        self.assertEqual(got, want, '这些串该归一化成什么，表在这儿')
+
+    def test_obfuscation_is_grouped_not_flat(self):
+        # 105 处摊成 105 行，人一眼就弃了。按种类聚成表。
+        lines = [b'eval(x)', b'new Function("a")', b'eval(y)', b'eval(z)']
+        facts = ipc.scan_asar({'a%d.js' % i: ln for i, ln in enumerate(lines)})
+        text = ipc.render_asar('demo.asar', facts, len(lines), 100)
+        self.assertIn('| 强度 | 指纹 | 处数 | 样本 |', text)
+        self.assertIn('合计', text)
+
+    def test_headings_are_separated_by_blank_line(self):
+        src = b'ipcMain.handle("a:b", f)'
+        facts = ipc.scan_asar({'main.js': src})
+        text = ipc.render_asar('demo.asar', facts, 1, 100)
+        for idx, line in enumerate(text.splitlines()):
+            if line.startswith('## ') and idx > 0:
+                self.assertEqual(
+                    text.splitlines()[idx - 1], '',
+                    f'章节 `{line}` 前面缺空行，排下去会粘在上一段末尾')
+
+
 class LibraryVersusIntentTests(unittest.TestCase):
     """判断「可疑」时，库的行为和应用的意图必须分开。
 
